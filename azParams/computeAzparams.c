@@ -146,7 +146,6 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 		  Compute covariance matrix
 		 */
 		svdvar(v,ma,w,Cp);
-
 	} /* end k */
 	/*
 	  Ouput results
@@ -238,6 +237,7 @@ void azCoeffs(void *x,int i,double *afunc, int ma)
 	afunc[2] = r*sin(theta);
 	return;
 }
+
 /* Not used */
 void azCoeffsLinear(void *x,int i,double *afunc, int ma) 
 {
@@ -249,7 +249,6 @@ void azCoeffsLinear(void *x,int i,double *afunc, int ma)
 
 	theta=xx.theta;
 	r=xx.r;
-
 	afunc[1] = AZCONST;
 	afunc[2] = r*sin(theta);
 	afunc[3] = xx.x*AZCONST;
@@ -267,7 +266,6 @@ static void getBaselineRates(double *dbcds, double *dbhds,   char *baseFile,doub
 	FILE *fp;
 
 	fprintf(stderr,"prf,nSingleLook %f %f\n",prf,slPixSize);
-
 	fp = openInputFile(baseFile);
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	lineCount=getDataString(fp,lineCount,line,&eod);
