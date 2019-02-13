@@ -1,0 +1,9 @@
+CC =		gcc
+CFLAGS  =	$(FLAGS)  -c -DPAF=$(PAF) -I$(INCLUDEPATH)
+
+OBJS= lltora.o
+
+.KEEP_STATE:
+all:	$(OBJS)
+
+	mv *.o $(MACHTYPE)-$(OSTYPE)

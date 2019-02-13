@@ -1,0 +1,17 @@
+.MAKE_VERSION:	VERSION-1.0
+.BUILT_LAST_MAKE_RUN:
+computeRParams.o:	/usr/include/math.h /usr/include/floatingpoint.h /usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/sys/ieeefp.h rparams.h /home/ian/progs/ers1/tiePoints/tiePoints.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h
+.BUILT_LAST_MAKE_RUN:
+computeRParams.o:	/home/ian/progs/cRecipes/nrutil.h 
+	cc -g -c -DPAF=0 -I/home/ian/progs  -c  computeRParams.c
+rparams.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h rparams.h /home/ian/progs/ers1/tiePoints/tiePoints.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h /usr/include/sys/types.h /usr/include/sys/isa_defs.h
+rparams.o:	/usr/include/sys/machtypes.h /usr/include/sys/select.h /usr/include/sys/time.h /usr/include/time.h /usr/include/sys/siginfo.h /usr/include/sys/machsig.h /usr/include/math.h /usr/include/floatingpoint.h /usr/include/sys/ieeefp.h 
+	cc -g -c -DPAF=0 -I/home/ian/progs  -c  rparams.c
+getROffsets.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h rparams.h /home/ian/progs/ers1/tiePoints/tiePoints.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h 
+	cc -g -c -DPAF=0 -I/home/ian/progs  -c  getROffsets.c
+getBaselineFile.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h rparams.h /home/ian/progs/ers1/tiePoints/tiePoints.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h /usr/include/math.h /usr/include/floatingpoint.h
+getBaselineFile.o:	/usr/include/sys/ieeefp.h 
+	cc -g -c -DPAF=0 -I/home/ian/progs  -c  getBaselineFile.c
+addVelCorrections.o:	/usr/include/math.h /usr/include/floatingpoint.h /usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/sys/ieeefp.h rparams.h /home/ian/progs/ers1/tiePoints/tiePoints.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h
+addVelCorrections.o:	
+	cc -g -c -DPAF=0 -I/home/ian/progs  -c  addVelCorrections.c

@@ -1,0 +1,18 @@
+.MAKE_VERSION:	VERSION-1.0
+get3DInputFile.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h /usr/include/math.h /usr/include/floatingpoint.h /usr/include/sys/ieeefp.h /home/ian/progs/ers1/GeoCodeDEM/geocodedem.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h
+get3DInputFile.o:	mosaic3d.h 
+	cc -fast -c -DPAF=0 -I/home/ian/progs  -c  get3DInputFile.c
+setup3D.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h /usr/include/math.h /usr/include/floatingpoint.h /usr/include/sys/ieeefp.h /home/ian/progs/ers1/GeoCodeDEM/geocodedem.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h
+setup3D.o:	mosaic3d.h 
+	cc -fast -c -DPAF=0 -I/home/ian/progs  -c  setup3D.c
+make3DMosaic.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h /usr/include/math.h /usr/include/floatingpoint.h /usr/include/sys/ieeefp.h /home/ian/progs/cRecipes/nrutil.h /home/ian/progs/ers1/GeoCodeDEM/geocodedem.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h
+make3DMosaic.o:	/home/ian/progs/ers1/computeVH/computevh.h /home/ian/progs/ers1/demMosaic/demmosaic.h mosaic3d.h 
+	cc -fast -c -DPAF=0 -I/home/ian/progs  -c  make3DMosaic.c
+mosaic3d.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h /home/ian/progs/ers1/GeoCodeDEM/geocodedem.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h /home/ian/progs/ers1/computeVH/computevh.h /home/ian/progs/ers1/mosaicVh/mosaicvh.h mosaic3d.h /usr/include/sys/types.h
+mosaic3d.o:	/usr/include/sys/isa_defs.h /usr/include/sys/machtypes.h /usr/include/sys/select.h /usr/include/sys/time.h /usr/include/time.h /usr/include/sys/siginfo.h /usr/include/sys/machsig.h /usr/include/math.h /usr/include/floatingpoint.h /usr/include/sys/ieeefp.h 
+	cc -fast -c -DPAF=0 -I/home/ian/progs  -c  mosaic3d.c
+.BUILT_LAST_MAKE_RUN:
+speckleTrackMosaic.o:	/usr/include/stdio.h /usr/include/sys/feature_tests.h /usr/include/sys/va_list.h /usr/include/string.h /usr/include/math.h /usr/include/floatingpoint.h /usr/include/sys/ieeefp.h /home/ian/progs/cRecipes/nrutil.h /home/ian/progs/ers1/GeoCodeDEM/geocodedem.h /home/ian/progs/ers1/ers1Code/ers1.h /home/ian/progs/clib/standard.h /usr/include/malloc.h /home/ian/progs/cRecipes/cRecipes.h /home/ian/progs/ers1/getLocC/parfile.h /home/ian/progs/ers1/GeoCode/geocode.h
+.BUILT_LAST_MAKE_RUN:
+speckleTrackMosaic.o:	/home/ian/progs/ers1/computeVH/computevh.h /home/ian/progs/ers1/demMosaic/demmosaic.h /home/ian/progs/ers1/mosaicVh/mosaicvh.h mosaic3d.h 
+	cc -fast -c -DPAF=0 -I/home/ian/progs  -c  speckleTrackMosaic.c
