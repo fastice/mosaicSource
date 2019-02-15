@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include"string.h"
 #include <math.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 
 
     void smlocateZD(double rxs,  double rys,  double rzs, double rvsx, double rvsy, double rvsz, double rsl,double *lat, double *lon, double lookDir, double trgalt)

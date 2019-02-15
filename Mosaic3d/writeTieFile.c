@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include"string.h"
 #include "math.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 static void writeExtraTies(char *extraTieFile,  ShelfMask *shelfMask,double tideCorrection,xyDEM *dem, FILE *fp  , double xmin, double ymin,double xmax,double ymax);
 

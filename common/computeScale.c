@@ -1,5 +1,5 @@
 #include <math.h>
-/*#include "source/GeoCodeDEM_p/geocodedem.h"*/
+/*#include "mosaicSource/GeoCodeDEM_p/geocodedem.h"*/
 #include "cRecipes/nrutil.h"
 #include "common.h"
 /* 

@@ -1,9 +1,10 @@
+#define _XOPEN_SOURCE
+#include <time.h>
 #include "clib/standard.h"
 #include "stdio.h"
 #include <stdlib.h>
 #include <string.h>
-#include "time.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 
 #define MIN(a,b)  ( ( (a) < (b) ) ? (a) : (b) )
 
@@ -24,7 +25,7 @@ static void getParDate(FILE *fpPar, SARData *sarD,int quiet) {
 	char *months[12]={"JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"};  
 	if(fgets(buffer,16,fpPar) == NULL) error("error reading date");	
 	buffer[strlen(buffer)-1]='\0';
-	cp=strptime(buffer,"%e %B %Y",&tp);
+	cp=(char *)strptime(buffer,"%e %B %Y",&tp);
 	sarD->day=tp.tm_mday;
 	sarD->year=tp.tm_year+1900;
 	sarD->month=tp.tm_mon+1;

@@ -1,7 +1,7 @@
 C =		gcc
 ROOTDIR =	/Users/ian
-PROGDIR =       $(ROOTDIR)/progs
-INCLUDEPATH =	$(ROOTDIR)/progs
+PROGDIR =       $(ROOTDIR)/progs/GIT
+INCLUDEPATH =	$(ROOTDIR)/progs/GIT
 BINDIR =	$(IHOME)/bin/$(MACHTYPE)
 #
 CFLAGS =	'-O3 -m32 -I$(INCLUDEPATH) $(COMPILEFLAGS)'
@@ -21,6 +21,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
+	                common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getHeight.o \
@@ -35,6 +36,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 			common/$(MACHTYPE)-$(OSTYPE)/interpPhaseImage.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
 			common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
+			common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/lltoxy.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/lltoxy1.o \
@@ -43,6 +45,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
 			common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
+			 common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/readXYDEM.o \
@@ -51,6 +54,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/scalingFunctions.o \
 			common/$(MACHTYPE)-$(OSTYPE)/smlocateZD.o \
 			common/$(MACHTYPE)-$(OSTYPE)/svBase.o \
+			common/$(MACHTYPE)-$(OSTYPE)/vectorFunc.o \
 			common/$(MACHTYPE)-$(OSTYPE)/xyGetZandSlope.o \
 			common/$(MACHTYPE)-$(OSTYPE)/xytoll1.o \
 			common/$(MACHTYPE)-$(OSTYPE)/xytoll.o
@@ -96,7 +100,7 @@ mosaic3d:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 $(MOSAIC3D1)   $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) \
@@ -120,7 +124,7 @@ siminsar:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) -lm  -o $(BINDIR)/siminsar
@@ -141,7 +145,7 @@ rparams:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 rParams/$(MACHTYPE)-$(OSTYPE)/rparams.o $(RPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
@@ -162,7 +166,7 @@ azparams:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
@@ -181,7 +185,7 @@ coarsereg:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 coarseReg/$(MACHTYPE)-$(OSTYPE)/coarsereg.o $(COARSEREG)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
@@ -204,7 +208,7 @@ tiepoints:
 		( 	echo "<<< Descending in directory: $$i -- >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 tiePoints/$(MACHTYPE)-$(OSTYPE)/tiepoints.o $(TIEPOINTS) $(STANDARD) $(TRIANGLE) $(RECIPES)  $(COMMON)  \
@@ -221,7 +225,7 @@ lltora:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH)  PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 	        gcc -m32 LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) \
                       -lm  -o $(BINDIR)/lltora
@@ -231,16 +235,16 @@ lltora:
 #********************************************************************************
 
 GETLOCC =	getLocC/$(MACHTYPE)-$(OSTYPE)/centerLL.o getLocC/$(MACHTYPE)-$(OSTYPE)/correctTime.o \
-	getLocC/$(MACHTYPE)-$(OSTYPE)/glatlon.o getLocC//$(MACHTYPE)-$(OSTYPE)/readOldPar.o
+	getLocC/$(MACHTYPE)-$(OSTYPE)/glatlon.o
 
-GETLOCCDIRS =	getLocC 
+GETLOCCDIRS =	getLocC common
 
 getlocc:
 	@for i in ${GETLOCCDIRS}; do \
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1) \
                 getLocC/$(MACHTYPE)-$(OSTYPE)/getlocc.o $(GETLOCC) $(COMMON) $(TRIANGLE) $(STANDARD) $(RECIPES) \
@@ -261,7 +265,7 @@ geomosaic:
 		( 	echo "<<< Descending in directory: $$i >>>"; \
 	                cd $$i; \
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
-			cd $(PROGDIR)/source; \
+			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc -m32 $(CCFLAGS1)  \
 		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) \

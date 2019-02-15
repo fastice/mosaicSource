@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <float.h>
-#include "ers1/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
 
 /*

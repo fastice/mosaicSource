@@ -1,6 +1,6 @@
 #include "stdio.h"
 #include "string.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 /*#include "tiePoints.h"*/
 #include <stdlib.h>
 

@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include"string.h"
 #include <math.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 /*
   Rotated version.
   Specify rotation in degrees with 0 deg. longitude on negative Y-axis 

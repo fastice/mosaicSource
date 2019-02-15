@@ -5,11 +5,11 @@
 #include "geotiff/xtiffio.h"  /* for TIFF */
 #include "geotiff/geotiffio.h" /* for GeoTIFF */
 #include "cRecipes/nrutil.h"
-#include "source/common/common.h"
-/*#include "source/mosaic3D_p/mosaic3d.h"*/
-#include "landsat/lstrack_p/lstrack.h"
-#include "landsat/lsfit_p/lsfit.h"
-#include "source/landsatMosaic/landSatMosaic.h"
+#include "mosaicSource/common/common.h"
+/*#include "mosaicSource/mosaic3D_p/mosaic3d.h"*/
+#include "landsatSource64/Lstrack/lstrack.h"
+#include "landsatSource64/Lsfit/lsfit.h"
+#include "mosaicSource/landsatMosaic/landSatMosaic.h"
 
 void  computeScaleLS(float **inImage,float **scale,  int32 azimuthSize,int32 rangeSize,float fl,   float weight,double minVal,int32 iMin,int32 iMax,int32 jMin,int32 jMax);
 static void readLSOffsetsForMosaic(landSatImage *currentImage);

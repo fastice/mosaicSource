@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include "geotiff/xtiffio.h"  /* for TIFF */
 #include "geotiff/geotiffio.h" /* for GeoTIFF */
-#include "landsat/clib/standard.h"
-#include "landsat/lstrack_p/lstrack.h"
-#include "landsat/lsfit_p/lsfit.h"
+#include "clib/standard.h"
+#include "landsatSource64/Lstrack/lstrack.h"
+#include "landsatSource64/Lsfit/lsfit.h"
 
 #define MAXTIEPOINTS 500000
 static void parseLSOffsetMeta(char *datFile,  lsFit *fitDat,matchResult *matches );

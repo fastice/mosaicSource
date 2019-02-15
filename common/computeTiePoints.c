@@ -1,7 +1,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include "string.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 /*#include "tiePoints.h"*/
 #include "time.h"
 #include "geotiff/xtiffio.h"  /* for TIFF */
@@ -11,7 +11,6 @@ extern double Rotation;
 /*
   Compute location of  tie points for baselines estimation.
 */
-
 
 
 void computeTiePoints(inputImageStructure *inputImage,      tiePointsStructure *tiePoints,
@@ -33,7 +32,6 @@ void computeTiePoints(inputImageStructure *inputImage,      tiePointsStructure *
 	int sMask;
 	int32 shelfMaskFlag;
 	char tideFile[2048],*tmpS;
-	ers1Complex **cimage;
 	float **fimage;
 	clock_t startTime,lastTime,initTime;
 	int k=0;

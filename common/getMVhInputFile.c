@@ -3,8 +3,8 @@
 #include "stdlib.h"
 #include "math.h"
 /*
-#include "source/GeoCodeDEM_p/geocodedem.h"
-#include "source/computeVH_p/computevh.h"*/
+#include "mosaicSource/GeoCodeDEM_p/geocodedem.h"
+#include "mosaicSource/computeVH_p/computevh.h"*/
 #include "common.h"
 
 /*

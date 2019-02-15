@@ -286,7 +286,7 @@ void readRangeOrRangeOffsets( Offsets *offsets,int orbitType);
 void readOffsets( Offsets *offsets);
 void readAzimuthOffsets( Offsets *offsets);
 void readRangeOffsets( Offsets *offsets);
-
+void readOldPar(char *parFile, SARData *sarD, stateV *sv);
 void geometryInfo(conversionDataStructure *cP,inputImageStructure *currentImage,double azimuth,double range, double z, double thetaC,double *ReH,double *Range,double *theta,double *thetaD, double *phi,double zSp);
 
 double computeSig2AzParam(double sinTheta,double cosTheta, double azimuth, double Range, inputImageStructure *inputImage,Offsets *offsets);

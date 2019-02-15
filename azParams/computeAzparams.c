@@ -1,5 +1,5 @@
 #include <math.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "azparams.h" 
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>

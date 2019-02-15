@@ -7,28 +7,6 @@
 /*
   This is the include file for using geocode routines with other programs.
 */
-/*typedef struct geometricType {
-	double ReMajor;
-	double ReMinor;
-	double Rc;
-	double phic;
-	double H;
-	double rangeError;
-
-} geometricDataStructure;
-*/
-typedef short int ers1ComplexElement;
-
-
-typedef struct ers1ComplexType {
-    ers1ComplexElement r;
-    ers1ComplexElement i;
-} ers1Complex;
-
-typedef struct ers1FloatComplexType {
-    float r;
-    float i;
-} ers1FloatComplex;
 
 typedef struct shelfMaskType {
 	double x0;
@@ -123,8 +101,8 @@ typedef struct sarDataType {
 	int day;
 	double slpR;
 	double slpA;
-	int nSlpR;
-	int nSlpA;	
+	int nSlpR;  /* n single look range pixels */
+	int nSlpA;  /* n single look azimuth pixels */
 	double fd[4];
 	double rawRange[3]; /* Not Used */
 	double slcRange[3]; /* ranges for slc */
@@ -307,22 +285,16 @@ void outputGeocodedImage(outputImageStructure outputImage,char *outputFile);
 /* 
    Convert lat/lon and h to image coordinates using alogrithm by Shusun Li.
 */
-void initllToImage( inputImageStructure *inputImage);
-void llToImage(double lat,double lon, double h,
-	       double *range, double *azimuth,
-	       inputImageStructure *inputImage);
+
 /*
   Compute height for lat/lon from DEM.
 */
-double getHeight(double lat, double lon, demStructure *dem,
-		 double Re,int heightFlag);
+double getHeight(double lat, double lon, demStructure *dem, double Re,int heightFlag);
 /*
   Interpolate input image interpolateInputImage.c
 */
-ers1Complex interpolateComplexInputImage(inputImageStructure inputImage,
-					 double range,double azimuth);
-float interpolateFloatInputImage(inputImageStructure inputImage,
-				 double range,double azimuth);
+
+float interpolateFloatInputImage(inputImageStructure inputImage, double range,double azimuth);
 
 /*
   Input xy (PS) DEM.
@@ -350,7 +322,7 @@ double getXYHeight(double lat, double lon, xyDEM *xydem,
   Memory allocation routines
 */
 float **mallocImage(int nr,int na);
-ers1Complex **mallocComplexImage(int nr,int na);
+/*ers1Complex **mallocComplexImage(int nr,int na);*/
 
 /*---***    void findRange(double out_y, double h, int azimuth, double *R, 
   conversionDataStructure *cp );*/

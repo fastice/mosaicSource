@@ -4,33 +4,6 @@
 #include "float.h"
 #include "common.h"
 
-long julday(int mm, int id, int iyyy)
-{
-        long jul;
-        int ja,jy=iyyy,jm;
-
-        if (jy < 0) ++jy;
-
-        if (mm > 2) {
-                jm=mm+1;
-        } else {
-                --jy;
-                jm=mm+13;
-        }
-	/*(15+31*(10+12*1582))*/
-        jul = (long) (floor(365.25*jy)+floor(30.6001*jm)+id+1720995);
-
-        if ( id+31L*(mm+12*iyyy) >=  (15+31*(10+12*1582))) {
-                ja=(int)(0.01 * jy);
-                jul += 2-ja+ (int)(0.25*ja);
-        }
-        return jul;
-}
-
-double juldayDouble(int mm, int id, int iyyy) {
-	return ((double)julday(mm,id,iyyy) -0.5);
-}
-
 /*
   Set up buffers for different mosiacing routines - e.g. speckleTrack
 */
@@ -539,59 +512,6 @@ float **mallocImage(int nr,int nc)
 	return tmp;
 }
 
-ers1Complex **mallocComplexImage(int nr,int nc)
-{
-	ers1Complex **tmp;
-	int i;
-
-	tmp = (ers1Complex **) malloc((size_t)(nr*sizeof(ers1Complex *)));
-
-	for(i=0; i < nr; i++ ) 
-		tmp[i] = (ers1Complex *)malloc((size_t)(nc*sizeof(ers1Complex)));
-	return tmp;
-
-}
-
-
-/*
-  Compute radial distance from earth center to elipsoid surface
-  lat should be in radians
-  rp = rminor
-  re=rmajor
-*/
-double earthRadius(double lat, double rp, double re)
-{    
-	double earthRad;
-	double n,x,z;
-	/*    fprintf(stderr,"rp,re,lat %f %f %f",rp,re,lat); */
-	n = (re*re)/sqrt( pow(re*cos(lat),2.0) +  pow(rp*sin(lat),2.0) );
-	x = n*cos(lat);
-	z = pow((rp/re),2.0)* n * sin(lat);
-	earthRad = sqrt(x*x + z*z);
-    
-	return earthRad;
-}
-
-/*
-  earth radius for WGS84
- */
-double earthRadiusWGS84(double lat)
-{    
-	double rp=EMINOR,re=EMAJOR;
-        return earthRadius(lat, rp, re);
-}
-
-/*
-  Curvature for earth at lat
- */
-double earthRadiusCurvatureWGS84(double lat)
-{    
-	double earthRad;
-	double n,x,z;
-	double rp=EMINOR,re=EMAJOR;    
-	n = (re*re)/sqrt( pow(re*cos(lat),2.0) +  pow(rp*sin(lat),2.0) );
-	return n;
-}
 
 void setTiePointsMapProjectionForHemisphere(tiePointsStructure *tiePoints)
 {
@@ -667,25 +587,6 @@ double slantRange(double rho,double ReZ, double ReH) {
 	return sqrt( ReH*ReH + ReZ*ReZ - 2.0*ReZ*ReH*cos(rho) );
 }
 
-/* 
-   [x1,y1,z1] dot [x2,y2,z2]
- */
-double dot(double x1,double y1,double z1,double x2, double y2, double z2) {
-	return (x1*x2 + y1*y2 + z1*z2);
-}
-
-double norm(double x1,double y1,double z1) {
-	return sqrt(dot(x1,y1,z1,x1,y1,z1));
-}
-/*
-    perform cross product of vector a with vector b
-*/
-    void cross(double a1,double a2,double a3, double b1,double b2,double b3, double *c1,double *c2,double *c3)
-{
-	*c1=a2*b3-a3*b2;
-	*c2=a3*b1-a1*b3;
-	*c3=a1*b2-a2*b1;
-}
 
 /*
   Init output image
@@ -740,11 +641,13 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 	/*
 	  Init space for image 
 	*/
+	/*
 	if(outputImage->noMem == FALSE) {
 		if(outputImage->imageType == COMPLEX) outputImage->image=(void **)
 							      mallocComplexImage(outputImage->ySize,outputImage->xSize);
-		else outputImage->image=(void **)
-			     mallocImage(outputImage->ySize,outputImage->xSize);
-	}
+		else
+	*/
+	outputImage->image=(void **)   mallocImage(outputImage->ySize,outputImage->xSize);
+
 	return;
 }

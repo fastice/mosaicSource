@@ -3,12 +3,12 @@
 #include "stdlib.h"
 #include "geotiff/xtiffio.h"  /* for TIFF */
 #include "geotiff/geotiffio.h" /* for GeoTIFF */
-#include "source/common/common.h"
-/*#include "source/mosaic3D_p/mosaic3d.h"*/
+#include "mosaicSource/common/common.h"
+/*#include "mosaicSource/mosaic3D_p/mosaic3d.h"*/
 /*#include "landsat/clib/standard.h"*/
-#include "landsat/lstrack_p/lstrack.h"
-#include "landsat/lsfit_p/lsfit.h"
-#include "source/landsatMosaic/landSatMosaic.h"
+#include "landsatSource64/Lstrack/lstrack.h"
+#include "landsatSource64/Lsfit/lsfit.h"
+#include "mosaicSource/landsatMosaic/landSatMosaic.h"
 static void parseFitFile(lsFit *fitDat);
 char *lineBuf,  *keyBuf, *valueBuf;   /* Input line buffer */
 /*

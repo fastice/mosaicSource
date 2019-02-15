@@ -1,6 +1,6 @@
 #include "stdio.h"
 #include"string.h"
-#include "ers1/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
 #include <stdlib.h>
 /*

@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include"string.h"
 #include <math.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 /*
   Compute shift for registering images using corner points.
 */

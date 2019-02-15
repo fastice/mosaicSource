@@ -28,7 +28,6 @@
     double dlat;
     double hAngle1;
     double phiDisplacement;
-    ers1Complex **cimage;
     float **fimage;
 /*
    Setup stuff for Shusun Li's conversion routines

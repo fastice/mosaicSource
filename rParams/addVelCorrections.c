@@ -1,5 +1,5 @@
 #include <math.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "rparams.h"
 
 /*
@@ -22,7 +22,6 @@ void addVelCorrections(inputImageStructure *inputImage, tiePointsStructure *tieP
 	double tSign;
 	double deltaT;
 	double displacement;
-	ers1Complex **cimage;
 	float **fimage;
 	/* Setup conversions */
 	cP = &(inputImage->cpAll);

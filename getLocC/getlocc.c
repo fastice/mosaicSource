@@ -3,7 +3,7 @@
 #include "clib/standard.h"
 #undef MNST
 #include "math.h"
-#include "ers1/common/common.h"
+#include "mosaicSource/common/common.h"
 
 /*
   Create geodat file from .par file from clw processor.
@@ -14,7 +14,7 @@ static void readArgs(int argc,char *argv[], int *nlr, int *nla,  int *noffset, d
 static void usage();
 static void echoSarD(FILE *fp, SARData *sarD,stateV *sv,int nlr,int nla);
 /* These routines are largely fixed to this program and not used elsewhere - so not bothering with include file*/
-void readOldPar(char *parFile, SARData *sarD, stateV *sv);
+
 void correctTime(SARData *sarD, double *squint, double noffset, double *tskew,double *toffset, int squintTime);
 void centerLL(SARData *sarD, stateV *sv, int nla,double *lat, double *lon,double deltaT);
 void glatlon( SARData *sarD, stateV *sv, int nlr, int nla, double ***lat1,double ***lon1,int ma, int mr, double deltaT);     

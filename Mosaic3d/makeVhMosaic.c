@@ -3,7 +3,7 @@
 #include <math.h>
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 
 float *offBuf1,*offBuf2,**offBuf1a,**offBuf1b;
 /*

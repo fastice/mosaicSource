@@ -3,9 +3,8 @@
 #include "ctype.h"
 #include "math.h"
 #include <stdlib.h>
-#include "ers1/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
-#include "ers1/ASFcode/ASFinclude.h"
 
 /*
   parse scene input file for siminsar.

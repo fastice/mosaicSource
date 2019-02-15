@@ -1,7 +1,8 @@
 #include "stdio.h"
 #include"string.h"
 #include "math.h"
-#include "ers1/GeoCodeDEM_p/geocodedem.h"
+#include "mosaicSource/common/common.h"
+/*#include "ers1/GeoCodeDEM_p/geocodedem.h"*/
 #include "geomosaic.h"
 #include <stdlib.h>
 

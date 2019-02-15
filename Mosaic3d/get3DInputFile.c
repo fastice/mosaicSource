@@ -2,7 +2,7 @@
 #include"string.h"
 #include "math.h"
 #include <stdlib.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 
 static void mallocFile(char phase[512],char ***phaseFiles, int i) {

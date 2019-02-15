@@ -5,7 +5,7 @@
 #include "geotiff/xtiffio.h"  /* for TIFF */
 #include "geotiff/geotiffio.h" /* for GeoTIFF */
 #include "cRecipes/nrutil.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 
 static void setBuffer(inputImageStructure *inputImage,float *buf);

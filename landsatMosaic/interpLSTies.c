@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include "geotiff/xtiffio.h"  /* for TIFF */
 #include "geotiff/geotiffio.h" /* for GeoTIFF */
-#include "landsat/clib/standard.h"
-#include "landsat/lstrack_p/lstrack.h"
-#include "landsat/lsfit_p/lsfit.h"
+#include "clib/standard.h"
+#include "landsatSource64/Lstrack/lstrack.h"
+#include "landsatSource64/Lsfit/lsfit.h"
 
 static void lltoxy1(double alat,double alon,double *x, double *y, double dlam, double slat);
 static int32 	interpTiePoint( matchResult *matches, lsTiepoints *tiePoints, int32 j);

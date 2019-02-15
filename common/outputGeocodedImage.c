@@ -3,7 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <float.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 /*
    Output geocode image. Writes two files one for image, and xxx.geodat 
    with image header info
@@ -23,8 +23,9 @@
 /*
     Output image data
 */
-    if(outputImage.imageType == COMPLEX) pSize =sizeof(ers1Complex);
-    else pSize = sizeof(float);
+/*    if(outputImage.imageType == COMPLEX) pSize =sizeof(ers1Complex);
+    else */
+    pSize = sizeof(float);
     for(i=0; i < outputImage.ySize; i++)  
          if(outputImage.imageType == COMPLEX) fwriteBS(outputImage.image[i],outputImage.xSize*pSize,1,imageFP,INT16FLAG);
          else fwriteBS(outputImage.image[i],outputImage.xSize*pSize,1,imageFP,FLOAT32FLAG);

@@ -1,5 +1,5 @@
-/*#include "source/ers1Code/ers1.h"*/
-/*#include "source/GeoCode_p/geocode.h"*/
+/*#include "mosaicSource/ers1Code/ers1.h"*/
+/*#include "mosaicSource/GeoCode_p/geocode.h"*/
 
 
 

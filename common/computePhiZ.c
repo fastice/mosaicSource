@@ -17,8 +17,8 @@ void computePhiZ(double *phiZ,double z,  double azimuth,vhParams *vhParam,  inpu
 	normAzimuth = (azimuth-0.5*imageLength)/imageLength;
 	xsq = normAzimuth*normAzimuth;
 	/* Baseline */
-	bn = bpoly( vhParam->Bn,  vhParam->dBn, vhParam->dBnQ, normAzimuth);
-	bp = bpoly( vhParam->Bp,  vhParam->dBp, vhParam->dBpQ, normAzimuth);
+	bn = bPoly( vhParam->Bn,  vhParam->dBn, vhParam->dBnQ, normAzimuth);
+	bp = bPoly( vhParam->Bp,  vhParam->dBp, vhParam->dBpQ, normAzimuth);
 	bSq = bn*bn + bp*bp;
 	/* Compute delta and theta */
 	delta = sqrt(  pow(Range,2.0) -2.0*Range*(bn*sin(thetaD) + bp*cos(thetaD)) + bSq  )  - Range;

@@ -1,6 +1,6 @@
 #include "stdio.h"
 #include"string.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 #include <sys/types.h>
 #include <time.h>
@@ -8,9 +8,9 @@
 #include <stdlib.h>
 #include "geotiff/xtiffio.h"  /* for TIFF */
 #include "geotiff/geotiffio.h" /* for GeoTIFF */
-#include "landsat/lstrack_p/lstrack.h"
-#include "landsat/lsfit_p/lsfit.h"
-#include "source/landsatMosaic/landSatMosaic.h"
+#include "landsatSource64/Lstrack/lstrack.h"
+#include "landsatSource64/Lsfit/lsfit.h"
+#include "mosaicSource/landsatMosaic/landSatMosaic.h"
 /*
   Mosaic several insar dems with altimetry dem.
 

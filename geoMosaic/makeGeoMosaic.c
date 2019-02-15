@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include"string.h"
 #include <math.h>
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "geomosaic.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>

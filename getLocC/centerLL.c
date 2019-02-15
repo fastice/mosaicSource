@@ -2,7 +2,7 @@
 #include"string.h"
 #include "clib/standard.h"
 #include "math.h"
-#include "ers1/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "cRecipes/nrutil.h"
 /*
   Find coordinates for image center in ground range

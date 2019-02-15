@@ -2,7 +2,7 @@
 #include"string.h"
 #include "math.h"
 #include "stdlib.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 
 float dateWeight(double jd1,double jd2,double jdRange1, double jdRange2)

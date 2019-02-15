@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include"string.h"
 #include <math.h>
-#include "ers1/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
 /*
    Compute displacement for lat/lon from Displacement map.

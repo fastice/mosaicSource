@@ -3,7 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include "cRecipes/nrutil.h"
-#include "source/common/common.h"
+#include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 
 
