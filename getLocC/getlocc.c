@@ -76,7 +76,7 @@ void main(int argc, char *argv[])
 	/*
 	  Make sure ranges centered on multilook pixels rather than sl pixels
 	*/
-	sarD.rn +=sarD.slcRange[0]+(nlr-1)*sarD.slpR*0.5;
+	sarD.rn +=(nlr-1)*sarD.slpR*0.5;
 	sarD.rf =sarD.rn + (nMLR-1) * deltaRgML;
 	sarD.rc = (sarD.rn + sarD.rf)*0.5;
         /* Nearly obsolete, keeping just in case */

@@ -105,7 +105,6 @@ typedef struct sarDataType {
 	int nSlpA;  /* n single look azimuth pixels */
 	double fd[4];
 	double rawRange[3]; /* Not Used */
-	double slcRange[3]; /* ranges for slc */
 	double rn;
 	double rc;
 	double rf;

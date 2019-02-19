@@ -75,8 +75,8 @@ static void getRawRange(FILE *fpPar, SARData *sarD, int quiet) {
 	if(quiet == FALSE) fprintf(stderr,"Raw Range (n/c/f): %le %le %le \n",sarD->rawRange[0],sarD->rawRange[1], sarD->rawRange[2]); 
 }
 static void getSlcRange(FILE *fpPar, SARData *sarD, int quiet) {
-	if(fscanf(fpPar,"%lf%lf%lf",&(sarD->slcRange[0]),&(sarD->slcRange[1]),&(sarD->slcRange[2]))   != 3) error("error parsing slc ranges");
-	if(quiet == FALSE) fprintf(stderr,"slc Range (n/c/f): %le %le %le \n",sarD->slcRange[0],sarD->slcRange[1], sarD->slcRange[2]); 
+	if(fscanf(fpPar,"%lf%lf%lf",&(sarD->rn),&(sarD->rc),&(sarD->rf))   != 3) error("error parsing slc ranges");
+	if(quiet == FALSE) fprintf(stderr,"slc Range (n/c/f): %le %le %le \n",(sarD->rn),(sarD->rc), (sarD->rf)); 
 }
 
 static void getRangeRes(FILE *fpPar, SARData *sarD, int quiet) {
