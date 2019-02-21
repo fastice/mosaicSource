@@ -106,7 +106,7 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 		i=(int)(iFloat + 0.5);
 		/*fprintf(stderr,"iFloat %f\n",iFloat); */
 	        iIndex = iLoop;
-		ReH=cp->ReH[i];
+		ReH=getReH(cp,&(scene->I), iFloat);
 		rhoSp=rhoRReZReH( RNear,(Re+0), ReH);
 		rg = Re * rhoSp -100;    /* Initial ground range on spherical earth */
 		range = scene->I.cpAll.RNear + scene->rO*scene->I.rangePixelSize  ;    /* Starting range - gets incremented in loop */
@@ -142,16 +142,14 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 				drgStep=(range-R)*0.5;
 				if(R > (range-0.1))  break;				
 				/* Speed convergence if way out */
-				rg += drgStep;    /* Increment ground range */				
+				rg += drgStep;    /* Increment ground range */
+				/* Avoid infinite loop */
+				if(nIter > 8000){fprintf(stderr,"%f %f %f\n",Re,rhoSp,ReH); break; }
 				nIter++;
 			} /* Endwhile */
 			if(jLoop == 0) rgSave=rg;
 			nIterTotal +=nIter;
-			/*			if(hWGS > 1000 ) fprintf(stderr,"lat lon z az R- %f %f %f %f %f\n",lat,lon,hWGS,(double)az,R);*/
 			withHeight(&(scene->I), &lat, &lon, (double)az,range, hWGS);
-			/*			if(hWGS > 1000) {
-							fprintf(stderr,"lat lon - %f %f\n",lat,lon);
-							error("stop");}*/
 			/*
 			  Get displacement
 			*/

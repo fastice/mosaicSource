@@ -64,8 +64,7 @@ void main(int argc, char *argv[])
 	   Read command line args and compute filenames
 	*/
 	smoothBuf=NULL;
-	readArgs(argc,argv, &inputFile, &demFile,&outFile, &fl,&removePad,&nearestDate, &noPower,&hybridZ,&rsatFineCal,&S1Cal,
-		 &date1,&date2, &smoothL,&orbitPriority);
+	readArgs(argc,argv, &inputFile, &demFile,&outFile, &fl,&removePad,&nearestDate, &noPower,&hybridZ,&rsatFineCal,&S1Cal, &date1,&date2, &smoothL,&orbitPriority);
 	processMosaicDateGeo(&outputImage,date1,date2);
 	/*
 	  read inputfile (uses routine from mosaicDEMS).
