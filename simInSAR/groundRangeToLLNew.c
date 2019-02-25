@@ -29,16 +29,12 @@ double  groundRangeToLLNew( double groundRange, float azimuth,double *lat,double
 	double x,y;
 	double myTime;
 	int i;
-	int azIndex, rIndex,azimuthInt;
 	cp = &(inputImage->cpAll);
-	azimuthInt=min(  max( 0,(int)(azimuth+0.5) ),   inputImage->azimuthSize-1);
 	myTime=(azimuth* inputImage->nAzimuthLooks)/cp->prf + cp->sTime;
 	if(recycle == FALSE) 
 		getState( myTime,inputImage, &xs,&ys, &zs, &vsx, &vsy, &vsz);
-		
-/*	fprintf(stderr,"%f %f %f %f %f %f %f \n",myTime, xs,ys, zs, vsx, vsy, vsz);*/
 	rho = groundRange/cp->Re;
-	ReH=cp->ReH[azimuthInt];
+	ReH=getReH(cp, inputImage,(double)azimuth);
 	/* Locate point on with that range on an ellipsoidal earth */
 	h=0;
 	rsl = sqrt( (ReH*ReH) + (cp->Re+h)*(cp->Re+h) - 2.0*(cp->Re+h)*(ReH)*cos(rho) );

@@ -176,21 +176,23 @@ void readLLinput(FILE *fp, tiePointsStructure *tiePoints, char *DEM)
 	for(i=0; i < size[0];  i++) {
 		/* Read line */
 		freadBS( ( void *)dum, sizeof(dum[0]),size[1],fp,FLOAT64FLAG);
-		/* set hemisphere */
-		if(i==0) {
-			if(dum[0] < 0) {
-				fprintf(stderr,"**** SOUTHERN HEMISPHERE ****");
-				HemiSphere=SOUTH;	   tiePoints->stdLat=71;		Rotation=0.0;
-			} else {
-				fprintf(stderr,"**** NORTHERN HEMISPHERE ****");
-				HemiSphere=NORTH;	   tiePoints->stdLat=70;		Rotation=45.;
-			} 
-		}
-		if(size[1] == 2) {
-			lltoxy1(dum[0],dum[1],&xx,&yy,Rotation,tiePoints->stdLat);
-			dum[2]=interpXYDEM(xx, yy,dem);
-			if( dum[2] < 0) {dum[0]=-1; dum[1]=-1;}
-		}
+		/* set hemisphere - make sure valid lat  */
+		if(dum[0] < -91 || dum[0] > 91) {
+			if(i==0) {
+				if(dum[0] < 0) {
+					fprintf(stderr,"**** SOUTHERN HEMISPHERE ****");
+					HemiSphere=SOUTH;	   tiePoints->stdLat=71;		Rotation=0.0;
+				} else {
+					fprintf(stderr,"**** NORTHERN HEMISPHERE ****");
+					HemiSphere=NORTH;	   tiePoints->stdLat=70;		Rotation=45.;
+				} 
+			}
+			if(size[1] == 2) {
+				lltoxy1(dum[0],dum[1],&xx,&yy,Rotation,tiePoints->stdLat);
+				dum[2]=interpXYDEM(xx, yy,dem);
+				if( dum[2] < 0) {dum[0]=-1; dum[1]=-1;}
+			}
+		} dum[2]=-9999.;
 
 		tiePoints->lat[tiePoints->npts] = dum[0];
 		tiePoints->lon[tiePoints->npts] = dum[1];

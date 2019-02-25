@@ -74,47 +74,52 @@ void computeTiePoints(inputImageStructure *inputImage,      tiePointsStructure *
 	for(i=0; i < tiePoints->npts; i++) {
 		lat = tiePoints->lat[i];
 		lon = tiePoints->lon[i];
-		/* Deal with shelf mask if necessary */
-		if(shelfMask != NULL && shelfMaskFlag != -1) {
-			lltoxy1(lat,lon,&xx,&yy,Rotation,tiePoints->stdLat);
-			sMask=getShelfMask(shelfMask,xx,yy);
-			if(sMask == SHELF) {
-				deltaZ=interpTideDiff(xx,yy,inputImage->tideDiff);
-				if(deltaZ >  MINELEVATION) {
-					vz1 = deltaZ/((double)tiePoints->nDays) *365.25;
-					tiePoints->vz[i] += vz1;
+		if(lat < -91 || lat > 91) { /* This should only apply to lltora cases */
+			/* Deal with shelf mask if necessary */
+			if(shelfMask != NULL && shelfMaskFlag != -1) {
+				lltoxy1(lat,lon,&xx,&yy,Rotation,tiePoints->stdLat);
+				sMask=getShelfMask(shelfMask,xx,yy);
+				if(sMask == SHELF) {
+					deltaZ=interpTideDiff(xx,yy,inputImage->tideDiff);
+					if(deltaZ >  MINELEVATION) {
+						vz1 = deltaZ/((double)tiePoints->nDays) *365.25;
+						tiePoints->vz[i] += vz1;
+					}
 				}
 			}
-		}
-		/*
-		  Get height for given lat/lon, with spherical correction
-		*/
-		zWGS=tiePoints->z[i];
-		if(tiePoints->imageCoords == FALSE ) {
-			llToImageNew(lat,lon,zWGS,&range,&azimuth,inputImage);
-			RElip = earthRadius(lat*DTOR,EMINOR,EMAJOR)*KMTOM   + tiePoints->z[i];
-			/*  Elevation referenced to a sphere */
-			zSp = RElip - Re;
+			/*
+			  Get height for given lat/lon, with spherical correction
+			*/
+			zWGS=tiePoints->z[i];
+			if(tiePoints->imageCoords == FALSE ) {
+				llToImageNew(lat,lon,zWGS,&range,&azimuth,inputImage);
+				RElip = earthRadius(lat*DTOR,EMINOR,EMAJOR)*KMTOM   + tiePoints->z[i];
+				/*  Elevation referenced to a sphere */
+				zSp = RElip - Re;
+			} else {
+				/* Obsolete */
+				range = lat; /* Lat variable = range */			
+				zSp = tiePoints->z[i]; /* Assume r/a/z already spherical */
+			}
+			tiePoints->z[i] = zSp;
+			tiePoints->r[i] = range;
+			if(tiePoints->imageCoords == FALSE) {
+				tiePoints->a[i] = azimuth;
+			} else {
+				/* ??? */
+				error("check computeTiePoints - for this obsolete line");
+				azimuth = inputImage->azimuthSize-lon;
+				tiePoints->a[i] = lon;
+			}
+			azOrigin =  -0.5 * AzimuthPixelSize * inputImage->azimuthSize * inputImage->nAzimuthLooks;
+			tiePoints->x[i] = azOrigin + inputImage->nAzimuthLooks * AzimuthPixelSize*azimuth;
 		} else {
-			/* Obsolete */
-			range = lat; /* Lat variable = range */			
-			zSp = tiePoints->z[i]; /* Assume r/a/z already spherical */
+			tiePoints->a[i]=-LARGEINT;
+			tiePoints->r[i]=-LARGEINT;						
 		}
-		tiePoints->z[i] = zSp;
-		tiePoints->r[i] = range;
-		if(tiePoints->imageCoords == FALSE) {
-			tiePoints->a[i] = azimuth;
-		} else {
-			/* ??? */
-			error("check computeTiePoints - for this obsolete line");
-			azimuth = inputImage->azimuthSize-lon;
-			tiePoints->a[i] = lon;
-		}
-		azOrigin =  -0.5 * AzimuthPixelSize * inputImage->azimuthSize * inputImage->nAzimuthLooks;
-		tiePoints->x[i] = azOrigin + inputImage->nAzimuthLooks * AzimuthPixelSize*azimuth;
 	}
 	lastTime=clock();
 	fprintf(stderr,"initTime %f convertTime %f totalTime %f\n",(double)(initTime-startTime)/CLOCKS_PER_SEC
-	,(double)(lastTime-initTime)/CLOCKS_PER_SEC,(double)(lastTime-startTime)/CLOCKS_PER_SEC );
+		,(double)(lastTime-initTime)/CLOCKS_PER_SEC,(double)(lastTime-startTime)/CLOCKS_PER_SEC );
 	return;
 }
