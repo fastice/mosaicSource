@@ -165,6 +165,7 @@ typedef struct inputImageType {
 	stateV sv;
 	void **image;
 	int isInit;
+	float noData;
 	struct inputImageType *next;
 } inputImageStructure;
 

@@ -20,7 +20,7 @@
      offsets->azInit=FALSE;
 /*
     Interpolate offsets
-*/     
+*/
      fprintf(stdout,";;\n;;Tiepoints row column elevation\n;;\n");
      for(i=0; i < tiePoints->npts; i++) {
 	     range=(tiePoints->r[i]*inputImage.nRangeLooks-offsets->rO)/offsets->deltaR;
@@ -35,8 +35,6 @@
 	     /*if(inputImage.lookDir==LEFT) tiePoints->phase[i] *=-1;*/
 	     if( fabs(tiePoints->phase[i]) < (LARGEINT) && tiePoints->quiet==FALSE)
 		     fprintf(stdout,"; %i  %i  %f %f\n", (int)(tiePoints->r[i]+0.5),(int)(tiePoints->a[i]+0.5), tiePoints->z[i],(float)tiePoints->phase[i]);
-
-	     
      }
      fprintf(stderr,"count %i\n",count);     
      fprintf(stdout,";&\n");

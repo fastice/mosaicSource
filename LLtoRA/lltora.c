@@ -85,14 +85,15 @@ void main(int argc, char *argv[])
 	/*
 	  Output results for checking to sterr
 	*/
-	dr=(inputImage.nRangeLooks-1)/2.0;
-	da=(inputImage.nAzimuthLooks-1)/2.0;
+	dr=0.5*(inputImage.nRangeLooks-1);
+	da=0.5*(inputImage.nAzimuthLooks-1);
 	fprintf(stderr,"%f %f\n",dr,da);
 	if(outputFile == NULL) {
 		fprintf(stdout,"# 5\n");
-		for(i=0; i < tiePoints.npts; i++) 
+		for(i=0; i < tiePoints.npts; i++) {
 			fprintf(stdout," %10.3f %10.3f %10.7f %10.7f %7.1f\n",
-				(tiePoints.r[i])*inputImage.nRangeLooks+dr,tiePoints.a[i]*inputImage.nAzimuthLooks+da, tiePoints.lat[i], tiePoints.lon[i],tiePoints.z[i]);   
+				(tiePoints.r[i])*inputImage.nRangeLooks+dr,tiePoints.a[i]*inputImage.nAzimuthLooks+da, tiePoints.lat[i], tiePoints.lon[i],tiePoints.z[i]);
+		}
 		fprintf(stdout,"&\n");
 	} else { /* Output results to binary output file */
 		fpOut=fopen(outputFile,"w");
@@ -100,8 +101,8 @@ void main(int argc, char *argv[])
 		size[1]=3;
 	        fwriteBS( (void *)size,sizeof(uint32),2, fpOut,INT32FLAG);
 		for(i=0; i < tiePoints.npts; i++)  {
-			dum[0]=tiePoints.r[i]*inputImage.nRangeLooks;	dum[1]=tiePoints.a[i]*inputImage.nAzimuthLooks;	dum[2]=tiePoints.z[i];
-			if(dum[0] < 0 || dum[0] > (inputImage.nRangeLooks*inputImage.rangeSize)-1) { dum[0]=-9999; dum[1]=-9999;}
+			dum[0]=tiePoints.r[i]*inputImage.nRangeLooks + dr;	dum[1]=tiePoints.a[i]*inputImage.nAzimuthLooks + da;	dum[2]=tiePoints.z[i];
+			if(dum[0] < 0 || dum[0] > (inputImage.nRangeLooks*inputImage.rangeSize-1)) { dum[0]=-9999; dum[1]=-9999;}
 			if(dum[1] < 0 || dum[1] > (inputImage.nAzimuthLooks*inputImage.azimuthSize-1)) {dum[0]=-9999; dum[1]=-9999;}			
 		        fwriteBS( (void *)dum,sizeof(float),3, fpOut,FLOAT32FLAG);
 		}
@@ -177,7 +178,7 @@ void readLLinput(FILE *fp, tiePointsStructure *tiePoints, char *DEM)
 		/* Read line */
 		freadBS( ( void *)dum, sizeof(dum[0]),size[1],fp,FLOAT64FLAG);
 		/* set hemisphere - make sure valid lat  */
-		if(dum[0] < -91 || dum[0] > 91) {
+		if(dum[0] > -91. && dum[0] < 91.) {
 			if(i==0) {
 				if(dum[0] < 0) {
 					fprintf(stderr,"**** SOUTHERN HEMISPHERE ****");
@@ -192,8 +193,7 @@ void readLLinput(FILE *fp, tiePointsStructure *tiePoints, char *DEM)
 				dum[2]=interpXYDEM(xx, yy,dem);
 				if( dum[2] < 0) {dum[0]=-1; dum[1]=-1;}
 			}
-		} dum[2]=-9999.;
-
+		} else dum[2]=0.;
 		tiePoints->lat[tiePoints->npts] = dum[0];
 		tiePoints->lon[tiePoints->npts] = dum[1];
 		tiePoints->z[tiePoints->npts] = dum[2];    

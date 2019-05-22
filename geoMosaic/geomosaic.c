@@ -12,11 +12,11 @@
 */
 static void parseAntPat(char *antPatFile, inputImageStructure *inputImage);
 static void readArgs(int argc,char *argv[], char **inputFile,    char **demFile, char **outFile,float *fl,int *removePad,
-		     int *nearestDate, int *noPower, int *hybridZ, int *rsatFineCal,int *S1Cal , char **date1,char **date2,int *smoothL,int  *orbitPriority) ;
+		     int *nearestDate, int *noPower, int *hybridZ, int *rsatFineCal,int *S1Cal , char **date1,char **date2,int *smoothL,int *smoothOut, int  *orbitPriority, float *noData) ;
 static void usage();
 static void processMosaicDateGeo(outputImageStructure *outputImage, char *date1,char *date2);
 static void parseBetaNought( inputImageStructure *inputImage);
-static void parseImages(inputImageStructure *inputImages, outputImageStructure *outputImage, char **imageFiles,char **geodatFiles,  float *weights, char **antPatFiles, int nFiles, int S1Cal, int *maxR,int *maxA);
+static void parseImages(inputImageStructure *inputImages, outputImageStructure *outputImage, char **imageFiles,char **geodatFiles,  float *weights, char **antPatFiles, int nFiles, int S1Cal, int *maxR,int *maxA,float noData);
 static void outputBounds(inputImageStructure *inputImage ,	outputImageStructure *outputImage, int nFiles);
 static void memAllocGeomosaic(inputImageStructure *inputImage,outputImageStructure *outputImage,int maxR,int maxA, int nFiles,int removePad );
 /* 
@@ -48,6 +48,7 @@ void main(int argc, char *argv[])
 	extern int noPower;
 	extern char *Abuf1,*Abuf2, *Dbuf1,*Dbuf2;
 	extern float *smoothBuf;
+	float **psi, **gamma;
 	void  *dem;
 	xyDEM xyDem ;
 	outputImageStructure outputImage;
@@ -55,16 +56,18 @@ void main(int argc, char *argv[])
 	float *weights;
 	float x1,y1,x2,y2, fl;
 	int nFiles,maxR,maxA;
-	int smoothL, orbitPriority,removePad;
+	int smoothL, smoothOut,orbitPriority,removePad;
 	int i,j;   			  /* LCV */
+	float noData;
 	char *date1, *date2; /* Date range */
 	char *demFile, *inputFile, *outFile;
 	char **imageFiles,  **geodatFiles, **antPatFiles;
+	char tmp[2048], *psiFile, *gFile;
 	/* 
 	   Read command line args and compute filenames
 	*/
 	smoothBuf=NULL;
-	readArgs(argc,argv, &inputFile, &demFile,&outFile, &fl,&removePad,&nearestDate, &noPower,&hybridZ,&rsatFineCal,&S1Cal, &date1,&date2, &smoothL,&orbitPriority);
+	readArgs(argc,argv, &inputFile, &demFile,&outFile, &fl,&removePad,&nearestDate, &noPower,&hybridZ,&rsatFineCal,&S1Cal, &date1,&date2, &smoothL,&smoothOut,&orbitPriority,&noData);
 	processMosaicDateGeo(&outputImage,date1,date2);
 	/*
 	  read inputfile (uses routine from mosaicDEMS).
@@ -77,12 +80,12 @@ void main(int argc, char *argv[])
 	/*
 	  Parse input file and input data for each image.
 	*/
-	parseImages(inputImage, &outputImage, imageFiles, geodatFiles,weights,antPatFiles,  nFiles, S1Cal, &maxR,&maxA);
+	parseImages(inputImage, &outputImage, imageFiles, geodatFiles,weights,antPatFiles,  nFiles, S1Cal, &maxR,&maxA,noData);
+	fprintf(stderr,"maxR, maxA %i %i\n",maxR,maxA);
 	/*
 	  Find output bounds
 	*/
 	outputBounds(inputImage , &outputImage,  nFiles);
-
 	/* 
 	   Memory allocation
 	*/
@@ -98,11 +101,26 @@ void main(int argc, char *argv[])
 	/*
 	  Do the mosaicking 
 	*/
-	makeGeoMosaic(inputImage,outputImage,dem,nFiles,maxR,maxA,imageFiles,fl,smoothL,orbitPriority);
+	makeGeoMosaic(inputImage,outputImage,dem,nFiles,maxR,maxA,imageFiles,fl,smoothL,smoothOut,orbitPriority, &psi, &gamma);
 	/*
 	  Output result
 	*/
 	outputGeocodedImage(outputImage,outFile);
+	/* For now only save incidence angle buffer if S1Cal */
+	if(S1Cal == TRUE) {
+		outputImage.image=(void **)psi;
+		tmp[0]='\0';
+		psiFile=strcat(tmp,outFile);
+		psiFile=strcat(tmp,".inc");
+		fprintf(stderr,"psiFile %s\n",psiFile);
+		outputGeocodedImage(outputImage,psiFile);
+		outputImage.image=(void **)gamma;
+		tmp[0]='\0';
+		gFile=strcat(tmp,outFile);
+		gFile=strcat(tmp,".gamcor");
+		fprintf(stderr,"gammaFile %s\n",gFile);
+		outputGeocodedImage(outputImage,gFile);				
+	}
 	return; 
 }
 
@@ -114,11 +132,11 @@ static void memAllocGeomosaic(inputImageStructure *inputImage,	outputImageStruct
 	/*
 	  Malloc space for input images 
 	*/
-	Dbuf1=malloc((size_t)MAXADBUF); /* add these 9/13/06 for initlltoimage */
+	/*Dbuf1=malloc((size_t)MAXADBUF);  add these 9/13/06 for initlltoimage */
+	Dbuf1=NULL;
 	Dbuf2=malloc((size_t)MAXADBUF);
 	buf1=(float *) malloc((size_t)(sizeof(float)*maxR*maxA));
 	smoothBuf= malloc((size_t)(sizeof(float) * max(maxR,maxA)));
-	fprintf(stderr,"%i %i \n",sizeof(float) * max( maxR,maxA), sizeof(float)*maxA);
 	if(buf1 == NULL) error("Unable to malloc input image buffer\n");
 	for(i=0; i < nFiles; i++) {   
 		inputImage[i].image=	(void **) malloc( (size_t)(inputImage[i].azimuthSize * sizeof(float *)));
@@ -179,7 +197,7 @@ static void outputBounds(inputImageStructure *inputImage ,	outputImageStructure 
 
 
 static void parseImages(inputImageStructure *inputImages ,outputImageStructure *outputImage, char **imageFiles,char **geodatFiles,
-			float *weights, char **antPatFiles,int nFiles, int S1Cal, int *maxR,int *maxA) {
+			float *weights, char **antPatFiles,int nFiles, int S1Cal, int *maxR,int *maxA,float noData) {
 	extern int HemiSphere;
 	extern double Rotation;
 	inputImageStructure *inputImage;
@@ -197,6 +215,7 @@ static void parseImages(inputImageStructure *inputImages ,outputImageStructure *
 		inputImage->stateFlag = TRUE;
 		inputImage->weight = weights[i];
 		inputImage->file = imageFiles[i];
+		inputImage->noData=noData;
 		fprintf(stderr,"Input file %i:: %s %s %f\n", i+1,geodatFiles[i],imageFiles[i],weights[i]);
 		inputImage->betaNought=-1.0;
 		if (S1Cal == TRUE) parseBetaNought(inputImage);
@@ -264,7 +283,7 @@ static void parseAntPat(char *antPatFile, inputImageStructure *inputImage)
 
 
 static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile, char **outFile,float *fl,int *removePad,
-		     int *nearestDate, int *noPower, int *hybridZ, int *rsatFineCal, int *S1Cal , char **date1,char **date2, int *smoothL,int *orbitPriority)   
+		     int *nearestDate, int *noPower, int *hybridZ, int *rsatFineCal, int *S1Cal , char **date1,char **date2, int *smoothL,int *smoothOut, int *orbitPriority, float *noData)   
 {
 	int filenameArg;
 	char *argString;
@@ -284,7 +303,9 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile, c
 	*S1Cal=FALSE;
 	*date1=NULL;
 	*date2=NULL;
+	*noData=0.0;
 	*smoothL=0;
+	*smoothOut=1;	
 	stringbuf[0]='\0';
 	*orbitPriority =-1;
 	for(i=1; i <= n; i++) {
@@ -295,6 +316,11 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile, c
 			sscanf(argv[i+1],"%f",fl); i++;
 		} else if(strstr(argString,"smoothL") != NULL) {
 			sscanf(argv[i+1],"%i",smoothL); i++;
+		} else if(strstr(argString,"smoothOut") != NULL) {
+			sscanf(argv[i+1],"%i",smoothOut); i++;
+			if(*smoothOut < 1 || *smoothOut > 3) error("smoothOut must be in range 1 to 3");
+		} else if(strstr(argString,"noData") != NULL) {
+			sscanf(argv[i+1],"%f",noData); i++;			
 		} else if(strstr(argString,"nearestDate") != NULL) {
 			sscanf(argv[i+1],"%s",stringbuf); i++;
 		} else if(strstr(argString,"hybridZ") != NULL) {
@@ -334,7 +360,7 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile, c
 		if(s != NULL) sscanf(s,"%d",&day); else usage();   
 		s=strtok(NULL,"-");
 		if(s != NULL) sscanf(s,"%d",&year); else usage();    
-		if(month > 12 || day > 31 || year < 1990 || year > 2050) usage();
+	if(month > 12 || day > 31 || year < 1990 || year > 2050) usage();
 		fprintf(stderr,"%i %i %i\n",year,month,day);
 		*nearestDate= year*365. + doy[month-1] + day;
 		fprintf(stderr,"nearest data %i %i %i\n",month,day,year);
@@ -344,6 +370,7 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile, c
 	*demFile = argv[argc-2];
 	*outFile = argv[argc-1];
 	if(*smoothL > 1)  	*smoothL=((int)(*smoothL/2))+1;
+	if(*smoothL > 0 && *smoothOut > 1) error("Smoothing of only input or output allowed (not both)");
 	fprintf(stderr,"Smooth Length %i\n",*smoothL);
 	fprintf(stderr,"Inputfile    = %s\n",*inputFile);
 	fprintf(stderr,"High Res DEM = %s\n",*demFile);
@@ -393,19 +420,22 @@ static void parseBetaNought( inputImageStructure *inputImage) {
 
 static void usage()
 {
-	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
 	      "mosaic images",
-	      "Usage:", " \033[1mgeomosaic -rsatFineCal -S1Cal -descending -ascending -nearestDate YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL  -fl fl -removePad pad -xyDEM \\",
+	      "Usage:", " \033[1mgeomosaic -rsatFineCal -S1Cal -noPower -noData -descending -ascending -nearestDate YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL -smoothOut smoothOut -fl fl -removePad pad -xyDEM \\",
 	      "\tinputFile Demfile outPutImage\033[0m",
 	      "where\n", 
 	      "\tfl               	= feather length",     
 	      "\tdate1,date2 	  	= range of dates to include in mosaic",
 	      "\tdescending      	= put descending on top",
 	      "\tascending        	= put ascending on top",	      
-	      "\tsmoothing length   	= multilook source images smoothL by smoothL (should be odd or will be made odd)",
+	      "\tsmoothL   		= multilook source images smoothL by smoothL (should be odd or will be made odd)",
+	      "\tsmoothOut 	   	= oversample image and then smooth for output (1,2,3) [1]",	      
 	      "\tnearestDate             = mosaic only points nearest YYYY:MM:DD",     
 	      "\thybridZ           	 = if used with nearest Date, date will only be applied for elevations below zthresh",     
 	      "\trsatFineCal       	 = set to output calibrate rsat fine beam data",
+	      "\tnoPower    	   	 = non power data",
+	      "\tnoData	    	   	 = no data value",	      	      
 	      "\tS1Cal  	          	 = set to output calibrate rsat fine beam data",     	      
 	      "\tremovePad         	 = remove first pad lines from first and last col",
 	      "\txyDEM              	 = smoothDem is XY type with xyDEM.geodat file",

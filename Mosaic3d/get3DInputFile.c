@@ -81,22 +81,6 @@ static void mallocFile(char phase[512],char ***phaseFiles, int i) {
 	 mallocFile( phase,phaseFiles,  i);
 	 mallocFile( geodat,geodatFiles,  i);
 	 mallocFile( baseline,baselineFiles,  i);
-	 /*
-          (*phaseFiles)[i] = (char *)malloc(strlen(phase)+1);
-         for(j=0; j < strlen(phase); j++) 
-             (*phaseFiles)[i][j] = phase[j];
-         (*phaseFiles)[i][j] = '\0';
-
-         (*geodatFiles)[i] = (char *)malloc(strlen(geodat)+1);
-         for(j=0; j < strlen(geodat); j++) 
-             (*geodatFiles)[i][j] = geodat[j];
-         (*geodatFiles)[i][j] = '\0';
-
-         (*baselineFiles)[i] = (char *)malloc(strlen(baseline)+1);
-         for(j=0; j < strlen(baseline); j++) 
-             (*baselineFiles)[i][j] = baseline[j];
-         (*baselineFiles)[i][j] = '\0';
-	 */
          (*weights)[i]=weight;
          (*nDays)[i] = nDay;
 

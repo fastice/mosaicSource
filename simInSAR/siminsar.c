@@ -81,8 +81,7 @@ void main(int argc, char *argv[])
 }
 
 
-static void readArgs(int argc,char *argv[], sceneStructure *scene,
-		     char **demFile, char **displacementFile, char
+static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFile, char **displacementFile, char
 		     **sceneFile, char **outputFile)   
 {
 	int filenameArg;

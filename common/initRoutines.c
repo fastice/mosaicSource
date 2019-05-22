@@ -119,8 +119,8 @@ double computeSig2Base(double sinThetaD,double cosThetaD, double azimuth, inputI
 	v[1]= - sinThetaD;
 	v[2]= - sinThetaD* normAzimuth;	v[3]= - cosThetaD * normAzimuth;
 	v[4]= - sinThetaD* xsq;			v[5]= - cosThetaD * xsq;
-	if(offsets->deltaB == DELTABNONE) v[6]= 1;
-	else v[6]= -cosThetaD;
+	if(offsets->deltaB == DELTABNONE) v[6]= 1; /* const */
+	else v[6]= -cosThetaD;  /* with state vectors correction to Bp */
 	/*
 	  C*v
 	*/
@@ -641,13 +641,9 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 	/*
 	  Init space for image 
 	*/
-	/*
 	if(outputImage->noMem == FALSE) {
-		if(outputImage->imageType == COMPLEX) outputImage->image=(void **)
-							      mallocComplexImage(outputImage->ySize,outputImage->xSize);
-		else
-	*/
-	outputImage->image=(void **)   mallocImage(outputImage->ySize,outputImage->xSize);
+		outputImage->image=(void **)   mallocImage(outputImage->ySize,outputImage->xSize);
+	}
 
 	return;
 }

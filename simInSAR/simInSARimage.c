@@ -37,95 +37,74 @@ unsigned char getShelfMask(ShelfMask *imageMask,double x, double y);
 /************************END STATIC ROUTINES DECLARATIONS*********************/
 
 
+
+
+
 void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
-{   
-	double range;
-	int recycle;
-	double deltarg;
-	double c3, c4;
-	double R, Rsquared, phi,theta,thetaD,delta,thetaC, rhoSp,rhoWGS,RCenter, RNear, RWGS,R0,ReWGS;
+{
+	conversionDataStructure *cp;
+	inputImageStructure *inputImage;
+	xyDEM *xyDem;
+	double R, theta,thetaD,delta,thetaC, rhoSp,rhoWGS,RCenter, RNear, RWGS,R0,ReWGS, ReH, Re;
 	double lat,lon;
-	double ReH;
-	double ii,jj;
 	double baselineSquared;
-	double toRho, r, rg;
+	double toRho, r, rg,drgStep, range;
 	double deltaToPhase;
-	int azIndex,azIndexSave,rIndex,rIndexSave;
-	int az;
-	double drgStep;
-	int iLoop, jLoop;
-	double iFloat,jFloat,rgSave;
+	double iFloat,rgSave;
 	double hSp,hWGS;
 	double x1,y1;
-	double H,Re;
 	double rOff,aOff;
-	conversionDataStructure *cp,*cpSave;
-	demStructure *llDem;
-	xyDEM *xyDem;
-	int i,j,iIndex;
-	int nIter;
-	long long nIterTotal;
-	float azFix;
-	double dRe;
+	long long nIterTotal, nIter;	
+	int recycle;
+	int iLoop, jLoop, i,iIndex;
 	fprintf(stderr,"SIM INSAR IMAGE\n");
-	/*
-	  Dem type
-	*/
+	/*	  Dem type	*/
 	xyDem = (xyDEM *)dem;		
 	/*
 	  Init coord conversions
 	*/
-	initllToImageNew(&(scene->I));
+	inputImage=&(scene->I);	
+	initllToImageNew(inputImage);
 	deltaToPhase = 4.0 * PI /scene->I.par.lambda;
-	Re = scene->I.cpAll.Re;
-	RCenter = scene->I.cpAll.RCenter;
-	ReH=scene->I.cpAll.Re + scene->I.par.H ;
-	H=scene->I.par.H ;
-	thetaC = acos( (RCenter * RCenter + ReH*ReH - Re*Re )/ (2.0*ReH*RCenter) );
-	/* ~1/10 of a pixel  */
-	deltarg=(scene->I.rangePixelSize * scene->dR)*0.25/sin(thetaC);
+	Re = inputImage->cpAll.Re;
+	RCenter = inputImage->cpAll.RCenter;
+	ReH=inputImage->cpAll.Re + inputImage->par.H ;
+	thetaC =	 thetaRReZReH( RCenter, (Re+0), ReH);
 	/* Constants for phase computation */
-	c3 =  2.0 * (Re + H);
-	c4 = 2.0 * H * Re + pow(H,2.0);
-	fprintf(stderr,"Re,thetaC,RNear,RFar, H %f %f %f %f %f %f %f %f %i \n ", Re,thetaC,scene->I.cpAll.RNear,scene->I.cpAll.RFar,H,deltarg,scene->I.rangePixelSize, deltarg,scene->I.nRangeLooks );
-	/* Correct offsets relative to pixel size change */
-	rOff= 0.5 *(scene->dR - scene->I.rangePixelSize );
-	aOff=0.0 ; /* (0.5*(scene->dA - scene->I.azimuthPixelSize ));	*/
-	RNear=scene->I.cpAll.RNear;
-	/*
-	  Loop over output grid. Use units of km.
-	*/
-	azFix=scene->aO;
+	fprintf(stderr,"Re,thetaC,RNear,RFar, %f %f   %f %f %f %i \n ", Re,thetaC,inputImage->cpAll.RNear,inputImage->cpAll.RFar,inputImage->rangePixelSize,inputImage->nRangeLooks );
+	/* Corrections from ml pixels to sl pixels */
+	rOff=0.5*(inputImage->nRangeLooks-1)*inputImage->par.slpR;
+	/* First part in slp so need to divide nlooks to get in mlp pixels */
+	aOff=0.5*(inputImage->nAzimuthLooks-1)/inputImage->nAzimuthLooks;
+	RNear=inputImage->cpAll.RNear;
 	rgSave=-1.0;
-	azIndexSave=0;
 	nIterTotal=0;
-	cp=&(scene->I.cpAll);
-	drgStep=deltarg;
+	cp=&(inputImage->cpAll);
+	/*
+	  Loop over output grid.
+	*/
 	for (iLoop=0; iLoop < scene->aSize; iLoop++) {
-		iFloat=iLoop*scene->dA + azFix + aOff;
+		iFloat=iLoop*scene->dA + scene->aO - aOff - cp->azOff;
 		i=(int)(iFloat + 0.5);
-		/*fprintf(stderr,"iFloat %f\n",iFloat); */
 	        iIndex = iLoop;
 		ReH=getReH(cp,&(scene->I), iFloat);
 		rhoSp=rhoRReZReH( RNear,(Re+0), ReH);
 		rg = Re * rhoSp -100;    /* Initial ground range on spherical earth */
-		range = scene->I.cpAll.RNear + scene->rO*scene->I.rangePixelSize  ;    /* Starting range - gets incremented in loop */
+		range = inputImage->cpAll.RNear + scene->rO*inputImage->rangePixelSize - rOff ;    /* Starting range - gets incremented in loop */
 		scene->bn = scene->bnStart + (double)iIndex * scene->bnStep;
 		scene->bp = scene->bpStart + (double)iIndex * scene->bpStep;
 		if(i == 0) fprintf(stderr,"%f %f \n",scene->bn,scene->bp);
-		if(i % 100 == 0) fprintf(stderr,"%i %f %lf \n",i,rg,(double)(nIterTotal/(iLoop * scene->rSize) ));
+		if(i % 100 == 1) fprintf(stderr,"%i %f %lf \n",i,rg,(double)(nIterTotal/(iLoop * scene->rSize) ));
 		/* Loop over range - not this program uses a ground range, rg, on a spherical earth to move across the swath. 
 		   The actual ground ranges aren't correct, but the final calculation is  */
-		az = i - cp->azOff;
-
 		for(jLoop=0; jLoop < scene->rSize; jLoop++) {
-			jFloat=scene->rO+jLoop*scene->dR + rOff;
-			j=(int)(jFloat + 0.5);
 			/* Initialize iteration */
 			delta = 0.0;
 			nIter=0;
 			recycle=FALSE;
-			if( az >= 0 && az < cp->azSize-1) {				
+			if( i >= 0 && i < cp->azSize) {
+			        /*rangeAzimuthToLL(double range,double iFloat,double *lat, double *lon,sceneStructure *scene) */
+				/*nIter=rangeAzimuthToLL(&rg, range, iFloat, rhoSp, ReH,  Re, &lat,&lon,&hWGS,inputImage,xyDem,0.1,0.5 );*/
 				while(1) {
 					/* For rg on spherical earth, compute lat/lon for the corresponding ellipsoidal earth 
 					   and return the corresponding slant range */
@@ -147,10 +126,10 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 					/* Avoid infinite loop */
 					if(nIter > 8000){fprintf(stderr,"%f %f %f\n",Re,rhoSp,ReH); break; }
 					nIter++;
-				} /* Endwhile */
+			}  
 				if(jLoop == 0) rgSave=rg;
 				nIterTotal +=nIter;
-				withHeight(&(scene->I), &lat, &lon, (double)az,range, hWGS);
+				withHeight(&(scene->I), &lat, &lon, iFloat,range, hWGS);
 				/*				  Get displacement				*/
 				if(scene->maskFlag == TRUE && scene->toLLFlag == FALSE ) {
 					lltoxy1(lat,lon,&x1,&y1,xyDem->rot,xyDem->stdLat);
@@ -160,19 +139,18 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 				} else if(scene->toLLFlag == TRUE) {
 					scene->latImage[iIndex][jLoop]=lat;
 					scene->lonImage[iIndex][jLoop]=lon;
+					/*fprintf(stderr,"%f %f\n",lat,lon,hWGS); error("stop");*/
 					if( scene->maskFlag == TRUE ) {
 						lltoxy1(lat,lon,&x1,&y1,xyDem->rot,xyDem->stdLat);
 						scene->image[iIndex][jLoop]=getShelfMask(scene->imageMask,x1,y1);
 					}
 				} else {
-					/*
-					  Use h on single spherical reference for phase
-					  even though locally spherical value was used for location
-					*/
+					/* Use h on single spherical reference for phase
+					  even though locally spherical value was used for location */
 					hSp= getXYHeight(lat,lon,xyDem,Re, SPHERICAL);
 					/* NOT VALIDATED */
-					hSp= hSp + Re - scene->I.cpAll.Re;
-					Re=scene->I.cpAll.Re;
+					hSp= hSp + Re - inputImage->cpAll.Re;
+					Re=inputImage->cpAll.Re;
 					/*
 					  Compute look angle for height h and range R. 
 					  Note I had to make a decision here whether to use ReH or Re + H
@@ -185,7 +163,7 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 					  theta = acos( ( range*range + ReH*ReH - (Re+h)*(Re+h) )/
 					  (2.0*ReH*range) );
 					*/
-					theta = acos((range*range + c4 - 2.0*hSp * Re - hSp*hSp) / (range*c3));
+					theta = thetaRReZReH( range, (Re+hSp), ReH);
 					thetaD = theta - thetaC;
 					/*
 					  Add componenent of delta from topography in meters.
@@ -197,7 +175,7 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 					   Flatten phase image if flatFlag set. Include possible baseline estimation   error.
 					*/
 					if(scene->flatFlag == TRUE) {
-						theta = acos( (range*range + c4)/(range*c3) );
+						theta =thetaRReZReH( range, (Re+0.), ReH);
 						thetaD = theta - thetaC;
 						delta -=  -scene->bn * sin(thetaD) -scene->bp * cos(thetaD) + baselineSquared * 0.5 /range;
 					}       
@@ -206,10 +184,10 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 					*/
 					scene->image[iIndex][jLoop] = (float)(delta * deltaToPhase); 
 				} /* End else */
-				range += scene->I.rangePixelSize * scene->dR;
+				range += inputImage->rangePixelSize * scene->dR;
 			} else {
 				/* No data cases because outsize az range */
-				if(jLoop == 10 ) fprintf(stderr,"%i %f %i",iLoop,iFloat,az);
+				if(jLoop == 10 ) fprintf(stderr,"%i %f %i",iLoop,iFloat,i);
 				if(scene->maskFlag == TRUE && scene->toLLFlag == FALSE ) {
 					scene->image[iIndex][jLoop]=0;
 				} else if(scene->heightFlag == TRUE && scene->toLLFlag == FALSE ) {
@@ -226,7 +204,6 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 	} /* end for iLoop .... */
 	fprintf(stderr,"nIt Avg %f\n",(double)nIterTotal/(scene->rSize * scene->aSize));
 	fprintf(stderr,"bn bp %f %f \n",scene->bn,scene->bp);
-
 	return;
 }
 

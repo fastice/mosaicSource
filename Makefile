@@ -30,6 +30,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getRegion.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/getShelfMask.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getXYHeight.o \
+			common/$(MACHTYPE)-$(OSTYPE)/groundRangeToLLNew.o \
 			common/$(MACHTYPE)-$(OSTYPE)/initMatrix.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/initRoutines.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/interpOffsets.o \
@@ -44,8 +45,9 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 			common/$(MACHTYPE)-$(OSTYPE)/parseInputFile.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
 			common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
+	                common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
-			 common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
+			common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/readXYDEM.o \
@@ -74,6 +76,7 @@ RECIPES  =	$(PROGDIR)/cRecipes/$(MACHTYPE)-$(OSTYPE)/polint.o $(PROGDIR)/cRecipe
 LANDSATCODE =		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/readLSOffsets.o \
 					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/parseLSInputs.o \
 					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/interpLSTies.o \
+					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o \
 					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/makeLandSatMosaic.o
 
 
@@ -112,7 +115,6 @@ mosaic3d:
 #********************************************************************************
 SIMINSAR =	simInSAR/$(MACHTYPE)-$(OSTYPE)/parseSceneFile.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/simInSARimage.o \
-                simInSAR/$(MACHTYPE)-$(OSTYPE)/groundRangeToLLNew.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/outputSimulatedImage.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getDisplacement.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getSlantRangeDEM.o
@@ -258,7 +260,7 @@ getlocc:
 GEOMOSAIC =	geoMosaic/$(MACHTYPE)-$(OSTYPE)/makeGeoMosaic.o \
                 geoMosaic/$(MACHTYPE)-$(OSTYPE)/processInputFileGeo.o
 
-GEOMOSAICDIRS =	geoMosaic common
+GEOMOSAICDIRS =	geoMosaic common landsatMosaic
 
 geomosaic:	
 	@for i in ${GEOMOSAICDIRS}; do \
@@ -269,4 +271,5 @@ geomosaic:
 		); done
 		gcc -m32 $(CCFLAGS1)  \
 		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) \
+		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o  \
                 -lm  -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o

@@ -37,7 +37,6 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 	double ReH, Re;
 	float **vXimage,**vYimage,**vZimage;
 	float **scaleX,**scaleY,**scaleZ;
-	double tdTemp;
 	double twok;
 	double dzda,dzdr;      /* Slopes in azimuth and range */
 	double range, azimuth; /* range,azimuth coords */

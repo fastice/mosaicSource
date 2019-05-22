@@ -72,7 +72,6 @@ void main(int argc, char *argv[])
 	/*
 	  Set inputs
 	*/
-
 	if(constOnlyFlag == TRUE) fprintf(stderr,"\n(****Constant only fit*****\n");
 	if(linFlag == TRUE) fprintf(stderr,"\n(****Including linear term fit*****\n");
 	/*
@@ -100,6 +99,7 @@ void main(int argc, char *argv[])
 	  Extract phases from phase file.
 	*/
 	getOffsets(offsetFile,&tiePoints,inputImage,&offsets);
+	fprintf(stderr,"%s %s %i\n",offsets.geo1,offsets.geo2,(int)tiePoints.deltaB);
 	if(offsets.geo1 != NULL && offsets.geo2 != NULL && tiePoints.deltaB != DELTABNONE) {
 		svInitAzParams(&inputImage,&offsets );
 		fprintf(stderr,"sv fit %f %f %f %f\n",offsets.azFit[0],offsets.azFit[1],offsets.azFit[2],offsets.azFit[3]);

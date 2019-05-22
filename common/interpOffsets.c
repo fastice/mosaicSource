@@ -119,8 +119,8 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	/*    
 	   apply corrections 
 	*/
-	result *= rSLPixSize;
-	result -=zeroOffset;
+	result *= rSLPixSize; /* This puts offset in meters */
+	result -=zeroOffset;  /* Substract the offset in meters */
 	return result;
 }
 
@@ -146,7 +146,7 @@ float interpRangeSigma(double range,double azimuth,Offsets *offsets,  inputImage
 	*/
 	if(result > 0.1 || result < 0.0) result=0.1;			
 	result=max(offsets->sigmaRange,result);
-	result *= rSLPixSize;
+	result *= rSLPixSize; /* put in units of meters */
 	return result;
 }
 

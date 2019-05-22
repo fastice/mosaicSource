@@ -57,6 +57,8 @@
 extern double RangePixelSize;    /* Size in m of range pixel */
 extern double AzimuthPixelSize;    /* Size in m of azimuth pixel */
 
+
+
 typedef struct irregType {
 	char *file;
 	double *x;
@@ -346,3 +348,7 @@ double getReH( conversionDataStructure *cP, inputImageStructure *inputImage,doub
 double bPoly(double b0,double b1,double b2,double x);
 double secondForSAR(SARData *par);
 char *appendSuffix(char *file, char *suffix,char *buf );
+int rangeAzimuthToLL(double *rg, double range,double iFloat,double rhoSp,double ReH, double Re, double *lat, double *lon,double *hWGS,inputImageStructure *inputImage,xyDEM *xyDem,double tol,double step );
+double groundRangeToLLNew(double groundRange, double azimuth, double *lat,double *lon, inputImageStructure *inputImage,int recycle);
+void llToECEF(double lat,double lon,double h, double *x,double *y,double *z);
+void getState(double myTime,inputImageStructure *inputImage, double *xs,double *ys, double *zs, double *vsx, double *vsy, double *vsz);

@@ -206,9 +206,6 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 							vyTmp[i][j] = (float)vy*scY;
 							fScale[i][j] = 1;    /* Value for zero feathering */
 							validData=TRUE;
-
-
-
 							/* 
 							   If overlap flag = true, then use the vz buff for deltaT
 							*/

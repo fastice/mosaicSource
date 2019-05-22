@@ -50,7 +50,7 @@ static void RTtoLatLon(inputImageStructure *inputImage,double r,double myTime,do
         double a;
 } svdData;
 /* Number of points in each dimension to fit azimuth offset function */
-#define NAPTS 25
+#define NAPTS 50
 /* set to  4 for first order poly a+b*az +c rg +d rg*az or 5 to add quad in range ... + e *rg^2 */
 # define AZORD 5
 
@@ -135,6 +135,7 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets ) {
 				ra[n].r=(r-r0)*MTOKM;
 				sigX[n]=1.;
 				ra[n].a=(t-t0)*inputImage->par.prf*inputImage->par.slpA * MTOKM;
+				fprintf(stdout,"%f %f %f\n",ra[n].r,ra[n].a,da[n]);
 				n++;
 			}
 		}
@@ -149,7 +150,7 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets ) {
 		fprintf(stderr," %11.8e",myFit[i+1]);
 		offsets->azFit[i]=myFit[i+1];
 	}
-	fprintf(stderr,"sqrt(x2/nPts) %f\n", sqrt(chisq/nPts ));	
+	fprintf(stderr,"\nSV Fit for Offsets sqrt(x2/nPts) %f\n", sqrt(chisq/nPts ));
 	free_dmatrix(u,1, nPts,1,ma);
 	free_dmatrix(v,1,ma,1,ma);
 	free_dvector(w,1,ma);
@@ -223,7 +224,7 @@ void svInitBnBp(inputImageStructure *inputImage, Offsets *offsets ) {
 		azTime=inputImage->cpAll.sTime + i * inputImage->nAzimuthLooks /inputImage->par.prf;		
 		svBaseTCN(azTime,offsets->dt1t2,&(inputImage->sv),&(offsets->sv2),bTCN);
 		svBnBp(azTime,thetaC,offsets->dt1t2,&(inputImage->sv),&(offsets->sv2),&bnS,&bpS);
-		if(i % 1 == 0) fprintf(stderr,"%d %f %f\n",i,bnS,bpS);
+		/*if(i % 1 == 0) fprintf(stderr,"%d %f %f\n",i,bnS,bpS);*/
 		offsets->bnS[i]=bnS;
 		offsets->bpS[i]=bpS;		
 	}

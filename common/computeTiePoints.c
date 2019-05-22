@@ -74,7 +74,8 @@ void computeTiePoints(inputImageStructure *inputImage,      tiePointsStructure *
 	for(i=0; i < tiePoints->npts; i++) {
 		lat = tiePoints->lat[i];
 		lon = tiePoints->lon[i];
-		if(lat < -91 || lat > 91) { /* This should only apply to lltora cases */
+		 /* This test should only be needed for lltora cases, since ll values should be valid for tiepoints */		
+		if( (lat > -90.001 &&  lat <  90.001) || 1==1) {
 			/* Deal with shelf mask if necessary */
 			if(shelfMask != NULL && shelfMaskFlag != -1) {
 				lltoxy1(lat,lon,&xx,&yy,Rotation,tiePoints->stdLat);

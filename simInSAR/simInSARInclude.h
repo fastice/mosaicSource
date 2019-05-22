@@ -28,6 +28,7 @@ typedef struct xyPairType {
 	double y;
 } xyPair;
 
+
 typedef struct sceneStructureType {
 	int flatFlag;
 	int heightFlag;
@@ -82,7 +83,7 @@ typedef struct displacementStructureType {
 */
 void parseSceneFile(char *sceneFile, sceneStructure *scene);
 
-double groundRangeToLLNew(double groundRange, float azimuth, double *lat,double *lon, inputImageStructure *inputImage,int recycle);
+
 /*
   Initialize conversion matrices and constants for groundRangeToll
 */

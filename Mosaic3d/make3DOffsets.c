@@ -235,7 +235,6 @@ void make3DOffsets(inputImageStructure *allImages,  vhParams *aParams,  xyDEM *d
 							sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
 							syTmp[i][j] = scY;
 							fScale[i][j] = 1.0;        /* Value for zero feathering */
-							vzTmp[i][j]=dzdx;
 						}
 					}
 					if(validData==FALSE) {

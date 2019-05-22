@@ -63,6 +63,7 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	RNear = cP->RNear;
 	fprintf(stderr,"---------------------RNear %f %f \n",RNear,H);
 	getBaselineRates(&dbcds,&dbhds,baseFile,inputImage->par.prf,inputImage->par.slpA);
+
 	if(offsets->deltaB != DELTABNONE)  { dbcds=0.0; dbhds=0.0;}			
 	/*
 	  Range comp params
@@ -90,9 +91,9 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	for(k=0; k < 3; k++) {
 		j = 0;
 		varP=0; meanP=0;
-	/*
-	  Prep data for solution
-	*/
+		/*
+		Prep data for solution
+		*/
 		fprintf(stderr,"result %e %e %e %e\n",result[1],result[2],result[3],result[4]);
 		for(i=0; i < nData; i++) {
 			if(fabs(tiePoints->phase[i]) < 1.0E6) { /* Use only good points */
@@ -270,8 +271,7 @@ static void getBaselineRates(double *dbcds, double *dbhds,   char *baseFile,doub
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	if( sscanf(line,"%lf%lf%lf",&x1,&x2,&x3) != 3)
-		error("%s  %i of %s",    "readOffsets -- Missing image parameters at line:",
-		      lineCount,baseFile); 
+		error("%s  %i of %s",    "readOffsets -- Missing image parameters at line:",  lineCount,baseFile); 
 	*dbcds=x2/(prf*slPixSize);
 	*dbhds=x3/(prf*slPixSize);
 	fprintf(stderr,"dbcds,dbhds, %f %f\n", *dbcds,*dbhds);

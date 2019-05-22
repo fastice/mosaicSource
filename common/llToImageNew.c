@@ -8,7 +8,7 @@
 /* added 8/13/16 to handle large numbers of state vectors. This is so polint uses a 5 point interpolation - make sure not change with updating where its used */
 
 
-static void llToECEF(double lat,double lon,double h, double *x,double *y,double *z);
+
 static void computeSatHeightNew( conversionDataStructure *cp,   inputImageStructure *inputImage,int memMode);
 
 void initllToImageNew( inputImageStructure *inputImage) {
@@ -110,6 +110,8 @@ void llToImageNew(double lat,double lon, double h, double *range, double *azimut
 		/* Check for convergence */
 		if(fabs(df/C1) < 1.e-6) break;
 	}
+/*	fprintf(stderr,"%i\n",i);*/
+	
 	polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]),&(sv->z[n]),  &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]),
 			  myTime, &xs,&ys ,&zs, &vsx,&vsy ,&vsz);	
 	lastTime=myTime;
@@ -124,7 +126,7 @@ void llToImageNew(double lat,double lon, double h, double *range, double *azimut
 }
 
 
-static void llToECEF(double lat,double lon,double h, double *x,double *y,double *z) {
+void llToECEF(double lat,double lon,double h, double *x,double *y,double *z) {
 	double f,latCos,latSin;
 	double F2,C,S;
 	double dtor;
