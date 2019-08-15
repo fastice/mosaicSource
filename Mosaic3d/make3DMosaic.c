@@ -14,6 +14,34 @@ static double computePhiZM3d(double *thetaD,  double z,double azimuth,  vhParams
 /*
 ************************ Estimate 3D velocity from phase **************************
 */
+
+/* convert range and time on the lat/lon on the ellipsoid */
+static void RTtoLatLon(inputImageStructure *inputImage,double r,double myTime,double *lat,double *lon) {
+	int n;
+	stateV *sv;
+	double xs,ys,zs,vsx,vsy,vsz;
+	sv=&(inputImage->sv);
+	n=(long int)((myTime - sv->times[1])/(sv->deltaT)+.5);
+	n=min(max(0,n-2), sv->nState-NUSESTATE);	
+	polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]),&(sv->z[n]),  &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]), myTime, &xs,&ys ,&zs, &vsx,&vsy ,&vsz);
+	smlocateZD( xs*MTOKM,  ys*MTOKM,  zs*MTOKM, vsx*MTOKM,vsy*MTOKM, vsz*MTOKM, r*MTOKM,lat,lon,(double)(inputImage->lookDir),0.0);
+}
+
+static void printLatLon(	inputImageStructure  *inputImage) {
+	int i1,j1;
+	double dr,dt,lat,lon;
+	dr=(inputImage->par.rf-inputImage->par.rn)/(1);
+	dt=(inputImage->azimuthSize* inputImage->nAzimuthLooks/inputImage->par.prf)/(1);
+	fprintf(stderr,"%f %f\n",dr,dt);
+	for(i1=0; i1 < 2; i1++) 		for(j1=0; j1 < 2; j1++) {
+			fprintf(stderr,"%f %f \n",inputImage->par.rc,inputImage->cpAll.sTime);
+			RTtoLatLon(inputImage,inputImage->par.rc+i1*dr,inputImage->cpAll.sTime+j1*dt,&lat,&lon); /* lat/lon in first image */
+			fprintf(stderr,"%f %f \n",lat,lon);
+		}
+	RTtoLatLon(inputImage,inputImage->par.rc+0.5*dr,inputImage->cpAll.sTime+0.5*dt,&lat,&lon); /* lat/lon in first image */
+	fprintf(stderr,"%f %f \n",lat,lon);	
+}
+
 void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImages, 
 		  vhParams *ascParams, vhParams *descParams,  xyDEM *dem,  outputImageStructure *outputImage,float fl,  int no3d)
 {   
@@ -52,7 +80,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	int validData, Aset; /* Flags to indicate a valide solution, and A updates */		
 	int iMin,iMax,jMin,jMax; /* range in pixels over which to compute solutions */
 	int aa,dd;  /* Counters for asc/desc images */
-	int i,j;
+	int i,j,i1,j1;
 	unsigned char sMask;
 
 	fprintf(outputImage->fpLog,";\n; Entering make3DMosaic(.c)\n");
@@ -115,6 +143,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			   Moved up 9/14/2016 to avoid init ll - had to modify getRegion to use lat/lon from geodat
 			*/
 			getRegion(dPhaseImage,&iMin,&iMax,&jMin,&jMax,outputImage);
+
 			if(iMin > iMax || jMin > jMax) {
 				/* This file has no overlap so, set to nophase - for future loops */
 				strncpy(dPhaseImage->file,"nophase",7); dPhaseImage->file[7]='\0';
@@ -125,6 +154,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			/*
 			  Get region of  possible intersection;   This provides final iMin/iMax.. to loop over 
 			*/
+			fprintf(stderr,"%i %i %i %i\n",iMin,iMax,jMin,jMax);
 			getIntersect(dPhaseImage,aPhaseImage,&iMin,&iMax,&jMin,&jMax,outputImage);
 			if(iMax==0 && jMax==0)  goto descskip;
 			/*

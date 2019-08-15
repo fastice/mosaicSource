@@ -44,9 +44,9 @@ void computeTiePoints(inputImageStructure *inputImage,      tiePointsStructure *
 	shelfMaskFlag = (int32) shelfMask;
 	
 	if(supressOutput==FALSE) {
-		fprintf(stdout,";;\n;; InSAR parameters  Re, RNear, Rc, nlr,nla\n;;\n");  
-		fprintf(stdout," %10.3f  %8.3f %8.3f  %i %i %f %f\n",
-			cP->Re*MTOKM,cP->RNear*MTOKM,inputImage->par.rc*MTOKM,
+		fprintf(stdout,";;\n;; H, InSAR parameters  Re, RNear, Rc, nlr,nla\n;;\n");  
+		fprintf(stdout," %10.3f %10.3f  %8.3f %8.3f  %i %i %f %f\n",
+			inputImage->par.H*MTOKM, cP->Re*MTOKM,cP->RNear*MTOKM,inputImage->par.rc*MTOKM,
 			inputImage->nRangeLooks,inputImage->nAzimuthLooks,inputImage->rangePixelSize/inputImage->nRangeLooks, inputImage->par.lambda);
 	}
 	/*
@@ -92,6 +92,7 @@ void computeTiePoints(inputImageStructure *inputImage,      tiePointsStructure *
 			  Get height for given lat/lon, with spherical correction
 			*/
 			zWGS=tiePoints->z[i];
+			
 			if(tiePoints->imageCoords == FALSE ) {
 				llToImageNew(lat,lon,zWGS,&range,&azimuth,inputImage);
 				RElip = earthRadius(lat*DTOR,EMINOR,EMAJOR)*KMTOM   + tiePoints->z[i];

@@ -105,13 +105,13 @@ void main(int argc, char *argv[])
 	*/
 	tiePointFp = openInputFile(tiePointFile);
 	readTiePoints(tiePointFp, &tiePoints,noDEM);
+
 	if(tiePoints.lat[0] < 0) {
 		fprintf(stderr,"**** SOUTHERN HEMISPHERE ****");
 		HemiSphere=SOUTH;
 		tiePoints.stdLat=71;
 		Rotation=0.0;
 	} else fprintf(stderr,"**** NORTHERN HEMISPHERE ****");
-
 
 	tiePoints.noRamp = noRamp;
 	tiePoints.dBpFlag = dBpFlag;

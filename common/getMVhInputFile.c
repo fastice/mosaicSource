@@ -7,6 +7,17 @@
 #include "mosaicSource/computeVH_p/computevh.h"*/
 #include "common.h"
 
+static char *dupName(char *phase) {
+	int j;
+	char *tmp;
+	if( strstr(phase,"none") || phase[0]=='\0' ) {
+		return(NULL);
+	}
+	tmp = (char *)malloc(strlen(phase)+1);
+	for(j=0; j < strlen(phase); j++) tmp[j] = phase[j];
+	tmp[j] = '\0';
+	return tmp;
+}
 /*
   Process input file for velocity mosaicking
 */
@@ -25,7 +36,6 @@ void  getMVhInputFile(char *inputFile,char ***phaseFiles, char ***geodatFiles, c
 	/*
 	  Open file for input
 	*/
-
 	fp = openInputFile(inputFile);
 	/*
 	  Input nr,na,nlr,nla
@@ -80,8 +90,8 @@ void  getMVhInputFile(char *inputFile,char ***phaseFiles, char ***geodatFiles, c
 					error("%s  %i  of %s", "getMVhInputFile -- Missing filename at line:", lineCount,inputFile);
 			}
 		} else if( (offsetFlag==TRUE && rOffsetFlag == FALSE) && threeDOffFlag==FALSE ) {
-			if( sscanf(line,"%s %s %s %f %f %s %s",
-				   phase,geodat,baseline,&nDay,&weight,offsets,azParams) != 7) {
+			/* az but no range offsets */
+			if( sscanf(line,"%s %s %s %f %f %s %s", phase,geodat,baseline,&nDay,&weight,offsets,azParams) != 7) {
 				weight=1.0;
 				if( sscanf(line,"%s %s %s %f %s %s",  phase,geodat,baseline,&nDay,offsets,azParams) != 6) {
 					rOffsets[0]='\0'; rParams[0]='\0';
@@ -109,42 +119,17 @@ void  getMVhInputFile(char *inputFile,char ***phaseFiles, char ***geodatFiles, c
 				}
 			}
 		}
-
-		(*phaseFiles)[i] = (char *)malloc(strlen(phase)+1);
-		for(j=0; j < strlen(phase); j++) (*phaseFiles)[i][j] = phase[j];
-		(*phaseFiles)[i][j] = '\0';
-
-		(*geodatFiles)[i] = (char *)malloc(strlen(geodat)+1);
-		for(j=0; j < strlen(geodat); j++)  (*geodatFiles)[i][j] = geodat[j];
-		(*geodatFiles)[i][j] = '\0';
-
-		(*baselineFiles)[i] = (char *)malloc(strlen(baseline)+1);
-		for(j=0; j < strlen(baseline); j++)  (*baselineFiles)[i][j] = baseline[j];
-		(*baselineFiles)[i][j] = '\0';
+		(*phaseFiles)[i] = dupName(phase);
+		(*geodatFiles)[i] =dupName(geodat);
+		(*baselineFiles)[i] =dupName(baseline);
 
 		if(offsetFlag==TRUE || rOffsetFlag==TRUE || threeDOffFlag==TRUE ) {
-			if(offsets[0] != '\0') {
-				(*offsetFiles)[i] = (char *)malloc(strlen(offsets)+1);
-				for(j=0; j < strlen(offsets); j++) (*offsetFiles)[i][j] = offsets[j];
-				(*offsetFiles)[i][j] = '\0';
-			} else (*offsetFiles)[i] = NULL;
-			if(offsets[0] !='\0') {
-				(*azParamsFiles)[i] = (char *)malloc(strlen(azParams)+1);
-				for(j=0; j < strlen(azParams); j++) 	(*azParamsFiles)[i][j] = azParams[j];
-				(*azParamsFiles)[i][j] = '\0';
-			} else (*azParamsFiles)[i] = NULL;
-		}
+			(*offsetFiles)[i] = dupName(offsets);
+			if((*offsetFiles)[i] != NULL)  (*azParamsFiles)[i] =dupName(azParams);			
+		}	
 		if(rOffsetFlag==TRUE  || threeDOffFlag==TRUE ) {
-			if(rOffsets[0] != '\0') {
-				(*rOffsetFiles)[i] = (char *)malloc(strlen(rOffsets)+1);
-				for(j=0; j < strlen(rOffsets); j++) (*rOffsetFiles)[i][j] = rOffsets[j];
-				(*rOffsetFiles)[i][j] = '\0';
-			} else (*rOffsetFiles)[i] = NULL;
-			if(rParams[0] != '\0') {
-				(*rParamsFiles)[i] = (char *)malloc(strlen(rParams)+1);
-				for(j=0; j < strlen(rParams); j++) (*rParamsFiles)[i][j] = rParams[j];
-				(*rParamsFiles)[i][j] = '\0';
-			} else (*rParamsFiles)[i] = NULL;
+			(*rOffsetFiles)[i] = dupName(rOffsets);
+			if((*rOffsetFiles)[i] != NULL)  (*rParamsFiles)[i] =dupName(rParams);
 		}
 		(*crossFlags)[i] = crossFlag;		
 		(*weights)[i]=weight;
@@ -154,3 +139,4 @@ void  getMVhInputFile(char *inputFile,char ***phaseFiles, char ***geodatFiles, c
 	return;
 }
 
+ 

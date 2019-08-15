@@ -59,7 +59,7 @@ void computeBaseline( tiePointsStructure *tiePoints,
         Re = tiePoints->Re;
 	RNear = tiePoints->RNear;
 	thetaC=thetaRReZReH(cP->RCenter, (Re+0.), ReH);
-	fprintf(stderr,"------------------+++ RNear %f %f %f\n",RNear,thetaC*RTOD,tiePoints->thetaC*RTOD);
+	fprintf(stderr,"------------------+++ RNear %f %f %f %f\n",RNear,thetaC*RTOD,tiePoints->thetaC*RTOD,ReH);
 	/*
 	  Range comp params
 	*/

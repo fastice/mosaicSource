@@ -36,7 +36,7 @@
      for(i=0; i < tiePoints->npts; i++) {
 
          tiePoints->phase[i] =  interpolatePhase(tiePoints->r[i],tiePoints->a[i],phaseImage);
-         if(tiePoints->phase[i] < LARGEINT) fprintf(stdout,"; %i  %i  %f %f\n",
+         if(tiePoints->phase[i]  >  (-LARGEINT+10)) fprintf(stdout,"; %i  %i  %f %f\n",
                  (int)(tiePoints->r[i]+0.5),(int)(tiePoints->a[i]+0.5), tiePoints->z[i],tiePoints->phase[i]);
      }
     for(i=0; i < inputImage.azimuthSize; i++) free(phaseImage.phase[i]);
