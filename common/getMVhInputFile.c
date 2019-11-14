@@ -10,7 +10,7 @@
 static char *dupName(char *phase) {
 	int j;
 	char *tmp;
-	if( strstr(phase,"none") || phase[0]=='\0' ) {
+	if( strstr(phase,"none")  ||  strstr(phase,"None")   || phase[0]=='\0' ) {
 		return(NULL);
 	}
 	tmp = (char *)malloc(strlen(phase)+1);

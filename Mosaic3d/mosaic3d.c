@@ -155,8 +155,6 @@ void main(int argc, char *argv[])
 	mallocOutputImage(&outputImage);
 	/* Consolodate lists */
 	consolodateLists(&images, &params, ascImages, descImages, ascParams, descParams, nAsc, nDesc);
-
-
 	/*
 	  Init and input DEM
 	*/
@@ -188,6 +186,7 @@ void main(int argc, char *argv[])
 	if((nAsc+nDesc) > 0 && threeDOffFlag == TRUE) {
 		make3DOffsets(images,params,&dem, &outputImage,fl,timeThresh);
 	}
+
 	/*	  Setup dem stuff	*/
 
 	/* 
@@ -789,7 +788,7 @@ static void usage()
 	      "\trOffsets =\t\t Use offset data for both components where needed ",	      
 	      "\ttimeThresh =\t\t For 3D crossing offset solution, only use pairs within timeThresh days (def=12)",
 	      "\tirregFile =\t\t File with list of irregular input data",
-	      "\tvzFlag =\t\t Used for changing output in vertical channel 0 for default, 1 horizontal sin(psi), 2 for vertical cos(psi)",
+	      "\tvzFlag =\t\t Used for changing output in vertical channel 0 for default (vz correction), 1 horizontal 1/sin(psi), 2 for 1/vertical cos(psi), 3 flag for LOS scaled to m/yr, 4 inc angle",
 	      "\tstats =\t\t compute unweight mean vx, and vy and standard dev of the inputs (ex,ey) and number of points (vz) - works only for speckleTrack",	      
 	      "\tnoSepAscDesc =\t\t For 3d ignore asc/desc and use heading, default use asc/desc",
 	      "\tnoTide =\t\t Don't compute value if on shelf",

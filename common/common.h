@@ -40,6 +40,8 @@
 #define VZDEFAULT 0
 #define VZHORIZONTAL 1
 #define VZVERTICAL 2
+#define VZLOS 3
+#define VZINC 4
 #define  AZONLY 0
 #define RGANDAZ 1
 #define  RGONLY 2

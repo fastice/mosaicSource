@@ -17,8 +17,7 @@
     xi = (x-shelfMask->x0)/shelfMask->deltaX + 0.5; 
     yi = (y-shelfMask->y0)/shelfMask->deltaY + 0.5;
 
-    if(xi < 0 || yi < 0 || 
-        xi >= shelfMask->xSize || yi >= shelfMask->ySize) return(GROUNDED);
+    if(xi < 0 || yi < 0 ||  xi >= shelfMask->xSize || yi >= shelfMask->ySize) return(GROUNDED);
     else return(shelfMask->mask[yi][xi]);
 
 } 

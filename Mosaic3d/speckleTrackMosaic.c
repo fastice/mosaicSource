@@ -195,6 +195,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						  Compute vertical velocity
 						*/
 						vz = vx * dzdx + vy * dzdy;
+
 						if(noData==FALSE) {
 							currentImage->used=TRUE;
 							if(statsFlag==FALSE) {
@@ -213,16 +214,19 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 								vzTmp[i][j] =(float)(deltaOffCenter * sqrt(scX*scY));
 							} else if(statsFlag==FALSE) {
 								if(outputImage->vzFlag==VZDEFAULT)	vzTmp[i][j] =(float) vz; /* vz ; */
-								else if(outputImage->vzFlag==VZHORIZONTAL) { vzTmp[i][j] =  (float)  (dr  * scaleDr * sin(psi)); }
+								else if(outputImage->vzFlag==VZHORIZONTAL) { vzTmp[i][j] =  (float)  (dr  * scaleDr ); } /* scaled by sin(psi) for h */
 								else  if(outputImage->vzFlag==VZVERTICAL)	{vzTmp[i][j] =(float) (dr*scaleDr*sin(psi)/cos(psi)) ; } /* undo h by * sin, then make vert /cos */
+								else  if(outputImage->vzFlag==VZLOS)	{vzTmp[i][j] =(float) (dr*scaleDr *sin(psi)) ; } /* undo h by * sin */
+								else  if(outputImage->vzFlag==VZINC)	{vzTmp[i][j] =(float) psi*RTOD ; } /* undo h by * sin */																
 							} else { vzTmp[i][j]=1.0; }
 							sxTmp[i][j] = scX;
 							syTmp[i][j] = scY;
-						}
+						} 
 					} /* end fabs(dr) < 13.0E4 && fabs(da)... */
-				} /* end valid z */
+				} if(outputImage->vzFlag==VZINC) {vzTmp[i][j] =(float) psi*RTOD ; } /* inc angle everywhere */ /* end valid z */
 				/* Mark as no data if not valid data */
 				if(validData==FALSE) {
+					if(outputImage->vzFlag==VZINC) {vzTmp[i][j] =(float) psi*RTOD ; } /* inc angle everywhere */ /* end valid z */					
 					vxTmp[i][j]=(float)-LARGEINT; fScale[i][j]=0.0;
 				} 
 			} /* j loop */

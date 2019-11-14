@@ -135,6 +135,8 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 		  Get bounding box of image
 		*/
 		getLSRegion(currentImage,&iMin,&iMax,&jMin,&jMax,outputImage);
+		/* Keeps dT from moving outside of interval - see notes - added 10/9/2019 */
+		if(currentImage->weight < 0.5) {iMax=-1; jMax=-1;}
 		/*  **************** Now loop over output grid*****************  */
 		/*fprintf(stderr,"Outside inner loop %i %i %i %i image %i of %i\n",iMin,iMax,jMin,jMax,count,LSImages->nImages);*/
 		if(iMax > 0 && jMax > 0 ) {
@@ -516,7 +518,6 @@ void  computeScaleLS(float **inImage,float **scale,  int32 azimuthSize,int32 ran
 	*/ 
 	for(j=iMin; j < azimuthSize; j++)
 		for(k=0; k < rangeSize; k++) scale[j][k]=weight;
-
 	/*
 	  Now loop through weights
 	*/
