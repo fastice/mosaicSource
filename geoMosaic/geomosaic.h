@@ -1,6 +1,8 @@
 #define HIGHJD 1.e7
 #define LOWJD 0.0
-
+/* -30dB min for S1 */
+#define MINS1DB -30.0
+#define MINS1SIG 0.001
 /*
    Process input file for mosaicDEMs
 */

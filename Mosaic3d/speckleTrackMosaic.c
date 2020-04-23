@@ -95,7 +95,12 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 		/*
 		  Read Offset
 		*/
-		if(iMin <= iMax && jMin <= jMax) readOffsetDataAndParams( &(currentParams->offsets));
+		if(iMin <= iMax && jMin <= jMax) {
+			readOffsetDataAndParams( &(currentParams->offsets));
+		 } else {
+			 iMax=iMin-1;
+			 jMax=jMin-1;
+		 }
 		/*
 		  Now loop over output grid
 		*/
@@ -178,12 +183,6 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						*/               
 						rotateFlowDirectionToXY(vr,va,&vx,&vy,xyAngle,hAngle);
 						rotateFlowDirectionToXY(dzdr,dzda,&dzdx,&dzdy,xyAngle,hAngle);
-						if ( (int)range == 76 && (int) azimuth == 27008  ) {
-						fprintf(stderr,"%f %f =  %f %f == %f %f == %f %f %f\n",range,azimuth,vr,va,xyAngle*RTOD,hAngle*RTOD, psi*RTOD,thetaD*RTOD,theta*RTOD);
-						fprintf(stderr,"Range %f ReH %f z %f %f \n",Range,ReH,zSp,Re);
-						fprintf(stderr,"%i %i %f %f %f %f\n",i,j,vr,va,vx,vy);
-				/*			error("stop");*/
-						}
 						/* 
 						   Clip data 
 						*/
@@ -195,7 +194,6 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						  Compute vertical velocity
 						*/
 						vz = vx * dzdx + vy * dzdy;
-
 						if(noData==FALSE) {
 							currentImage->used=TRUE;
 							if(statsFlag==FALSE) {

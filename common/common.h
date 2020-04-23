@@ -233,6 +233,7 @@ void makeDEMMosaic(inputImageStructure *inputImage,  outputImageStructure output
   Compute scale for feathering.
 */
 void  computeScale(float **inImage,float **scale,  int azimuthSize,int rangeSize,float fl,  float weight,double minVal);
+void fillRadialKernel(double **rDist, float fl, float weight);
 /*
   void  getInputFile(char *inputFile,char ***insarDEMFiles,  char ***demInputFiles,  outputImageStructure *outputImage,  float **weights, int *nDEMs);
 */

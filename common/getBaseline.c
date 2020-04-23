@@ -63,7 +63,7 @@ void getBaseline(char *baselineFile, vhParams *params)
 			tmp+=strlen("sigma*sqrt(X2/n)=");  sscanf(tmp,"%lf",&fdum1); params->sigma=fdum1;
 		}
 	}
-	for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",(params->C[i][1]),(params->C[i][2]),(params->C[i][3]),(params->C[i][4]),(params->C[i][5]),(params->C[i][6]));
+	/*for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",(params->C[i][1]),(params->C[i][2]),(params->C[i][3]),(params->C[i][4]),(params->C[i][5]),(params->C[i][6]));*/
 	fprintf(stderr,"sigma*sqrt(X2/n) = %lf\n",params->sigma);
 	/*
 	  Input baseline estimated with tiepoints.

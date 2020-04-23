@@ -12,8 +12,11 @@ static void readOffsetFile(float **data,int nr, int na,char *offsetFile);
  */
 void readOffsetDataAndParams(Offsets *offsets) {
 	readBothOffsets(offsets);
+	fprintf(stderr,"Read az est\n");
 	getAzParams(offsets);
+	fprintf(stderr,"Read aBaseline\n");
 	getRParams(offsets);
+	fprintf(stderr,"Offsets and paramters read\n");	
 	if(offsets->deltaB != DELTABNONE && offsets->geo2==NULL)
 		error("offsets deltaB set but no second geodat for %s\n",offsets->rFile);
 }
@@ -112,21 +115,17 @@ static void readOffsetParams(char *datFile, Offsets *offsets) {
 	fclose(fp);			  
 }
 
-
-
-
-
-
 /* 
 	read a single offset file
 */
 static void readOffsetFile(float **data,int nr, int na,char *offsetFile) {
 	FILE *fp;
 	int i;
-	fprintf(stderr,"--- Reading offset file %s\n",offsetFile);
+	fprintf(stderr,"--- Reading offset file %s",offsetFile);
 	fp = openInputFile(offsetFile);
 	for(i=0; i < na; i++) freadBS(data[i],sizeof(float),nr,fp, FLOAT32FLAG);
-	fclose(fp);	
+	fclose(fp);
+	fprintf(stderr,"- done - \n");	
 }
 
 /* 
@@ -314,7 +313,7 @@ void getAzParams( Offsets *offsets)
 	fprintf(stderr,"azimuth sigma*sqrt(X2/n) = %lf (m)\n",offsets->sigmaAresidual);
 	/* read params from fit */
 	if( sscanf(line,"%lf%lf%lf%lf",  &(offsets->c1),&(offsets->dbcds),&(offsets->dbhds), &(offsets->doffdx)) != 4) {
-		error("%s %i", "getAzParams  -- Missing baseline params at line:",lineCount); 
+		error("getAzParams  -- Missing baseline params at line: %s %i\n %s",paramFile,lineCount,line); 
 	}
 	fclose(fp);
 }

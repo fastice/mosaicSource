@@ -27,8 +27,9 @@
     else */
     pSize = sizeof(float);
     for(i=0; i < outputImage.ySize; i++)  
-         if(outputImage.imageType == COMPLEX) fwriteBS(outputImage.image[i],outputImage.xSize*pSize,1,imageFP,INT16FLAG);
-         else fwriteBS(outputImage.image[i],outputImage.xSize*pSize,1,imageFP,FLOAT32FLAG);
+         if(outputImage.imageType == COMPLEX)
+		 fwriteBS(outputImage.image[i], outputImage.xSize * pSize, 1, imageFP, INT16FLAG);
+         else fwriteBS(outputImage.image[i], outputImage.xSize * pSize, 1, imageFP, FLOAT32FLAG);
     fclose(imageFP);
 /*
     Form header filename by adding .geodat suffix to outputFile

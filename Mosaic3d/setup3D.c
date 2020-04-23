@@ -75,14 +75,14 @@ static void readTideCorrections( char *geodatFile, inputImageStructure *inputIma
 	if(fp != NULL) {
 		lineCount=getDataString(fp,lineCount,line,&eod);
 		sscanf(line,"%lf",&(inputImage->tideCorrection));
-		fprintf(stderr,"Tide correction : %s\n",tideFile);              
+		/*fprintf(stderr,"Tide correction : %s\n",tideFile);              */
 		fprintf(fpLog,"; Tide correction (data take %i) : %s\n",i,tideFile);              
 		fclose(fp);
 	} else {
 		fprintf(fpLog,"; Tide correction (data take %i) : %s\n",i,"none");              
 		inputImage->tideCorrection=0.0;
 	}
-	fprintf(stderr,"Tide correction value: %f\n",inputImage->tideCorrection);
+	/*fprintf(stderr,"Tide correction value: %f\n",inputImage->tideCorrection);*/
 	fprintf(fpLog,"; Tide correction value : %f\n",inputImage->tideCorrection);
 	/*
 	  Read spatially varying tide correction if it exists in a "tide.difference" file
@@ -110,7 +110,6 @@ static void addToList(char *phaseFile,vhParams *dumParams, inputImageStructure *
 		      inputImageStructure **ADListHead, vhParams **ADParams, vhParams **ADParamsHead ,  int *maxR,int *maxA,int *nAD ) {
 
 	/*Start of list */
-	fprintf(stderr,"1\n");	
 	if(*ADList== NULL) {
 		*ADListHead=inputImage;
 		*ADList = inputImage;
@@ -199,7 +198,6 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 		  Proceed if images is used
 		*/
 		if( inputImage[i].used == TRUE ) {
-			fprintf(stderr,"TTTTTT time weight = %f\n",weight);
 			inputImage[i].file=phaseFiles[i];
 			dumParams=(vhParams *)malloc(sizeof(vhParams));
 			/*  Read tide correction files where they exist */
@@ -207,7 +205,7 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 			/*	  Get baseline  */
 			getBaseline(baselineFiles[i],dumParams);
 			/*	  Get time info	*/
-			fprintf(stderr,"nDays %f\n",nDays[i]);
+			fprintf(stderr,"time weight, nDays %f %f\n",weight, nDays[i]);
 			dumParams->nDays=nDays[i];
 			if(nDays[i] < 0) error("Negative number of days");
 			/*

@@ -136,7 +136,7 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets ) {
 				ra[n].r=(r-r0)*MTOKM;
 				sigX[n]=1.;
 				ra[n].a=(t-t0)*inputImage->par.prf*inputImage->par.slpA * MTOKM;
-				fprintf(stdout,"%f %f %f\n",ra[n].r,ra[n].a,da[n]);
+				/*fprintf(stdout,"--%f %f %f\n",ra[n].r,ra[n].a,da[n]);*/
 				n++;
 			}
 		}

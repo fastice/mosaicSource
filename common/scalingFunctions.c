@@ -35,10 +35,10 @@ void redoNormalization(float myWeight,outputImageStructure *outputImage,int iMin
 			if(vxTmp[i][j] > (-LARGEINT+1)) {
 				/* added weight Dec 2016 - need to verify it workds */
 				if(statsFlag == FALSE) weight= myWeight; else weight=1.0;
-				vXimage[i][j] += vxTmp[i][j] *fScale[i][j] * weight;
-				scaleX[i][j]  += sxTmp[i][j] *fScale[i][j] * weight;
-				vYimage[i][j] += vyTmp[i][j] *fScale[i][j] * weight ;
-				scaleY[i][j]  += syTmp[i][j] *fScale[i][j] * weight;		
+				vXimage[i][j] += vxTmp[i][j] * fScale[i][j]  * weight;
+				scaleX[i][j]  += sxTmp[i][j] * fScale[i][j] * weight;
+				vYimage[i][j] += vyTmp[i][j] * fScale[i][j] * weight ;
+				scaleY[i][j]  += syTmp[i][j]  * fScale[i][j]  * weight;		
 				if( outputImage->timeOverlapFlag==TRUE ) {			
 					vZimage[i][j] += vzTmp[i][j]  *  fScale[i][j] * weight;
 					scaleZ[i][j]  += sqrt(syTmp[i][j] *sxTmp[i][j] ) * fScale[i][j]  * weight ;

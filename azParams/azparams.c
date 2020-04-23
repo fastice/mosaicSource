@@ -1,5 +1,6 @@
 #include "stdio.h"
 #include"string.h"
+#include"stdlib.h"
 #include "mosaicSource/common/common.h"
 #include "azparams.h"
 #include <sys/types.h>

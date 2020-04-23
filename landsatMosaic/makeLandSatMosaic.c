@@ -18,6 +18,8 @@ static float **LSreadFloatImageforMosaic(char *file, int32 nx, int32 ny, float *
 static uint8 **LSreadByteImageforMosaic(char *file, int32 nx, int32 ny, uint8 *maskB ,uint8 **m);
 static void getLSRegion(landSatImage *image, int32 *iMin,int32 *iMax,  int32 *jMin,int32 *jMax,  outputImageStructure *outputImage);
 static int32 	interpLSdata(double x,double y, matchResult *matches,  double *dx, double *dy, double *sx, double *sy);
+
+#define MAXSIG 0.2 /* Maximum ls error */
 /*
 ************************ Mosaic Landsat data. **************************
 */
@@ -45,24 +47,23 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 	float **scaleX,**scaleY,**scaleZ; 
 	float **vxTmp,**vyTmp,**vzTmp,**fScale,**sxTmp,**syTmp;
 	float **errorX,**errorY;
-	/*	float **dTLS,*dTbuf,**dTScale, *dTScalebuf;*/
 	double x,y;
+	double sigmaQx,sigmaQy;
 	double scX,scY;  
-	double vx,vy;
+	double vx,vy,ex,ey;    /* velocity and error */
+	double tmp;
 	double lat,lon;
-	double pX[MAXFITPARAM];
-	double pY[MAXFITPARAM];
+	double pX[MAXFITPARAM], pY[MAXFITPARAM];
 	unsigned char sMask;	
 	ShelfMask *shelfMask;    /* Mask with shelf and grounding zone */
-	double offx,offy,sx,sy;
-	double ex,ey;           /* Relative errors */
+	double offx,offy,sx,sy, sx2, sy2;
 	double vscalex,vscaley, latscale;
 	double sigmaXTieRes, sigmaXImageAvg,  sigmaYTieRes, sigmaYImageAvg;
 	double tCenter,tOffCenter,deltaOffCenter,tHalfWidth;
+	double deltaT;
 	double varXGlobal, varYGlobal;
 	landSatImage *currentImage;
-	int32 i,j,k;
-	int32 iMin,iMax,jMin,jMax;
+	int32 i,j,k, iMin,iMax,jMin,jMax; /* LCV */
 	int32 count;
 	int keep;
 	size_t lsize;
@@ -71,8 +72,6 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 	*/
 	lineBuf=(char *)malloc(sizeof(char)*MAXLINEBUF);
 	fprintf(stderr,"**** LANDSAT TRACKING SOLUTION ****\n");
-	/*	fBuf1=(float *)malloc(MAXOFFBUFLS); fBuf2=(float *)malloc(MAXOFFBUFLS);
-		fBuf3=(float *)malloc(MAXOFFBUFLS); fBuf4=(float *)malloc(MAXOFFBUFLS);*/
 	/* This taps into the common memory pool allocated up front in mosaic 3d */
 	fBuf1=(float *)offBufSpace1; 	fBuf2=(float *)offBufSpace2; 
 	fBuf3=(float *)offBufSpace3; 	fBuf4=(float *)offBufSpace4; 
@@ -82,18 +81,6 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 	/* Added for masks Summer 2017 */
 	mask=(uint8 **)malloc(MAXMASKBUFLINES*sizeof(uint8 *));
 	maskBuf=(uint8 *)malloc(MAXMASKBUFLINES*MAXMASKBUFLINES*sizeof(uint8));
-	/* Added Sept 28, 2017 - only in LS - allocate common pool later if other routines need it */
-	/*
-	if(outputImage->timeOverlapFlag==TRUE) {
-		dTbuf=          (float *)malloc(outputImage->xSize*outputImage->ySize*sizeof(float ));
-		dTScalebuf=(float *)malloc(outputImage->xSize*outputImage->ySize*sizeof(float ));
-		dTLS=(float **)malloc(outputImage->ySize*sizeof(float *));  dTScale=(float **)malloc(outputImage->ySize*sizeof(float *));
-		for(i=0; i < outputImage->ySize; i++) {
-			dTLS[i] = (void *) &(dTbuf[i*outputImage->xSize]);
-			dTScale[i] = (void *) &(dTScalebuf[i*outputImage->xSize]);			
-			for(j=0; j< outputImage->xSize; j++) {dTLS[i][j] =0.0; dTScale[i][j]=0.0;  }
-		}
-		}*/
 	/*
 	  Added shelf mask August 2017 - not to be confused with individual masks above
 	*/
@@ -110,35 +97,21 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 	/*
 	  Compute feather scale for existing 
 	*/
-	if(fl == 0) {
-		for (j=0; j < outputImage->ySize; j++) 
-			for(k=0; k < outputImage->xSize; k++) fScale[j][k]=1.0;
-	} else {	computeScale((float **)vXimage,fScale, outputImage->ySize, outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT));	}
-	/*
-	  Init array. This undoes the prior normalization so errors are all weighted.
-	*/
-	for (j=0; j < outputImage->ySize; j++) {
-		for(k=0; k < outputImage->xSize; k++) {
-			vXimage[j][k] *= scaleX[j][k]*fScale[j][k]; vYimage[j][k] *= scaleY[j][k]*fScale[j][k]; vZimage[j][k] *= scaleZ[j][k]*fScale[j][k];
-			errorX[j][k] *=     (scaleX[j][k]*scaleX[j][k])*fScale[j][k]*fScale[j][k];        errorY[j][k] *= (scaleY[j][k]*scaleY[j][k])*fScale[j][k]*fScale[j][k]; 
-			scaleX[j][k] *=     fScale[j][k];     scaleY[j][k] *= fScale[j][k];	scaleZ[j][k] *= fScale[j][k];
-		}
-	}
+	computeScale((float **)vXimage,fScale, outputImage->ySize,  outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT));
+	undoNormalization(outputImage,vXimage,vYimage,vZimage,errorX,errorY, scaleX,scaleY,scaleZ,fScale,FALSE);
 	/***********************************Loop over images******************************** */
 	count=1;
 	fprintf(stderr,"Outside image loop %i\n",HemiSphere);
 	tCenter=(outputImage->jd1+outputImage->jd2)*0.5;
 	tHalfWidth=(outputImage->jd2-outputImage->jd1)*0.5;
 	for(currentImage=LSImages; currentImage != NULL;   currentImage=currentImage->next) {
-		fprintf(stderr,"current ls image weight %f %f %f %f\n",currentImage->weight,currentImage->matches.jdEarly,currentImage->matches.jdLate,currentImage->matches.jdLate-currentImage->matches.jdEarly);
-		/*
-		  Get bounding box of image
-		*/
+		deltaT=currentImage->matches.jdLate-currentImage->matches.jdEarly;  /* time seperation */	
+		fprintf(stderr,"current ls image weight %f %f %f %f\n",currentImage->weight,currentImage->matches.jdEarly,currentImage->matches.jdLate,deltaT);
+		/*  Get bounding box of image*/
 		getLSRegion(currentImage,&iMin,&iMax,&jMin,&jMax,outputImage);
 		/* Keeps dT from moving outside of interval - see notes - added 10/9/2019 */
 		if(currentImage->weight < 0.5) {iMax=-1; jMax=-1;}
 		/*  **************** Now loop over output grid*****************  */
-		/*fprintf(stderr,"Outside inner loop %i %i %i %i image %i of %i\n",iMin,iMax,jMin,jMax,count,LSImages->nImages);*/
 		if(iMax > 0 && jMax > 0 ) {
 			tOffCenter=(currentImage->matches.jdEarly+currentImage->matches.jdLate)*0.5;
 			deltaOffCenter=tOffCenter-tCenter;	
@@ -149,28 +122,31 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 			x0poly =currentImage->matches.x0 + 0.5 * currentImage->matches.nx * currentImage->matches.stepX * currentImage->matches.dx;
 			y0poly =currentImage->matches.y0 + 0.5 * currentImage->matches.ny * currentImage->matches.stepY * currentImage->matches.dy;
 			vscalex=currentImage->matches.dx; /* space */
-			vscalex*=365.25/(currentImage->matches.jdLate-currentImage->matches.jdEarly); /* time */
+			vscalex*=365.25/deltaT; /* time */
 			vscaley=currentImage->matches.dy; /* space */
-			vscaley*=365.25/(currentImage->matches.jdLate-currentImage->matches.jdEarly); /* time */
+			vscaley*=365.25/deltaT; /* time */
 			/*
 			  Sigma tie residual scale to pixels
 			*/
-			if(currentImage->fitResult.sigmaXRes  > 0) 	sigmaXTieRes = (currentImage->fitResult.sigmaXRes / currentImage->matches.dx); else sigmaXTieRes=0.0;
+			if(currentImage->fitResult.sigmaXRes  > 0)  sigmaXTieRes = (currentImage->fitResult.sigmaXRes / currentImage->matches.dx); else sigmaXTieRes=0.0;
 			if(currentImage->fitResult.sigmaYRes  > 0)  sigmaYTieRes = (currentImage->fitResult.sigmaYRes / currentImage->matches.dy);  else sigmaYTieRes=0.0;
 			if(currentImage->matches.meanSigmaX > 0) sigmaXImageAvg=currentImage->matches.meanSigmaX; else sigmaXImageAvg=0;
 			if(currentImage->matches.meanSigmaY > 0) sigmaYImageAvg=currentImage->matches.meanSigmaY; else sigmaYImageAvg=0;
-			fprintf(stderr,"sigmaX/Y Image Avg %lf %lf SigmaX/Y fit %lf %lf - dT %lf %lf\n",sigmaXImageAvg,sigmaYImageAvg,sigmaXTieRes,sigmaYTieRes,deltaOffCenter, currentImage->weight);
+			fprintf(stderr,"sigmaX/Y Image Avg %lf %lf SigmaX/Y fit %lf %lf - dT %lf %lf\n",
+				sigmaXImageAvg,sigmaYImageAvg,sigmaXTieRes,sigmaYTieRes,deltaOffCenter, currentImage->weight);
+			fprintf(stderr,"sig %f %f  svg %f %f\n",sigmaXImageAvg*vscalex,sigmaYImageAvg*vscaley,sigmaXTieRes*vscalex,sigmaYTieRes*vscaley);
 			/*
 			  This calcuates the tie residual (represent overall error) - the error due to average image stats (will add back on local image stats below)
-			  Avoid going negative and assume at least 100th of a pixel of other error
+			  Avoid going negative and assume at least 100th of a pixel of other error. Modified 3/23/20 to change from 0.01 to 0.0001.
 			*/
-			varXGlobal=max(sigmaXTieRes*sigmaXTieRes -  sigmaXImageAvg* sigmaXImageAvg,0.01);
-			varYGlobal=max(sigmaYTieRes*sigmaYTieRes  -  sigmaYImageAvg* sigmaYImageAvg,0.01);;
-
+			sigmaQx=0.05; /* added 3/24/2020 - empirical fix perhaps for quantization/estimation errror */
+			sigmaQy=0.05; 
+			varXGlobal=max(sigmaXTieRes*sigmaXTieRes -  sigmaXImageAvg* sigmaXImageAvg,0.000) + sigmaQx*sigmaQx;
+			varYGlobal=max(sigmaYTieRes*sigmaYTieRes  -  sigmaYImageAvg* sigmaYImageAvg,0.000) +  sigmaQy*sigmaQy;
+			fprintf(stderr,"var %f %f \n",sqrt(varXGlobal)*vscalex, sqrt(varYGlobal)*vscaley);
 			for(k=0; k<3; k++) {
 				pX[k]=currentImage->fitResult.pX[k]; pY[k]=currentImage->fitResult.pY[k]; 
 			}
-
 			for(i=iMin; i < iMax; i++) {
 				if( (i % 100) == 0) fprintf(stderr,"-- %i \n",i);
 				y = (outputImage->originY + i*outputImage->deltaY) * MTOKM;
@@ -181,15 +157,16 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 					/* Adding skip via continue if no shelf mask indicates no data */
 					if(shelfMask != NULL) sMask=getShelfMask(shelfMask,x,y);
 					if( sMask== NOSOLUTION) continue ; /* skip rest of loop */
-
 					/* Ok, shelf mask indicates continue */
 					if(interpLSdata(x*KMTOM,y*KMTOM, &(currentImage->matches),  &offx, &offy, &sx, &sy) == TRUE){
 						/* 
-						   add global and local noise (see above)
+						   add global and local noise (see above)Updated to use squared value 3/23/20 since value is squared again below 
 						*/
 						computeFitError((x*KMTOM-x0poly),(y*KMTOM-y0poly),  currentImage,&sigx2,&sigy2);
-						sx = sqrt(varXGlobal + sx*sx + sigx2);
-						sy = sqrt(varYGlobal + sy*sy + sigy2);
+						sx2 = varXGlobal + sx*sx + sigx2;
+						sy2 = varYGlobal + sy*sy + sigy2;
+						sx2=min(sx2,MAXSIG*MAXSIG);
+						sy2=min(sy2,MAXSIG*MAXSIG);
 						/*
 						  Add polynomial corrections, in pixels
 						*/
@@ -203,20 +180,16 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 						  computeLatScale
 						*/
 						latscale=xyscale( lat, currentImage->fitResult.proj) ;
-						vx=offx*vscalex *latscale;
+						vx=offx*vscalex * latscale;
 						vy=offy*vscaley * latscale;
 						/* Variances */
-						ex=(sx*vscalex)*(sx*vscalex);
-						ey=(sy*vscaley)*(sy*vscaley);
-						/*	if( (i % 100) == 0 &&( j % 100)==0) fprintf(stderr,"------- %lf %lf %lf %lf %lf %lf %lf\n",x,y,lat,lon,latscale,sx,ex );*/
+						ex= (vscalex * vscalex)  * sx2;
+						ey= (vscaley * vscaley)  * sy2;
 						scX=1.0/(ex);
 						scY=1.0/(ey);
-
-						/*	fprintf(stderr,"%f %f %f %f %f %f %f %f %f\n",sqrt(sigx2),sqrt(sigy2),(x*KMTOM-x0poly),(y*KMTOM-y0poly), sx,sy,ex,ey,latscale);*/
-
+						/* Increment buffers */
 						vxTmp[i][j] = (float)vx*scX; 
 						vyTmp[i][j] = (float)vy*scY;
-
 						sxTmp[i][j] = scX;
 						syTmp[i][j] = scY;
 						fScale[i][j] = 1.0;    /* Value for zero feathering */
@@ -233,65 +206,22 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 			/*
 			  Compute scale array for feathering.
 			*/    
-			if(fl > 0 && (iMax > 0 && jMax > 0) )  { computeScaleLS((float **)vxTmp,fScale, outputImage->ySize,  outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT),iMin,iMax,jMin,jMax); }
+			if(fl > 0 && (iMax > 0 && jMax > 0) )  {
+				computeScaleLS((float **)vxTmp,fScale, outputImage->ySize,  outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT),iMin,iMax,jMin,jMax);
+			 }
 			/*
 			  Now sum current result. Falls through if no intersection (iMax&jMax==0)
-			*/         
-			for(i=iMin; i < iMax; i++) {
-				for(j=jMin; j < jMax; j++) {
-					if(vxTmp[i][j] > (-LARGEINT+1)) {
-						vXimage[i][j] += vxTmp[i][j]*fScale[i][j]  * currentImage->weight;
-						scaleX[i][j]  += sxTmp[i][j]*fScale[i][j]  * currentImage->weight;
-						vYimage[i][j] += vyTmp[i][j]*fScale[i][j]  * currentImage->weight;
-						scaleY[i][j]  += syTmp[i][j]*fScale[i][j]  * currentImage->weight;
-						if( outputImage->timeOverlapFlag==TRUE ) {			
-							vZimage[i][j] += vzTmp[i][j]  *  fScale[i][j] * currentImage->weight;
-							scaleZ[i][j]  += sqrt(syTmp[i][j] *sxTmp[i][j] ) * fScale[i][j]  * currentImage->weight ;
-							/*dTLS[i][j]+=vzTmp[i][j]  *  fScale[i][j] * currentImage->weight;
-							  dTScale[i][j]+=sqrt(syTmp[i][j] *sxTmp[i][j] ) * fScale[i][j]  * currentImage->weight ; */
-						} else {
-							vZimage[i][j] += vzTmp[i][j] ; /*fScale[i][j]; */
-							scaleZ[i][j]  += 1;
-						}
-						errorX[i][j] += fScale[i][j] * fScale[i][j] * sxTmp[i][j]  * currentImage->weight * currentImage->weight;
-						errorY[i][j] += fScale[i][j] * fScale[i][j] * syTmp[i][j]  * currentImage->weight * currentImage->weight;
-					} /* end if */
-				} /* end j */
-			} /* end i */
+			*/
+			redoNormalization(currentImage->weight,outputImage,iMin, iMax, jMin,jMax, vXimage,vYimage,vZimage,errorX,errorY,
+				  scaleX,scaleY,scaleZ,fScale,vxTmp,vyTmp,vzTmp, sxTmp,syTmp,  FALSE);
 		}
 		count++;
-	} /* End asc loop */
-
+	} /* End image loop */
 	/**************************END OF MAIN LOOP ******************************/
 	/*
 	  Adjust scale
 	*/
-	for (j=0; j < outputImage->ySize; j++) {
-		for(k=0; k < outputImage->xSize; k++) {
-			/*
-			  This is a test to see if the mean dT for the landsat data exceeds the ouput window.
-			  If so, then don't keep the data (if only LS it will be discarded anyway, but if there
-			  are radar data it won't skew them. This step is predicated on the LS being the
-			  first mosaic. So its important to zero out scaleX,Y,Z or otherwise noData values
-			  will get mixed in.
-			 */
-			keep=TRUE;
-			if( outputImage->timeOverlapFlag==TRUE && scaleZ[j][k] > 0.0 ) {
-				if( fabs((double) ( vZimage[j][k] / scaleZ[j][k] )   ) > tHalfWidth) keep=FALSE;
-			}
-			if(scaleX[j][k] > 0.0 && keep==TRUE)  vXimage[j][k] /= scaleX[j][k];
-			else { vXimage[j][k] = -LARGEINT; scaleX[j][k]=0.0;}
-			if(scaleY[j][k] > 0.0 && keep==TRUE)  vYimage[j][k] /= scaleY[j][k];
-			else { vYimage[j][k] = -LARGEINT; scaleY[j][k]=0.0;}
-			if(scaleZ[j][k] > 0.0 && keep==TRUE)  vZimage[j][k] /= scaleZ[j][k];
-			else { vZimage[j][k] = -LARGEINT; scaleZ[j][k]=0.0;}
-			if(scaleX[j][k] > 0.0 && keep==TRUE)  errorX[j][k] /= (scaleX[j][k]*scaleX[j][k]);
-			else errorX[j][k] = -LARGEINT;
-			if(scaleY[j][k] > 0.0 && keep==TRUE)  errorY[j][k] /= (scaleY[j][k]*scaleY[j][k]);
-			else errorY[j][k] = -LARGEINT;
-
-		} 
-	}
+	endScale(outputImage,vXimage,vYimage,vZimage,errorX,errorY, scaleX,scaleY,scaleZ,FALSE);
 	free(lineBuf);
 	fprintf(outputImage->fpLog,";\n; Returning from landsat  Mosaic(.c)\n;\n");
 }
@@ -313,9 +243,7 @@ static void computeFitError(double x,double y,	landSatImage *currentImage,double
 		tmpx[i]=Cx[i][0]*v[0] + Cx[i][1]*v[1] + Cx[i][2]*v[2];
 		tmpy[i]=Cy[i][0]*v[0] + Cy[i][1]*v[1] + Cy[i][2]*v[2];
 	}
-	/*
-	  Error in pixels
-	*/
+	/*  Error in pixels	*/
 	*sigx2=tmpx[0]*v[0] + tmpx[1]*v[1] + tmpx[2]*v[2];
 	*sigy2=tmpy[0]*v[0] + tmpy[1]*v[1] + tmpy[2]*v[2];
 }
@@ -354,10 +282,8 @@ static int32  interpLSdata(double x,double y, matchResult *matches,  double *dx,
 	if(lsBinlinear(matches->Y,im,jm,t,u,dy) == FALSE) return(FALSE);
 	if(lsBinlinear(matches->sigmaX,im,jm,t,u,sx) == FALSE) return(FALSE);
 	if(lsBinlinear(matches->sigmaY,im,jm,t,u,sy) == FALSE) return(FALSE);
-
 	return(TRUE); /* Return true since interpolation appears to have worked */
 }
-
 
 
 /***************************LSreadFloatImage*************************************
@@ -373,7 +299,6 @@ static void readLSOffsetsForMosaic(landSatImage *currentImage)
 	lsFit *fitDat;
 	int32 i,j;
 	matchResult *matches;
-
 	fitDat = &(currentImage->fitResult);
 	matches=&(currentImage->matches);
 	/*
@@ -383,27 +308,17 @@ static void readLSOffsetsForMosaic(landSatImage *currentImage)
 	/* X offsets */
 	offXFile[0]='\0';	offXFile=strcpy(offXFile,fitDat->matchFile);   offXFile=strcat(offXFile,".dx");
 	fprintf(stderr,"Read -  X offsets %s %i %i  %u\n",offXFile,matches->nx,matches->ny,(uint32)fBuf1);
-
 	matches->X=LSreadFloatImageforMosaic(offXFile,matches->nx,matches->ny,fBuf1,fBuf1L);
-
 	/* Y offsets */
-	/*fprintf(stderr,"Read -  Y offsets %s %i %i  %u\n",offXFile,matches->nx,matches->ny,(uint32)fBuf2);*/
 	offXFile[0]='\0';	offXFile=strcpy(offXFile,fitDat->matchFile);   offXFile=strcat(offXFile,".dy");
-
 	matches->Y=LSreadFloatImageforMosaic(offXFile,matches->nx,matches->ny,fBuf2,fBuf2L);
-
 	/* sigma X offsets */
-	/*fprintf(stderr,"Read -  sigma X offsets %s %i %i  %u\n",offXFile,matches->nx,matches->ny,(uint32)fBuf3);*/
 	offXFile[0]='\0';	offXFile=strcpy(offXFile,fitDat->matchFile);   offXFile=strcat(offXFile,".sx");
-
 	matches->sigmaX=LSreadFloatImageforMosaic(offXFile,matches->nx,matches->ny,fBuf3,fBuf3L);
-
 	/* sigma Y offsets */
 	/*fprintf(stderr,"Read -  sigma Y offsets %s %i %i  %u\n",offXFile,matches->nx,matches->ny,(uint32)fBuf4);*/
 	offXFile[0]='\0';	offXFile=strcpy(offXFile,fitDat->matchFile);   offXFile=strcat(offXFile,".sy");
-
 	matches->sigmaY=LSreadFloatImageforMosaic(offXFile,matches->nx,matches->ny,fBuf4,fBuf4L);
-	
 	if(currentImage->maskFile != NULL) {
 		lsMask=LSreadByteImageforMosaic(currentImage->maskFile,matches->nx,matches->ny,maskBuf,mask);
 	       	for( i=0; i < matches->ny ; i++ )
@@ -417,23 +332,17 @@ static void readLSOffsetsForMosaic(landSatImage *currentImage)
 	}
 }
 /*
-
+  Read LS image 
  */
 static float **LSreadFloatImageforMosaic(char *file, int32 nx, int32 ny, float *fBuffer,float **image)
 {
 	FILE *fp;
 	int32 i;
-	/* 
-	   malloc space
-	*/
+	/*    malloc space	*/
 	for(i=0; i < ny; i++ ) image[i]=&(fBuffer[i*nx]);
-	/* 
-	   open file
-	*/
+	/*   open file	*/
 	fp=openInputFile(file);
-	/* 
-	   read file
-	*/
+	/*    read file	*/
 	freadBS(image[0],sizeof(float),(size_t)(nx*ny),fp, FLOAT32FLAG); 
 	fclose(fp);
 	return(image);
@@ -443,17 +352,11 @@ static uint8 **LSreadByteImageforMosaic(char *file, int32 nx, int32 ny, uint8 *m
 {
 	FILE *fp;
 	int32 i;
-	/* 
-	   malloc space
-	*/
+	/* 	   malloc space  */
 	for(i=0; i < ny; i++ ) m[i]=&(maskB[i*nx]);
-	/* 
-	   open file
-	*/
+	/*    open file	*/
 	fp=openInputFile(file);
-	/* 
-	   read file
-	*/
+	/*   read file	*/
 	freadBS(m[0],sizeof(int8),(size_t)(nx*ny),fp, BYTEFLAG); 
 	fclose(fp);
 	return(m);
@@ -486,13 +389,10 @@ static void getLSRegion(landSatImage *image, int32 *iMin,int32 *iMax,  int32 *jM
 	*iMax=min(outputImage->ySize,*iMax); *jMax=min(outputImage->xSize,*jMax);
 }
 
-
-
+double **rDistSaveLS=NULL;
 /*
   Compute scale for feathering.
 */
-double **rDistSaveLS=NULL;
-
 void  computeScaleLS(float **inImage,float **scale,  int32 azimuthSize,int32 rangeSize,float fl,   float weight,double minVal,int32 iMin,int32 iMax,int32 jMin,int32 jMax)
 {
 	extern double **rDistSaveLS;
@@ -504,13 +404,7 @@ void  computeScaleLS(float **inImage,float **scale,  int32 azimuthSize,int32 ran
 	*/
 	if(rDistSaveLS==NULL)    {
 		rDistSaveLS = dmatrix(-fl, fl,-fl,fl);
-		for(is = 0; is <= fl; is++) {
-			for(il = 0; il <= fl; il++) {
-				rA=weight *  min(max( sqrt((double)(is * is) + (double)(il * il)),0.5 )/fl,1);
-				rDistSaveLS[il][is]  = rA; rDistSaveLS[il][-is] = rA;
-				rDistSaveLS[-il][is] = rA; rDistSaveLS[-il][-is] = rA;           
-			} /* end for(il... */
-		} /* end for(is... */
+		fillRadialKernel(rDistSaveLS, fl, weight);
 	}
 	rDist = rDistSaveLS;
 	/*
@@ -535,12 +429,10 @@ void  computeScaleLS(float **inImage,float **scale,  int32 azimuthSize,int32 ran
 					for(il=l1; il <= l2; il++) {
 						minV=FMIN(minV,(float)(inImage[is][il]));
 					}
-				/*  
-				    Adjust scale for border points
+				/*   Adjust scale for border points
 				    removed the tile border 6/22, since it was causing small glitches on seam boundaries
 				    ***                if( (minV <= minVal) || (j == 0) || (k == 0) ||
-				    ***                    (j==(azimuthSize-1)) || (k ==(rangeSize-1))  ) {
-				    */
+				    ***                    (j==(azimuthSize-1)) || (k ==(rangeSize-1))  ) {   */
 				if( (minV <= minVal)  ) {
 					s1=max(0,j-fl); s2= min( azimuthSize-1,j+fl);
 					l1=max(0,k-fl); l2= min( rangeSize-1,k+fl); 
@@ -555,4 +447,3 @@ void  computeScaleLS(float **inImage,float **scale,  int32 azimuthSize,int32 ran
 		} /* k */
 	} /* j */
 }
-  

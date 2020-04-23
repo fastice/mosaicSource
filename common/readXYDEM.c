@@ -22,7 +22,6 @@
     char *geodatFile;
     char line[256];
     off_t offset1;
-
     xyTemp=&Tmp; /* temp dem */
     fprintf(stderr,"READING *** cropped *** XYDEM\n");
 /*

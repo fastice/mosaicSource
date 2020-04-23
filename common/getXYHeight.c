@@ -10,6 +10,7 @@
   lat, lon inputs should be in degrees.
   Re in KM
 */    
+#define MINDEMELEV -1000.
 
 double getXYHeight(double lat, double lon, xyDEM *xydem, double Re,int heightFlag)
 {
@@ -53,8 +54,10 @@ double getXYHeight(double lat, double lon, xyDEM *xydem, double Re,int heightFla
 	/*
 	  Use bilinear interpolation to compute height.
 	*/
-	z = ((1.0 - t)*(1.0 - u) * p1 + t * (1.0 - u) * p2 +  t * u * p3 +                (1.0 - t) * u* p4);
-
+	if( p1 > MINDEMELEV && p2 > MINDEMELEV && p3 > MINDEMELEV && p4 > MINDEMELEV) {
+		z = ((1.0 - t)*(1.0 - u) * p1 + t * (1.0 - u) * p2 +  t * u * p3 +                (1.0 - t) * u* p4);
+	 } else z=0; /* No date so  asume 0  */
+	 
 	if(heightFlag == ELLIPSOIDAL)  return z;
 	/*
 	  Radial distance from earth center to point

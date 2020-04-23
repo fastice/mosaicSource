@@ -15,9 +15,7 @@ void  computeScale(float **inImage,float **scale,  int azimuthSize,int rangeSize
 	double **rDist,rA; 			/* Radial distance kernel */
 	int j,k,is,il,s1,s2,l1,l2;		/* Loop variabiles */
 	float minV;
-	/* 
-	No feathring case - set weight to all 1's
-	*/
+	/* 	No feathring case - set weight to all 1's	*/
 	if(fl == 0 ) {
 		initFloatMatrix(scale,azimuthSize,rangeSize,1.0);
 		return;
@@ -26,18 +24,11 @@ void  computeScale(float **inImage,float **scale,  int azimuthSize,int rangeSize
 	  Set up featherin - radial distance from center of kernel.
 	  Allocate space if first time, or recycle previoius
 	*/
-	if(rDistSave==NULL)  rDistSave = dmatrix(-fl, fl,-fl,fl);
-	rDist = rDistSave;
-	/* 
-	   Compute radial distance for kernel 
-	*/
-	for(is = 0; is <= fl; is++) {
-		for(il = 0; il <= fl; il++) {
-			rA=weight * min(max( sqrt((double)(is * is) + (double)(il * il)),0.5 )/fl,1);
-			rDist[il][is]  = rA; rDist[il][-is] = rA;
-			rDist[-il][is] = rA; rDist[-il][-is] = rA;           
-		} /* end for(il... */
-	} /* end for(is... */
+	if(rDistSave==NULL)  {
+		rDistSave = dmatrix(-fl, fl,-fl,fl);
+		fillRadialKernel(rDistSave, fl, weight);
+	 }
+	rDist = rDistSave;	
 	/*
 	  Set initial value for scale array with specified weight value
 	*/
@@ -47,13 +38,9 @@ void  computeScale(float **inImage,float **scale,  int azimuthSize,int rangeSize
 	*/
 	for(j=0; j <  azimuthSize; j++) {
 		for(k=0; k <  rangeSize; k++) {
-			/*
-			  Adding the feathering at valid points.
-			*/ 
+			/*  Adding the feathering at valid points. */ 
 			if(inImage[j][k] > minVal ) {
-				/* 
-					Find edge pixels - check all neighbors and if one is non-valid, its an edge 
-				*/
+				/* Find edge pixels - check all neighbors and if one is non-valid, its an edge */
 				minV=1.0e30;  /* will get reduced if its an edge */				
 				s1=max(0,j-1); s2= min( azimuthSize-1,j+1);
 				l1=max(0,k-1); l2= min( rangeSize-1,k+1);
@@ -63,7 +50,8 @@ void  computeScale(float **inImage,float **scale,  int azimuthSize,int rangeSize
 						minV=FMIN(minV,(float)(inImage[is][il]));
 					}
 				/* 
-					if minV <= minVal its a border pixel, so set scale to distance from border. Use minvalue where kernels overlap.
+					if minV <= minVal its a border pixel, so set scale to distance from border.
+					 Use minvalue where kernels overlap.
 				 */
 				if( (minV <= minVal)  ) { 
 					s1=max(0,j-fl); s2= min( azimuthSize-1,j+fl);
@@ -79,4 +67,17 @@ void  computeScale(float **inImage,float **scale,  int azimuthSize,int rangeSize
 		} /* k */
 	} /* j */
 }
-  
+
+void fillRadialKernel(double **rDist, float fl, float weight)
+{
+	int is,il;		/* Loop variabiles */
+	double rA;
+	/*    Compute radial distance for a pre-allocated kernel */
+	for(is = 0; is <= fl; is++) {
+		for(il = 0; il <= fl; il++) {
+			rA=weight * min(max( sqrt((double)(is * is) + (double)(il * il)),0.5 )/fl,1);
+			rDist[il][is]  = rA; rDist[il][-is] = rA;
+			rDist[-il][is] = rA; rDist[-il][-is] = rA;           
+		} /* end for(il... */
+	} /* end for(is... */
+}

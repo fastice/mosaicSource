@@ -6,7 +6,7 @@
 */
 
 static void computeCoordsForInterp(inputImageStructure *inputImage ,Offsets *offsets, double *range,double *azimuth,double *imageLength,double *normAzimuth);
-
+#define MAXSIG 0.2
 /*
    Interpolate azimuth offsets map for velocity generation and apply baseline/geometry corrections
 */
@@ -39,11 +39,8 @@ float interpAzOffset(double range,double azimuth,Offsets *offsets, inputImageStr
 	result *= azSLPixSize;
 	result -=zeroOffset;
 	result -=alongTrack;
-
 	return result;
-
 }
-
 
 /*
    Interpolate azimuth sigma  map for velocity generation
@@ -53,6 +50,7 @@ float interpAzSigma(double range,double azimuth,Offsets *offsets,  inputImageStr
 	float result;
 	double alongTrack;
 	double imageLength, normAzimuth;
+	double sigmaStreaks;
 	/*
 	  Compute azimuth in image coord stuff
 	*/
@@ -63,9 +61,11 @@ float interpAzSigma(double range,double azimuth,Offsets *offsets,  inputImageStr
 	*/
 	result = bilinearInterp((float **)offsets->sa,range,azimuth,offsets->nr,offsets->na,-0.99999*LARGEINT,(float)-LARGEINT);
 	/*if (result < -0.99999*LARGEINT) return -LARGEINT;	*/
-	/* Added 10/20/2017 to cap errors at 1/10 of a pixel - sigma streaks could make it larger */
-	if(result > 0.1 || result < 0) result=0.1;		
-	result = sqrt(result*result + offsets->sigmaStreaks *offsets->sigmaStreaks);
+	/* Added 10/20/2017 to cap errors at MAXSIG of a pixel - sigma streaks could make it larger */
+	if(result > MAXSIG || result < 0) result=MAXSIG;
+	/* Crudely emprical noise floor for sigmaStreaks  - neglible but can increment if needed */
+	sigmaStreaks = max(offsets->sigmaStreaks, 0.001);
+	result = sqrt(result*result + sigmaStreaks * sigmaStreaks);
 	result *= azSLPixSize;
 	return result;
 }
@@ -144,7 +144,7 @@ float interpRangeSigma(double range,double azimuth,Offsets *offsets,  inputImage
 	/* 
 		If sigma range is set, it represents a minimum error 
 	*/
-	if(result > 0.1 || result < 0.0) result=0.1;			
+	if(result > MAXSIG || result < 0.0) result=MAXSIG;			
 	result=max(offsets->sigmaRange,result);
 	result *= rSLPixSize; /* put in units of meters */
 	return result;

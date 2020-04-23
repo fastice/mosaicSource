@@ -54,7 +54,6 @@ void readLSOffsets(lsFit *fitDat, matchResult *matches, int32 readData, char *ma
 	offYFile=strcpy(offYFile,fitDat->matchFile);
 	offYFile=strcat(offYFile,".dy");
 	matches->Y=LSreadFloatImage(offYFile,matches->nx,matches->ny);
-
 	/*
 	  Read match type data
 	*/
@@ -63,7 +62,6 @@ void readLSOffsets(lsFit *fitDat, matchResult *matches, int32 readData, char *ma
 	typeFile=strcpy(typeFile,fitDat->matchFile);
 	typeFile=strcat(typeFile,".mtype");
 	matches->type=LSreadByteImage(typeFile,matches->nx,matches->ny);
-
 	/* 
 	 Mask data
 	*/
