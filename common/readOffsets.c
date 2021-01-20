@@ -204,7 +204,8 @@ void getRParams( Offsets *offsets)
 	  Read covariance matrix if there is one. 
 	*/
 	readCov(fp,6,offsets->Cr, &(offsets->sigmaRresidual),line);
-	for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",(offsets->Cr[i][1]),(offsets->Cr[i][2]),(offsets->Cr[i][3]),(offsets->Cr[i][4]),(offsets->Cr[i][5]),(offsets->Cr[i][6]));	
+	for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",
+		(offsets->Cr[i][1]),(offsets->Cr[i][2]),(offsets->Cr[i][3]),(offsets->Cr[i][4]),(offsets->Cr[i][5]),(offsets->Cr[i][6]));	
 	fprintf(stderr,"range sigma*sqrt(X2/n) = %lf (m)\n",offsets->sigmaRresidual);
 	/*
 	  Input baseline estimated with tiepoints.
@@ -220,7 +221,8 @@ void getRParams( Offsets *offsets)
 	offsets->dBn=dBn; offsets->dBp=dBp; offsets->rConst=rConst;  
 	offsets->dBnQ=dBnQ; offsets->dBpQ=dBpQ;
 
-	fprintf(stderr,"bn %f %f %f bp %f %f %f off %f\n",offsets->bn,offsets->dBn,offsets->dBnQ,offsets->bp,offsets->dBp,offsets->dBpQ,offsets->rConst);
+	fprintf(stderr,"bn %f %f %f bp %f %f %f off %f\n",offsets->bn,offsets->dBn,
+		offsets->dBnQ,offsets->bp,offsets->dBp,offsets->dBpQ,offsets->rConst);
 	fclose(fp);
 
 }

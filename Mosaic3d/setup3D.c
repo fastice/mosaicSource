@@ -4,7 +4,8 @@
 #include "stdlib.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
-
+#include "libgen.h"
+#include "unistd.h"
 float dateWeight(double jd1,double jd2,double jdRange1, double jdRange2)
 {
 	int caseType;
@@ -146,6 +147,35 @@ static void setupADImageBuffers(inputImageStructure **images,float *buf ) {
 }
 
 /*
+	Cat directory and file names.
+*/
+static void catPath(char *path, char *dname,char *file) {
+	strcpy(path,dname);
+	strcat(path, "/");
+	strcat(path, file);
+}
+
+/*
+	Check for the presence of a use.deltab or use.quad to bypass global deltaB flag for this instance.
+*/
+static int useDeltaB(char *offsetFile, int deltaB){
+	char *dname;
+	char svFile[2048], offsetFileCopy[2048];
+	/* Make a copy because dirname corrupts path */
+	strcpy(offsetFileCopy, offsetFile);
+	dname = dirname(offsetFileCopy);
+	catPath( svFile, dname, "motion/use.deltabp");
+	fprintf(stderr,"%s\n",svFile);
+	fprintf(stderr,"%i", access(svFile, F_OK));
+	if(access(svFile, F_OK) != -1) return(DELTABCONST);
+	catPath( svFile, dname, "motion/use.quad");
+	fprintf(stderr,"%s\n",svFile);
+	fprintf(stderr,"%i", access(svFile, F_OK));
+	if(access(svFile, F_OK) != -1) return(DELTABQUAD);
+	return deltaB;
+}
+
+/*
   set up 3d
 */
 void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baselineFiles,char **offsetFiles,char **azParamsFiles,
@@ -161,6 +191,8 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 	int maxRa,maxAa,maxRd,maxAd;
 	float weight, tmpWeight;
 	int i;
+	char *dname;
+
 	fprintf(fpLog,";\n; Entering setUp3D\n;\n");
 	/*	  Initializations for maxes	*/
 	maxRa=0; maxAa=0; maxRd=0; maxAd=0;
@@ -224,15 +256,17 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 				dumParams->offsets.rParamsFile=NULL;
 				dumParams->offsets.rFile=NULL;
 			}
-			dumParams->offsets.bnS=NULL;
-			dumParams->offsets.bpS=NULL;
-			dumParams->offsets.azInit=FALSE;
+			dumParams->offsets.bnS = NULL;
+			dumParams->offsets.bpS = NULL;
+			dumParams->offsets.azInit = FALSE;
 			dumParams->offsets.rOffS=0.0;
-			dumParams->offsets.deltaB=outputImage->deltaB;
+			dumParams->offsets.deltaB = useDeltaB(offsetFiles[i], outputImage->deltaB);
 			if(inputImage[i].passType == DESCENDING ) 
-				addToList(phaseFiles[i],dumParams,  &(inputImage[i]) ,&desc,   descImages, &vhD, descParams,  &maxRd,&maxAd, nDesc );
+				addToList(phaseFiles[i], dumParams, &(inputImage[i]), &desc, descImages, &vhD,
+				descParams, &maxRd, &maxAd, nDesc );
 			else 
-				addToList(phaseFiles[i],dumParams,  &(inputImage[i]) ,&asc,   ascImages, &vhA, ascParams,  &maxRa,&maxAa, nAsc );
+				addToList(phaseFiles[i],dumParams,  &(inputImage[i]), &asc, ascImages, &vhA,
+				ascParams, &maxRa,&maxAa, nAsc );
 		} else {  geodatFiles[i]=NULL;} /* Case where not in time range */
 	} 
 	fprintf(stderr,"NAsc %i  NDesc %i\n",*nAsc,*nDesc);

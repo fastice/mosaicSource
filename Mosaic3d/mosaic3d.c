@@ -32,7 +32,7 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
 		     int *makeTies,  double *tieThresh,  char **extraTieFile, char **tideFile,int *north,     char **landSatFile,int *threeDOffFlag,float *timeThresh,
 		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage);
 static void write3Doutput( outputImageStructure outputImage, char *outFileBase );
-static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase);
+static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase, char *demFile);
 void caldat(long julian, int *mm, int *id, int *iyyy);
 static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructure *outputImage);
 static void processMosaicDate(outputImageStructure *outputImage, char *date1,char *date2);
@@ -219,7 +219,7 @@ void main(int argc, char *argv[])
 	/* 
 	   write meta file
 	*/
-	haveData=writeMetaFile(images, &outputImage,params,outFileBase);
+	haveData=writeMetaFile(images, &outputImage,params,outFileBase, demFile);
 	if(landSatFile != NULL) haveData=TRUE;
 	/*
 	  Output result
@@ -519,7 +519,7 @@ static void processMosaicDate(outputImageStructure *outputImage, char *date1,cha
 
 
  
-static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase)
+static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase, char *demFile)
 {     
 	extern int HemiSphere;
 	extern double Rotation;
@@ -602,6 +602,16 @@ static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *out
 	if(lon > 180) lon-=360;
 	fprintf(fpMeta,"Product Center Latitude  = %10.5lf\n",lat);
 	fprintf(fpMeta,"Product Center Longitude = %10.5lf\n",lon);
+	/*
+		DEM
+	*/
+	if( strstr(demFile, "gimp1") != NULL) {
+		fprintf(fpMeta,"DEM version = GIMP DEM V1\n");
+	} else {
+		if( strstr(demFile, "gimp2")  != NULL) fprintf(fpMeta,"DEM version = GIMP DEM V2\n");
+		else fprintf(fpMeta,"DEM version = Custom\n");
+	 }
+
 	/*
 	  time
 	*/
