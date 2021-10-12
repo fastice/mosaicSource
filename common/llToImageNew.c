@@ -12,7 +12,7 @@
 
 static void computeSatHeightNew( conversionDataStructure *cp,   inputImageStructure *inputImage,int memMode);
 
-void initllToImageNew( inputImageStructure *inputImage) {
+void initllToImageNew(inputImageStructure *inputImage) {
 	extern int llConserveMem;
 	SARData *par;
 	conversionDataStructure *cp;
@@ -54,6 +54,7 @@ void initllToImageNew( inputImageStructure *inputImage) {
 	cp->toRangePixel= 1.0/inputImage->rangePixelSize;
 	computeSatHeightNew(cp,inputImage,memMode);
 	inputImage->isInit=TRUE;
+	inputImage->tolerance = 1e-6;
 }
 
 
@@ -64,14 +65,14 @@ static int checkLL(double lat,double lon,inputImageStructure *inputImage) {
 	return TRUE;
 }
 
-static double lastTime=0.0;
+/* static double lastTime=0.0;*/
 /*
   Geolocation algorithm for converting lat,lon,h to range, azimuth coordinates in multi look coordinates.
   Base on technique used in JPL/Caltech ISCE 
  */
 void llToImageNew(double lat,double lon, double h, double *range, double *azimuth, inputImageStructure *inputImage)
 {
-	extern double lastTime;
+	/* extern double lastTime; */
 	SARData *par;
 	conversionDataStructure *cp; /* Conversion params from input image */
 	stateV *sv;  /* statevectors from input image */	
@@ -84,46 +85,46 @@ void llToImageNew(double lat,double lon, double h, double *range, double *azimut
 	double  C1, C2,df;
 	int tol=2000;
 	int i, n;
+	cp = &(inputImage->cpAll);
+	sv = &(inputImage->sv);
 	/* Avoid extreme values that could give opposite side solution */
-	if( checkLL(lat,lon,inputImage) == FALSE ) {
+	if( checkLL(lat, lon, inputImage) == FALSE ) {
 		*range =-9999.0;
 		*azimuth=-9999.0;
 		return;
 	}
-	cp = &(inputImage->cpAll);
-	sv=&(inputImage->sv);
 	/* Refine later */
-	if(lastTime >= cp->sTime && lastTime <= cp->eTime) myTime=lastTime; else myTime = sv->times[sv->nState/2];
+	if(inputImage->lastTime >= (cp->sTime-10) && inputImage->lastTime <= (cp->eTime+10)) {
+		myTime =inputImage->lastTime;
+	} else myTime = sv->times[sv->nState/2];
 	llToECEF( lat, lon, h,  &xt, &yt, &zt);
 	C2=0.0;	/* Not used for zero dop */
-	for( i=0; i < 35; i++) {
-		n=(long int)((myTime - sv->times[1])/(sv->deltaT)+.5);
-		n=min(max(0,n-2), sv->nState-NUSESTATE);
+	for(i=0; i < 35; i++) {
+		n = (long int)((myTime - sv->times[1])/(sv->deltaT)+.5);
+		n = min(max(0,n-2), sv->nState-NUSESTATE);
 		/* Interpolate postion and velocity */
-		polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]),&(sv->z[n]),  &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]),
-			  myTime, &xs,&ys ,&zs, &vsx,&vsy ,&vsz);
+		polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]),&(sv->z[n]), &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]),
+			  myTime, &xs, &ys ,&zs, &vsx, &vsy, &vsz);
 		/* dr */
-		drx=xt-xs; dry=yt-ys; drz=zt-zs;
+		drx= xt-xs; dry = yt-ys; drz = zt-zs;
 		/* setup correction */
 		df = dot(drx,dry,drz,vsx,vsy,vsz);
-		C1= - dot(vsx,vsy,vsz,vsx,vsy,vsz);
+		C1 = -dot(vsx,vsy,vsz,vsx,vsy,vsz);
 		myTime -= df/(C1+C2);
 		/* Check for convergence */
-		if(fabs(df/C1) < 1.e-6) break;
+		if(fabs(df/C1) < inputImage->tolerance) break;
 	}
-/*	fprintf(stderr,"%i\n",i);*/
-	
-	polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]),&(sv->z[n]),  &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]),
-			  myTime, &xs,&ys ,&zs, &vsx,&vsy ,&vsz);	
-	lastTime=myTime;
-        *range=(sqrt(dot(drx,dry,drz,drx,dry,drz)) - cp->RNear) * cp->toRangePixel;
-	*azimuth=((myTime-cp->sTime)*cp->prf)/  inputImage->nAzimuthLooks;
-	
+    polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]), &(sv->z[n]), &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]),
+			  myTime, &xs, &ys, &zs, &vsx, &vsy, &vsz);
+    *range = (sqrt(dot(drx,dry,drz,drx,dry,drz)) - cp->RNear) * cp->toRangePixel;
+	*azimuth = ((myTime - cp->sTime) * cp->prf) / inputImage->nAzimuthLooks;
 	/* allow tol ml pixel buffer in case indexing into slc - allow some tol for calcs like heading - other checks will avoid bad coords */
 	if( *range < -tol || *range > (inputImage->rangeSize+tol)  || *azimuth < -tol || *azimuth > (inputImage->azimuthSize+tol)) {
 		*range =-9999.0;
 		*azimuth=-9999.0;
 	}
+	/*fprintf(stderr,"%d %f %f %f %f %f %f %f\n", i, myTime, inputImage->lastTime, *range, *azimuth, lat, lon, fabs(df/C1));*/
+	inputImage->lastTime = myTime;
 }
 
 
@@ -134,10 +135,10 @@ void llToECEF(double lat,double lon,double h, double *x,double *y,double *z) {
 	dtor=(2.0 * 3.141592653589793d)/360.0;
 	latCos=cos(lat*dtor);
 	latSin=sin(lat*dtor);	
-	f=-(EMINOR/EMAJOR -1.0);
+	f =-(EMINOR/EMAJOR - 1.0);
 	F2=(1.0 - f)*(1.0 -f);
-	C=1.0d / sqrt(latCos*latCos + F2*latSin*latSin);
-	S= C*F2;
+	C = 1.0d / sqrt(latCos*latCos + F2*latSin*latSin);
+	S = C*F2;
 	*x=(EMAJOR*1000.0 * C + h) * latCos * cos(lon*dtor);
 	*y=(EMAJOR*1000.0 * C + h) * latCos * sin(lon*dtor);
 	*z=(EMAJOR*1000.0 * S + h) * latSin;

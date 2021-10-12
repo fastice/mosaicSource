@@ -158,7 +158,7 @@ static int parseControlPoints(FILE *fp, int lineCount,inputImageStructure *input
 	int eod,i;
 	char line[512];
 	/*
-	  Init corner point arrays (allocate 4 for corner 1 for center and 1 for 	  additional point).
+	  Init corner point arrays (allocate 4 for corner 1 for center and 1 for additional point).
 	*/
 	inputImage->latControlPoints =(double *)malloc( (size_t)(NCONTROLPOINTS * sizeof(double))); 
 	inputImage->lonControlPoints = (double *) malloc((size_t)(NCONTROLPOINTS * sizeof(double)));

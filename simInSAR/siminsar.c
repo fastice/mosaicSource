@@ -1,5 +1,5 @@
 #include "stdio.h"
-#include"string.h"
+#include "string.h"
 #include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
 #include <sys/types.h>
@@ -48,6 +48,8 @@ void main(int argc, char *argv[])
 	   Read command line args
 	*/
 	readArgs(argc,argv,&scene,&demFile,&displacementFile,&sceneFile, &outputFile);
+	/* Added August 2021 to force projections to match dem */
+	readXYDEMGeoInfo(demFile, &xyDem, TRUE);			 
 	imageMask=malloc(sizeof(ShelfMask));
 	/*
 	  Input scene parameters from sceneFile
@@ -57,20 +59,21 @@ void main(int argc, char *argv[])
 	/*
 	  Init and input DEM
 	*/
-	if(scene.offsetFlag == TRUE) {
-		fprintf(stderr,"Using offsets\n");
-		readXYVel(&xyVel,displacementFile);
-	}
-	readXYDEM(demFile,&xyDem); dem = (void *) &xyDem;
+	if(scene.offsetFlag == TRUE || scene.useVelocity == TRUE) {
+		if(scene.offsetFlag == TRUE) fprintf(stderr,"Using offsets\n");
+		readXYVel(&xyVel, displacementFile);
+	} else {xyVel.xSize = 0; xyVel.ySize = 0;}
+	readXYDEM(demFile, &xyDem); dem = (void *) &xyDem;
 	if(scene.maskFlag == TRUE) {
-		readMaskFile(displacementFile,imageMask);
-		scene.imageMask=imageMask;  
+		readMaskFile(displacementFile, imageMask);
+		scene.imageMask = imageMask;  
 		fprintf(stderr,"++++ %f  %f\n",imageMask->x0,imageMask->y0);
-	}
+	} 
+	
 	/*
 	  Simulate InSAR image
 	*/
-	simInSARimage(&scene,dem,&xyVel);
+	simInSARimage(&scene, dem, &xyVel);
 	/*
 	  Output image   
 	*/
@@ -90,6 +93,7 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 	double bnStart,bnEnd;
 	double bpStart,bpEnd;
 	double bnMid, dBn, bpMid, dBp;
+	int velocityFlag;
 
 	int bnFlag=FALSE, bnStartFlag=FALSE,toLLFlag=FALSE;
 	int bpFlag=FALSE, bpStartFlag=FALSE;
@@ -109,6 +113,7 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 	bnEnd = bn;
 	bpStart = bp;
 	bpEnd = bp;
+	velocityFlag = FALSE;
 	scene->llInput=NULL;
 	scene->toLLFlag=FALSE; 
 	for(i=1; i <= n; i+=2) {
@@ -168,6 +173,7 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 		else if(strstr(argString,"height") != NULL) { i--; heightFlag=TRUE; }
 		else if(strstr(argString,"mask") != NULL) { i--; maskFlag=TRUE; }
 		else if(strstr(argString,"offset") != NULL) { i--; offsetFlag=TRUE; }
+		else if(strstr(argString,"velocity") != NULL) { i--; velocityFlag=TRUE; }
 		else if(strstr(argString,"slantRangeDEM") != NULL) { 
 			error("obsolete slantRangeDEM flag used");
 		} else if(strstr(argString,"xyDEM") != NULL ) {
@@ -186,6 +192,7 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 	scene->heightFlag = heightFlag;
 	scene->maskFlag = maskFlag;
 	scene->offsetFlag = offsetFlag;
+	scene->useVelocity = velocityFlag;
 
 	if( bpStartFlag == TRUE) {
 		scene->bnStart = bnStart; 
@@ -217,8 +224,8 @@ static void usage()
 	      "Usage:",
 	      "siminsar -bn bn -dBn dBn -bp bp -dBp dBp ",
 	      "         -bnStart bnStart -bnEnd -bpStart bpStart -bpEnd ",
-	      "         -flat -height -rPix rPix -aPix deltA",
-	      "         -slantRangeDEM -xyDEM - mask -toLL file.dat",
+	      "         -flat -height -rPix rPix -aPix deltA -velocity",
+	      "         -slantRangeDEM -xyDEM -mask -toLL file.dat",
 	      "          demFile displacementFile sceneFile outPutImage",
 	      "where",
 	      "                   ow compute and use defaults",
@@ -234,6 +241,7 @@ static void usage()
 	      "   height        = output height values instead of phase",
 	      "   rPix          = range single look pixel size",
 	      "   aPix          = azimuth single look pixel size",
+		  "   velocity      = use velocity",
 	      "   slantRangeDEM = use dem of image size in slant range coords",
 	      "   xyDEM         = xyDEM file with xyDEM.geodat file",
 	      "   demFile          = dem file in lat/lon, xy, or slant range format",
@@ -290,7 +298,7 @@ static void readMaskFile(char *shelfMaskFile,ShelfMask *shelfMask)
 	shelfMask->hemisphere=SOUTH;
 	shelfMask->stdLat = 71.0;
 
-	fprintf(stderr,"%i %i \n %f %f \n %f %f \n %f %i %f \n",
+	fprintf(stderr,"** %i %i \n %f %f \n %f %f \n %f %i %f \n",
 		shelfMask->xSize,shelfMask->ySize,	shelfMask->deltaX,shelfMask->deltaY,
 		shelfMask->x0,shelfMask->y0,shelfMask->rot,shelfMask->hemisphere,shelfMask->stdLat);
 	/*

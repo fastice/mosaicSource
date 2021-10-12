@@ -76,6 +76,9 @@ void main(int argc, char *argv[])
 	smoothBuf = NULL;
 	readArgs(argc, argv, &inputFile, &demFile, &outFile, &fl, &removePad, &nearestDate, &noPower,
 		&hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData);
+	 /* This step just reads in the dem projection info, which is then used for the outputs */
+	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
+	outputImage.slat = xyDem.stdLat;	
 	processMosaicDateGeo(&outputImage, date1, date2);
 	/*
 	  read inputfile (uses routine from mosaicDEMS).
@@ -90,6 +93,9 @@ void main(int argc, char *argv[])
 	*/
 	parseImages(inputImage, &outputImage, imageFiles, geodatFiles, weights, antPatFiles,  nFiles,
 		S1Cal & TRUE, &maxR, &maxA, noData);
+	/* Modified Aug 2021 for alternate ps projections */
+
+       	fprintf(stderr, "Rotation, slat*  %f %f\n", Rotation, outputImage.slat);
 	fprintf(stderr, "maxR, maxA %i %i\n", maxR, maxA);
 	/*
 	  Find output bounds
@@ -219,7 +225,7 @@ static void outputBounds(inputImageStructure *inputImage , 	outputImageStructure
 	minX = 1.e30; minY = 1.0e30; maxX = -1.e30; maxY = -1.0e30;
 	for(i = 0; i < nFiles; i++) {
 		for(j = 1; j < 5; j++) {
-			lltoxy1(inputImage[i].latControlPoints[j], 	inputImage[i].lonControlPoints[j], &x, &y, 	Rotation, outputImage->slat);
+			lltoxy1(inputImage[i].latControlPoints[j], 	inputImage[i].lonControlPoints[j], &x, &y, Rotation, outputImage->slat);
 			minX = min(x, minX); minY = min(y, minY);
 			maxX = max(x, maxX); maxY = max(y, maxY); 
 		}
@@ -252,10 +258,7 @@ static void parseImages(inputImageStructure *inputImages , outputImageStructure 
 	float t1, t2, t3, t4;
 	int i;
 	*maxA = 0; *maxR = 0;
-	/* Default */
-	HemiSphere = NORTH;
-	Rotation = 45.0;
-	outputImage->slat = 70.0;
+	/* outputImage->slat = 70.0;*/
 	for(i = 0; i < nFiles; i++) {
 		inputImage = &(inputImages[i]);
 		inputImage->passType = DESCENDING; /* default */
@@ -285,16 +288,9 @@ static void parseImages(inputImageStructure *inputImages , outputImageStructure 
 		t3 = inputImage->sv.times[0];
 		t4 = inputImage->sv.times[inputImage->sv.nState];
 		if(t3 > (t1+45) || (t4+45) < t2) fprintf(stdout, "%s  %f %f %lf %lf %lf %lf\n", geodatFiles[i], t1, t2, t3, t4, t1-t3, t4-t2 );
-		/* Use corner points to set projection */
-		if(inputImage->latControlPoints[1] < 0) {
-			HemiSphere = SOUTH;
-			Rotation = 0.0;
-			outputImage->slat = 71.0;
-		}
 	}
 	if(HemiSphere==NORTH) fprintf(stderr, "\n ***** Northern Hemisphere  ******\n");
 	else fprintf(stderr, "\n ***** Southern Hemisphere  ******\n");			
-	
 }
 
 

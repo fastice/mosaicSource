@@ -166,6 +166,8 @@ typedef struct inputImageType {
 	void **image;
 	int isInit;
 	float noData;
+	double lastTime;  /* Last time used for geocoding */
+	float tolerance; /* Tolerange for geocoding. Set to 1e-6 in initLLtoImage */
 	struct inputImageType *next;
 } inputImageStructure;
 
@@ -299,6 +301,7 @@ float interpolateFloatInputImage(inputImageStructure inputImage, double range,do
 /*
   Input xy (PS) DEM.
 */
+void readXYDEMGeoInfo(char *xyFile, xyDEM *xydem, int resetProjection);
 void readXYDEMcrop( char *xyFile,xyDEM *xydem,float xmin,float xmax,float ymin, float ymax);
 void readXYDEM( char *xyFile,xyDEM *xydem);
 void readXYVel(xyVEL *xyvel, char *xyFile);

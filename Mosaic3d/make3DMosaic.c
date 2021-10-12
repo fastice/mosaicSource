@@ -7,6 +7,7 @@
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
+#include "time.h"
 
 static void setBuffer(inputImageStructure *inputImage,float *buf);
 static double computePhiZM3d(double *thetaD,  double z,double azimuth,  vhParams *vhParam,inputImageStructure *phaseImage,
@@ -72,7 +73,9 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	double combWeight;  /* Weight based on time overlap */
 	double aZSp,dZSp;  /* asc/desc elevations corrected to local sphere */
 	double twokA,twokD; /* 4pi/lambda */	
+	double scaleA, scaleD;
 	double vx,vy,vz; /* velocity solution */
+	float geoTolerance = 1e-3; /* Tolerance for geocoding 1e-3 should give a few meters, good enough for velocity */
 	float **vXimage,**vYimage,**vZimage,  **errorX,**errorY;; /* velocity and error buffers */
 	float **vxTmp,**vyTmp,**vzTmp,**fScale,**sxTmp,**syTmp; /* Temp solutions */	
 	float **scaleX,**scaleY,**scaleZ;  /*  scale buffers */
@@ -82,6 +85,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	int aa,dd;  /* Counters for asc/desc images */
 	int i,j,i1,j1;
 	unsigned char sMask;
+	struct timeval start, stop;
 
 	fprintf(outputImage->fpLog,";\n; Entering make3DMosaic(.c)\n");
 	if(no3d==TRUE) {
@@ -115,7 +119,6 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		/*  
 		    Break inner loop if outer image is a nophase
 		*/
-		fprintf(stderr,"A %s\n",aPhaseImage->file);
 		if(strstr(aPhaseImage->file,"nophase") != NULL) goto ascskip;
 		/* Added this 7/31/2015 to skip over images with no overlap */
 		getRegion(aPhaseImage,&iMin,&iMax,&jMin,&jMax,outputImage);
@@ -128,6 +131,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		twokA=(4.0*PI)/aPhaseImage->par.lambda;
 		/*  Setup conversion parameters		*/
 		aCp=setupGeoConversions (aPhaseImage, &dum1, &dum2,&aRe, &aReH,&aThetaC,&aReHfixed,&aThetaCfixedReH);
+		aPhaseImage->tolerance = geoTolerance;
 		/* 
 		   SECOND LOOP: Loop over descending images:  Changed 05/30/07 to search all images below one from aPhase loop 
 		*/   
@@ -147,24 +151,23 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			if(iMin > iMax || jMin > jMax) {
 				/* This file has no overlap so, set to nophase - for future loops */
 				strncpy(dPhaseImage->file,"nophase",7); dPhaseImage->file[7]='\0';
-				fprintf(stderr,"skip %s %i %i\n",dPhaseImage->file,dd,aa);
 				goto descskip;
 			}
 			if(dPhaseImage->passType == aPhaseImage->passType && sepAscDesc == TRUE) goto descskip;    
 			/*
 			  Get region of  possible intersection;   This provides final iMin/iMax.. to loop over 
 			*/
-			fprintf(stderr,"%i %i %i %i\n",iMin,iMax,jMin,jMax);
-			getIntersect(dPhaseImage,aPhaseImage,&iMin,&iMax,&jMin,&jMax,outputImage);
-			if(iMax==0 && jMax==0)  goto descskip;
+			getIntersect(dPhaseImage,aPhaseImage,&iMin,&iMax,&jMin,&jMax,outputImage);	
+			if(iMax==0 && jMax==0)  goto descskip; /* Skip this image if no data */
 			/*
 			  Init conversion stuff
 			*/
 			dPhaseImage->memChan=MEM2;
-			dCp=setupGeoConversions (dPhaseImage, &dum1, &dum2,&dRe, &dReH,&dThetaC,&dReHfixed,&dThetaCfixedReH);			
-			fprintf(stderr,"init dPhaseImage->file %s\n",dPhaseImage->file);
-			fprintf(stderr,"dPhaseImage %s %3.0f %5.1f %4i\n",  dPhaseImage->file,dParams->nDays,dPhaseImage->par.lambda,dd );
-			fprintf(stderr,"aPhaseImage %s %3.0f %5.1f %4i\n\n",aPhaseImage->file,aParams->nDays,aPhaseImage->par.lambda,aa );
+			dCp=setupGeoConversions (dPhaseImage, &dum1, &dum2,&dRe, &dReH,&dThetaC,&dReHfixed,&dThetaCfixedReH);
+			dPhaseImage->tolerance = geoTolerance;	
+			fprintf(stderr,"aPhaseImage %s %3.0f %5.1f %4i\n\n",aPhaseImage->file, aParams->nDays, aPhaseImage->par.lambda, aa);		
+			fprintf(stderr,"dPhaseImage %s %3.0f %5.1f %4i\n",  dPhaseImage->file, dParams->nDays, dPhaseImage->par.lambda, dd);
+			/* fprintf(stderr,"%i %i %i %i", iMin, iMax, jMin, jMax); */
 			twokD=(4.0*PI)/dPhaseImage->par.lambda;						
 			/*   Compute approximate heading by sampling overlap region  - set iMax,jMax zero if no good solution */
 			computeSceneAlpha(outputImage,aPhaseImage,dPhaseImage,aCp,dCp,dem, &iMin,&iMax,&jMin,&jMax);
@@ -176,6 +179,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			  Loop over output grid and compute velocities
 			*/        
 			Aset=FALSE;
+			gettimeofday(&start, NULL);
 			for(i=iMin; i < iMax; i++) {
 				if( (i % 100) == 0) fprintf(stderr,"--+ %i %f %f %f %f \n",i,A[0][0],A[0][1],A[1][0],A[1][1]);
 				/* y - coordinate */
@@ -183,7 +187,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 				for(j=jMin; j < jMax; j++) {  
 					/*  x-coordinate, then convert x/y stereographic coords to lat/lon	*/
 					x = (outputImage->originX + j*outputImage->deltaX) * MTOKM;
-					xytoll1(x,y,HemiSphere,&lat,&lon,Rotation,dem->stdLat);
+					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
 					zWGS84 = getXYHeight(lat,lon,dem,0.0,ELLIPSOIDAL);
 					/* Nominal phase error */
 					phaseErrorA=PI;phaseErrorD=PI;
@@ -231,11 +235,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								aPhase -= - aPhaseImage->tideCorrection * cos(aPsi) * twokA* (double)aParams->nDays/365.25;
 								dPhase -= - dPhaseImage->tideCorrection * cos(dPsi) * twokD *(double)dParams->nDays/365.25;
 							} /* ENd if(smask... */
-							/*  Update A every set of 10 pixels.  Use Aset to force computation on first calc. */ 
-							if( ((i % 3) == 0 || (j % 3) == 0) || Aset==FALSE ) {
-								computeA(lat,lon,x,y,aPhaseImage,dPhaseImage,A);
-								Aset=TRUE;
-							}
+							computeA(lat, lon, x, y, aPhaseImage, dPhaseImage, A);
 							/*
 							  Only pursue solution if sufficient difference  in angles for 3d solution
 							*/
@@ -243,10 +243,12 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								/*  Compute B (note B is really C in the TGARS paper	*/
 								computeB(x,y,zWGS84,B,&dzdx,&dzdy,aPsi,dPsi,(xyDEM *)dem);
 								/*  Scale phases for velocity computation (scale for m/yr)	*/
-								aP = 365.25 * aPhase/(twokA*aParams->nDays * sin(aPsi));
-								dP = 365.25 * dPhase/(twokD*dParams->nDays * sin(dPsi));
-								aPe = 365.25 * phaseErrorA/(twokA*aParams->nDays * sin(aPsi));
-								dPe = 365.25 * phaseErrorD/(twokD*dParams->nDays * sin(dPsi));
+								scaleA = 365.25/(twokA * aParams->nDays * sin(aPsi));
+								scaleD = 365.25/(twokA * dParams->nDays * sin(dPsi));
+								aP = aPhase * scaleA;
+								dP = dPhase * scaleD;
+								aPe = phaseErrorA * scaleA;
+								dPe = phaseErrorD * scaleD; 
 								/*  Compute velocity */
 								computeVxy(aP,dP,aPe,dPe,A,B,&vx,&vy,&scX,&scY);
 								/*  Compute vertical velocity	*/
@@ -255,8 +257,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								  Update output arrays
 								*/
 								if(! (scX > -1000. && scX < 1000.) ) error("invalid velocity %f %f %f %f %f %f\n",vx,vy,phaseErrorA,phaseErrorD,aPe,dPe);
-								vxTmp[i][j] = vx*scX;
-								vyTmp[i][j] = vy*scY;
+								vxTmp[i][j] = vx * scX;
+								vyTmp[i][j] = vy * scY;
 								if( outputImage->timeOverlapFlag==TRUE ) {
 									/* For lack of better option, use the average of the two data takes */
 									deltaOffCenter = 0.5*(tOffCenterA+tOffCenterD-2.0*tCenter);
@@ -268,7 +270,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								aPhaseImage->used=TRUE;
 								dPhaseImage->used=TRUE;
 								validData=TRUE;
-							}
+							} /* else fprintf(stderr,"LARGEA\n"); */
 						} 
 					}
 					if(validData==FALSE) {
@@ -279,6 +281,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			/*
 			  Compute scale array for feathering.
 			*/    
+		 	gettimeofday(&stop, NULL);
+			fprintf(stderr,"T  %lf\n", (double)(stop.tv_usec - start.tv_usec)/1e6 + (double)(stop.tv_sec - start.tv_sec));
 			if(fl > 0 && (iMax > 0 && jMax > 0) )
 				computeScaleLS((float **)vxTmp,fScale, outputImage->ySize, outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT),iMin,iMax,jMin,jMax);
 			/*
@@ -291,8 +295,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			redoNormalization(combWeight,outputImage,iMin, iMax, jMin,jMax, vXimage,vYimage,vZimage,errorX,errorY,
 					  scaleX,scaleY,scaleZ,fScale,vxTmp,vyTmp,vzTmp, sxTmp,syTmp,  FALSE);
 			/* ******************************
-			   Use end of goto used to skip inner loop for nophase 
-			************************************/
+			   Use end of goto used to skip inner loop for nophase */
+		
 		descskip:
 			/* Update  nominal descending image pointer */					
 			dParams=dParams->next;

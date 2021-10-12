@@ -13,8 +13,8 @@
 
   Converted from fortran EFD   6.8.90 version to C 03/17/94
 */
-    void xytoll1(double x, double y,int hemi, double *alat,double *alon,
-                double dlam,double slat)
+void xytoll1(double x, double y,int hemi, double *alat,double *alon,
+            double dlam,double slat)
 { 
 /* 
  This version lets you specify standard lat
@@ -37,7 +37,8 @@
 	hemi    in	Hemisphere(N or S)
 	dlam    in	rotation, degrees, 0-360
 */
-    double e,e2,re,sn,rho,t,cm,xpr,ypr,chi,tmp;
+  double e,e2,re,sn,rho,t,cm,xpr,ypr,chi,tmp;
+  double sinSlat;
 /*
     Radius of earth (km) -Hughes Ellipsoid
 	re=6378.273
@@ -48,8 +49,8 @@
 	e2=0.006693883
    changed to WGS 84, 10/14/05
 */
-        e2=0.0066943801;
-	e=sqrt(e2);
+  e2=0.0066943801;
+	e=0.08181919151397184; /*sqrt(e2);*/
 /*
     Standard parallel
     slat=70; Use xytoll for this version
@@ -59,19 +60,20 @@
     For SSM/I grid,
     Test for N or S hemi, set constants as necessary
 */
-    if(hemi == SOUTH) sn=-1.; else sn=1.;
+  if(hemi == SOUTH) sn=-1.; else sn=1.;
 /*
   Compute lat and long
 */
+  sinSlat = sin(DTOR*slat);
 	rho=sqrt( pow(x,2.0)+pow(y,2.0) );
 	if(rho <= 0.1) {
           *alon=0.;
 	  if(sn <= 0.) *alat=-90.; else *alat=90.;
 	} else {
-	  cm=cos(DTOR*slat) /sqrt( 1.-e2*( pow(sin(DTOR*slat),2.0) ) );
+	  cm=cos(DTOR*slat) /sqrt( 1.-e2*( pow(sinSlat,2.0) ) );
 
 	  t=tan((PI/4.)-(slat/(2.*RTOD)));
-          tmp =  (1.-e*sin(DTOR*slat)) / ( 1.+e*sin(DTOR*slat) );
+          tmp =  (1.-e*sinSlat) / ( 1.+e*sinSlat );
           t=t/pow( tmp, (e/2.) );
 	  t=rho*t/(re*cm);
 	  chi=(PI/2.)-2.*atan(t);

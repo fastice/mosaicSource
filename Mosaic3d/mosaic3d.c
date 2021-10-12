@@ -26,13 +26,13 @@
   are used to carry around the locations of the blocks of memory. Prior to reading each image, the
   buffer pointers are set as needed with explicit routine (setBuffer).  
 */
-static void findOutBounds(outputImageStructure *outputImage, inputImageStructure *ascImages, inputImageStructure *descImages, landSatImage *LSImages, int *autoSize);
+static void findOutBounds(outputImageStructure *outputImage, inputImageStructure *ascImages, inputImageStructure *descImages, landSatImage *LSImages, int *autoSize, int writeBlank);
 static void mallocOutputImage(outputImageStructure *outputImage);
 static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,char **outFileBase, float *fl, char **irregFile,  char **shelfMaskFile,
 		     int *makeTies,  double *tieThresh,  char **extraTieFile, char **tideFile,int *north,     char **landSatFile,int *threeDOffFlag,float *timeThresh,
-		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage);
+		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage, int *writeBlank);
 static void write3Doutput( outputImageStructure outputImage, char *outFileBase );
-static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase, char *demFile);
+static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase, char *demFile, int writeBlank);
 void caldat(long julian, int *mm, int *id, int *iyyy);
 static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructure *outputImage);
 static void processMosaicDate(outputImageStructure *outputImage, char *date1,char *date2);
@@ -99,12 +99,14 @@ void main(int argc, char *argv[])
         int nAsc, nDesc, nFiles;   /* Number of ascending/descending and all files */	
 	int offsetFlag=TRUE;    	    /* Flag to indicate do both offset solution where needed, always true old option removed */
 	int makeTies, statsFlag, *crossFlags;
-	int autoSize;
+	int autoSize, writeBlank;
 	/* 
 	   Read command line args and compute filenames
 	*/
 	readArgs(argc,argv, &inputFile, &demFile, &outFileBase,&fl, &irregFile,&shelfMaskFile,&makeTies,&tieThresh,&extraTieFile,&tideFile,  &northFlag, &landSatFile, &threeDOffFlag,
-		 &timeThresh,&date1,&date2,&refVel,&statsFlag, &outputImage);
+		 &timeThresh,&date1,&date2,&refVel,&statsFlag, &outputImage, &writeBlank);
+	 /* Added August 2021 to set projection parameters from DEM */
+	readXYDEMGeoInfo(demFile, &dem, TRUE);			 
 	/* Removed no offset flag version */
 	processMosaicDate(&outputImage,date1,date2);
 	/* Write to log */
@@ -122,18 +124,21 @@ void main(int argc, char *argv[])
 	*/
 	setup3D(nFiles, phaseFiles, geodatFiles, baselineFiles, offsetFiles,azParamsFiles,rOffsetFiles, rParamsFiles, nDays, weights,crossFlags,
 		&ascImages, &descImages, &ascParams, &descParams,&nAsc, &nDesc, offsetFlag,outputImage.rOffsetFlag,threeDOffFlag,outputImage.fpLog,&outputImage);
-	logInputFiles3d(&outputImage,geodatFiles, phaseFiles, baselineFiles,  rOffsetFiles, rParamsFiles, offsetFiles, azParamsFiles,nDays, weights,crossFlags, nFiles, offsetFlag);	
+	logInputFiles3d(&outputImage,geodatFiles, phaseFiles, baselineFiles,  rOffsetFiles, rParamsFiles, offsetFiles, azParamsFiles,nDays, weights,crossFlags, nFiles, offsetFlag);
+	
 	/*
 	  Determine hemisphere
 	*/
 	get3DProj(ascImages,descImages,nAsc,nDesc,northFlag, &outputImage);
+	outputImage.slat = dem.stdLat;
+	
 	/* Process landsat images */
 	LSImages = NULL; 
 	if(landSatFile != NULL) {
-		LSImages=parseLSInputs(landSatFile, LSImages,outputImage.jd1,outputImage.jd2,outputImage.timeOverlapFlag);
+		LSImages=parseLSInputs(landSatFile, LSImages, outputImage.jd1,outputImage.jd2, outputImage.timeOverlapFlag);
 	}
 	/* Find bounding box */
-	findOutBounds(&outputImage,ascImages,descImages, LSImages,&autoSize);
+	findOutBounds(&outputImage, ascImages,descImages, LSImages, &autoSize, writeBlank);
 	/*
 	  Read shelf mask     
 	*/
@@ -165,7 +170,8 @@ void main(int argc, char *argv[])
 	/*	
 	  Init values
 	*/
-	init3DImages( &outputImage, &refVel);
+	init3DImages(&outputImage, &refVel);
+	
 	/*
 	  Step 0: Switched to first map since to accomdate discard of large dt. 
 	  *******************************START Landsat mosaics******************************	
@@ -219,7 +225,7 @@ void main(int argc, char *argv[])
 	/* 
 	   write meta file
 	*/
-	haveData=writeMetaFile(images, &outputImage,params,outFileBase, demFile);
+	haveData=writeMetaFile(images, &outputImage,params,outFileBase, demFile, writeBlank);
 	if(landSatFile != NULL) haveData=TRUE;
 	/*
 	  Output result
@@ -333,12 +339,13 @@ static void get3DProj(	inputImageStructure *ascImages, inputImageStructure *desc
 			lat = 80.;
 		}
 	}
+	/* modifed august 2021 to use dem to set projection */
 	if(lat < 0) {
-		HemiSphere=SOUTH;  Rotation=0.0;  outputImage->slat=71.0;
+		HemiSphere=SOUTH; /* Rotation=0.0;  outputImage->slat=71.0;*/
 		fprintf(stderr,"\n ***** Southern Hemisphere  ******\n");
 		fprintf(outputImage->fpLog,"; ***** Southern Hemisphere  ******\n;\n");
 	} else {
-		outputImage->slat=70.0;
+		/* outputImage->slat=70.0;*/
 		fprintf(stderr,"\n ***** Northern Hemisphere  ******\n");
 		fprintf(outputImage->fpLog,"; ***** Northern Hemisphere  ******\n;\n");
 	}
@@ -519,7 +526,7 @@ static void processMosaicDate(outputImageStructure *outputImage, char *date1,cha
 
 
  
-static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase, char *demFile)
+static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage, vhParams *params, char *outFileBase, char *demFile, int writeBlank)
 {     
 	extern int HemiSphere;
 	extern double Rotation;
@@ -545,7 +552,7 @@ static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *out
 	metaFile = strcat(metaFile,".meta");   
 	fpMeta=fopen(metaFile,"w");
 	timeString=(char *)malloc(sizeof(char)*128);
-	haveData=FALSE;
+	haveData = writeBlank;  /* If writeBlank this will force have data to true */
 	for(imageTmp=image; imageTmp != NULL; imageTmp=imageTmp->next) {
 		if(imageTmp->used==TRUE) { /* Only output images that were used */
 			haveData=TRUE;
@@ -611,7 +618,6 @@ static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *out
 		if( strstr(demFile, "gimp2")  != NULL) fprintf(fpMeta,"DEM version = GIMP DEM V2\n");
 		else fprintf(fpMeta,"DEM version = Custom\n");
 	 }
-
 	/*
 	  time
 	*/
@@ -628,7 +634,7 @@ static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *out
 
 static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,char **outFileBase, float *fl, char **irregFile,  char **shelfMaskFile,
 		     int *makeTies,  double *tieThresh,  char **extraTieFile, char **tideFile,int *north,     char **landSatFile,int *threeDOffFlag,float *timeThresh,
-		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage)
+		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage, int *writeBlank)
 {
 	extern int sepAscDesc;   
 	char *argString;
@@ -664,6 +670,7 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
 	*tideFile = NULL;
 	*north=FALSE;
 	*timeThresh=12;
+	*writeBlank = FALSE;
 	vzFlag=VZDEFAULT;
 	*statsFlag=FALSE;
 	/* Added this flag to sort ignore crossing orbits or like asc/desc types May 6 2014 */
@@ -677,7 +684,9 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
 		if(strstr(argString,"center") != NULL)
 			fprintf(stderr,"Ignoring obsolete center flag\n");
 		else if(strstr(argString,"xyDEM") != NULL )
-			fprintf(stderr,"xyDEM flag obsolete - xydem is the default");     
+			fprintf(stderr,"xyDEM flag obsolete - xydem is the default");
+		else if(strstr(argString,"writeBlank") != NULL )
+			*writeBlank = TRUE;
 		else if(strstr(argString,"rOffsets") != NULL )
 			rOffsetFlag= TRUE;
 		else if(strstr(argString,"offsets") != NULL )
@@ -767,15 +776,16 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
  
 static void usage()
 { 
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
 	      "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 	      "Usage:", 
-	      " mosaic3d -north -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
+	      " mosaic3d -north -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
 	      " \t-no3d -3dOff -deltaBQ -deltaBC -noVh -landSat landSatList  -refVel refVelFile -initMap -clipThresh clipThresh -lsClip clipVal  \\",
 	      " \t-shelfMask shelfMask -fl fl  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide \\",
 	      " \tinputFile demFile outPutImage\n",
 	      " where :",
-	      "\tnorth =\t\t\t Force northern hemisphere",
+      	      "\tnorth =\t\t\t Force northern hemisphere",
+	      "\twriteBlank =\t\t\t Force writing of results with no data",
 	      "\tmakeTies =\t\t Flag to produce tiepoint file instead of usual output ",
 	      "\ttieThresh =\t\t Only use values less than tieThresh for tiepoints",
 	      "\textraTies =\t\t File with additional ties to include with data file",
@@ -811,7 +821,7 @@ static void usage()
 /*
   Estimate output area for image based on location of inputs 
 */
-static void findOutBounds(outputImageStructure *outputImage,  inputImageStructure *ascImages, inputImageStructure *descImages, landSatImage *LSImages, int *autoSize)
+static void findOutBounds(outputImageStructure *outputImage,  inputImageStructure *ascImages, inputImageStructure *descImages, landSatImage *LSImages, int *autoSize, int writeBlank)
 {
 	double minX,maxX,minY,maxY,x,y;
 	double minXLS,maxXLS,minYLS,maxYLS;
@@ -821,53 +831,50 @@ static void findOutBounds(outputImageStructure *outputImage,  inputImageStructur
 	/*
 	  No data case for tiepoints
 	*/
-	if(ascImages == NULL && descImages == NULL && LSImages == NULL) {
+	if(ascImages == NULL && descImages == NULL && LSImages == NULL && writeBlank == FALSE) {
 		outputImage->xSize=(int)0;  outputImage->ySize=(int)0;
 		outputImage->originX = 0;   outputImage->originY = 0; 
 		outputImage->deltaX = 1.;   outputImage->deltaY = 1.; 
 	}
-	minXLS=(double)LARGEINT;     maxXLS=-(double)LARGEINT;
-	minYLS=(double)LARGEINT;     maxYLS=-(double)LARGEINT;
-
-	if(LSImages != NULL ) {
-		for(LStmp = LSImages; LStmp != NULL; LStmp=LStmp->next) {
-			minXLS=min(minXLS,LStmp->matches.x0 * MTOKM);
-			maxXLS=max(maxXLS,( LStmp->matches.x0 +  LStmp->matches.stepX *  LStmp->matches.dx  * (LStmp->matches.nx-1)  )* MTOKM);
-			minYLS=min(minYLS,LStmp->matches.y0 *MTOKM);
-			maxYLS=max(maxYLS,( LStmp->matches.y0 +  LStmp->matches.stepY *  LStmp->matches.dy  * (LStmp->matches.ny-1)  )* MTOKM);
-		}
-		fprintf(stderr,"LS Bounds  %lf %lf %lf %lf\n",minXLS,maxXLS,minYLS,maxYLS);
-	}
-	/*
-	  Find output bounds
-	*/
-	fprintf(outputImage->fpLog,";\n; Entering findOutBounds (mosaic3d.c)\n;\n");
-	minX=1.e30; minY=1.0e30; maxX=-1.e30; maxY=-1.0e30;
-	for(tmp=ascImages; tmp != NULL; tmp=tmp->next) {
-		for(j=1; j < 5; j++) {
-			lltoxy1(tmp->latControlPoints[j],tmp->lonControlPoints[j],&x,&y,
-				Rotation,outputImage->slat);
-			minX=min(x,minX);minY=min(y,minY);maxX=max(x,maxX); maxY=max(y,maxY);
-		}
-	}
-	for(tmp=descImages; tmp != NULL; tmp=tmp->next) {
-		for(j=1; j < 5; j++) {
-			lltoxy1(tmp->latControlPoints[j],tmp->lonControlPoints[j],&x,&y,
-				Rotation,outputImage->slat);
-			minX=min(x,minX);minY=min(y,minY);maxX=max(x,maxX); maxY=max(y,maxY);
-		}
-	}
-	if(LSImages != NULL ) {
-		minX=min(minX,minXLS);  maxX=max(maxX,maxXLS);
-		minY=min(minY,minYLS);   maxY=max(maxY,maxYLS);
-	}
-
-	minX=(double)((long)minX-3);  maxX=(double)((long)maxX+3);
-	minY=(double)((long)minY-3); maxY=(double)((long)maxY+3);
-
-	fprintf(stderr,"minX,maxX,minY,maxY %f %f %f %f %i %i",minX,maxX,minY,maxY, outputImage->xSize,outputImage->ySize);
-	
+	/* If ouput size zero, auto size */
 	if(outputImage->xSize==0 || outputImage->ySize==0) {
+		minXLS=(double)LARGEINT;     maxXLS=-(double)LARGEINT;
+		minYLS=(double)LARGEINT;     maxYLS=-(double)LARGEINT;
+		if(LSImages != NULL ) {
+			for(LStmp = LSImages; LStmp != NULL; LStmp=LStmp->next) {
+				minXLS=min(minXLS,LStmp->matches.x0 * MTOKM);
+				maxXLS=max(maxXLS,( LStmp->matches.x0 +  LStmp->matches.stepX *  LStmp->matches.dx  * (LStmp->matches.nx-1)  )* MTOKM);
+				minYLS=min(minYLS,LStmp->matches.y0 *MTOKM);
+				maxYLS=max(maxYLS,( LStmp->matches.y0 +  LStmp->matches.stepY *  LStmp->matches.dy  * (LStmp->matches.ny-1)  )* MTOKM);
+			}
+			fprintf(stderr,"LS Bounds  %lf %lf %lf %lf\n",minXLS,maxXLS,minYLS,maxYLS);
+		}
+		/*
+		  Find output bounds
+		*/
+		fprintf(outputImage->fpLog,";\n; Entering findOutBounds (mosaic3d.c)\n;\n");
+		minX=1.e30; minY=1.0e30; maxX=-1.e30; maxY=-1.0e30;
+		for(tmp=ascImages; tmp != NULL; tmp=tmp->next) {
+			for(j=1; j < 5; j++) {
+				lltoxy1(tmp->latControlPoints[j],tmp->lonControlPoints[j],&x,&y,
+					Rotation,outputImage->slat);
+				minX=min(x,minX);minY=min(y,minY);maxX=max(x,maxX); maxY=max(y,maxY);
+			}
+		}
+		for(tmp=descImages; tmp != NULL; tmp=tmp->next) {
+			for(j=1; j < 5; j++) {
+				lltoxy1(tmp->latControlPoints[j],tmp->lonControlPoints[j],&x,&y,
+					Rotation,outputImage->slat);
+				minX=min(x,minX);minY=min(y,minY);maxX=max(x,maxX); maxY=max(y,maxY);
+			}
+		}
+		if(LSImages != NULL ) {
+			minX=min(minX,minXLS);  maxX=max(maxX,maxXLS);
+			minY=min(minY,minYLS);   maxY=max(maxY,maxYLS);
+		}
+		minX=(double)((long)minX-3);  maxX=(double)((long)maxX+3);
+		minY=(double)((long)minY-3); maxY=(double)((long)maxY+3);
+		fprintf(stderr,"minX,maxX,minY,maxY %f %f %f %f %i %i",minX,maxX,minY,maxY, outputImage->xSize,outputImage->ySize);
 		*autoSize=TRUE;
 		fprintf(stderr,"\n\n*** AUTOSIZING REGION *** *\n\n");
 		fprintf(outputImage->fpLog,";   *** AUTOSIZING REGION ***\n;\n");
@@ -881,7 +888,6 @@ static void findOutBounds(outputImageStructure *outputImage,  inputImageStructur
 
 	fprintf(stderr,"dimensions %i %i %f %f %f %f\n\n",outputImage->xSize,outputImage->ySize,
 		outputImage->originX,outputImage->originY,outputImage->deltaX,outputImage->deltaY);
-
 	fprintf(outputImage->fpLog,"; Size       : %i %i\n; Origin     : %f %f \n; Spacing    : %f %f\n;\n",
 		outputImage->xSize,outputImage->ySize,outputImage->originX,outputImage->originY,outputImage->deltaX,outputImage->deltaY);
 	fprintf(outputImage->fpLog,";\n; Leaving findOutBounds (mosaic3d.c)\n;\n");
@@ -899,6 +905,7 @@ static void mallocOutputImage(outputImageStructure *outputImage)
 	fprintf(outputImage->fpLog,";\n; Entering  mallocOutputImage (from mosaic3d)\n");	
 	outputImage->imageType = POWER;
 	bufSize =  outputImage->ySize *sizeof(float *);
+	fprintf(stderr,"%i\n",bufSize);
 	outputImage->image = (void **)malloc(bufSize);
 	outputImage->image2 = (void **)malloc(bufSize);
 	outputImage->image3 = (void **)malloc(bufSize);

@@ -1,5 +1,6 @@
 #include "stdio.h"
 #include"string.h"
+#include"stdlib.h"
 #include "mosaicSource/common/common.h"
 #include <sys/types.h>
 #include <sys/time.h>
@@ -160,6 +161,7 @@ void readLLinput(FILE *fp, tiePointsStructure *tiePoints, char *DEM)
 	double dum[3];
 	uint32 size[2];
 	double xx,yy;
+	double stdLat, rot;
 	uint32 i;
 	xyDEM  dem;
      
@@ -172,14 +174,18 @@ void readLLinput(FILE *fp, tiePointsStructure *tiePoints, char *DEM)
 	tiePoints->z = (double *)malloc(sizeof(double)*size[0]);
 	tiePoints->r = (double *)malloc(sizeof(double)*size[0]);  tiePoints->a = (double *)malloc(sizeof(double)*size[0]);
 	/* End 4/2/7 fix */
-	if(size[1] == 2) 	readXYDEM(DEM,&dem);
+	if(size[1] == 2) {
+		readXYDEM(DEM, &dem);
+		tiePoints->stdLat = dem.stdLat;
+		Rotation = dem.rot;
+	}
 	tiePoints->npts=0;
 	for(i=0; i < size[0];  i++) {
 		/* Read line */
 		freadBS( ( void *)dum, sizeof(dum[0]),size[1],fp,FLOAT64FLAG);
 		/* set hemisphere - make sure valid lat  */
 		if(dum[0] > -91. && dum[0] < 91.) {
-			if(i==0) {
+			if(i==0 && size[1] != 2) {
 				if(dum[0] < 0) {
 					fprintf(stderr,"**** SOUTHERN HEMISPHERE ****");
 					HemiSphere=SOUTH;	   tiePoints->stdLat=71;		Rotation=0.0;

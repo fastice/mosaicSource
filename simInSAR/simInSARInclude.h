@@ -60,6 +60,7 @@ typedef struct sceneStructureType {
 	float **image;
 	double **latImage;
 	double **lonImage;
+	int useVelocity;
 } sceneStructure;
 
 

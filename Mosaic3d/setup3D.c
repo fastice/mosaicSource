@@ -26,12 +26,16 @@ float dateWeight(double jd1,double jd2,double jdRange1, double jdRange2)
 	   no real date check, so return 1.0
 	*/
 	if( jdRange2 > HIGHJD && jdRange1 <= LOWJD )   return(1.0);
+	/* Ratio of output time slot to period covered by observation []/() < 1 if input resolution is poorer than output*/
 	percentCover=(jdRange2-jdRange1)/(jd2-jd1);
 	/* 
 	   This is a resolution check the obs window can be larger than 60% of the output window - 
-	   (e.g., for 30 day allows 48 day but not 64) 
+	   (e.g., for 30 day allows 48 day but not 64).
+	   Include and exception for the 6 and 12 day products, which allows 12 day data for 6-day ouputs
+	   and 24 day data for 12 outputs
 	*/	
-	if(percentCover < 0.6) return(0.0);
+	if(percentCover < 0.6 && dT > 12) return(0.0);
+	else if(percentCover < 0.49) return(0.0);
 	/*
 	  Now do individual cases
 	  () -> (jd1,jd2)
@@ -161,6 +165,8 @@ static void catPath(char *path, char *dname,char *file) {
 static int useDeltaB(char *offsetFile, int deltaB){
 	char *dname;
 	char svFile[2048], offsetFileCopy[2048];
+	/* This is a phase only case */
+	if(offsetFile == NULL) return 0.0;
 	/* Make a copy because dirname corrupts path */
 	strcpy(offsetFileCopy, offsetFile);
 	dname = dirname(offsetFileCopy);
@@ -225,12 +231,12 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 		}
 		weights[i]=weight;
 		inputImage[i].weight = weights[i];
-		inputImage[i].crossFlag=crossFlags[i];
+		inputImage[i].crossFlag=crossFlags[i];		
 		/*
 		  Proceed if images is used
 		*/
 		if( inputImage[i].used == TRUE ) {
-			inputImage[i].file=phaseFiles[i];
+			inputImage[i].file = phaseFiles[i];
 			dumParams=(vhParams *)malloc(sizeof(vhParams));
 			/*  Read tide correction files where they exist */
 			readTideCorrections(geodatFiles[i], &(inputImage[i]),fpLog,i );
@@ -242,24 +248,24 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 			if(nDays[i] < 0) error("Negative number of days");
 			/*
 			  Read offsets if necessary - offset flag obsolete - it should always be true
-			*/       
+			*/      
 			dumParams->offsetFlag=offsetFlag;
 			dumParams->rOffsetFlag=rOffsetFlag;
 			if(offsetFlag==TRUE || threeDOffFlag==TRUE) {
-				dumParams->offsets.file=offsetFiles[i];
+				dumParams->offsets.file = offsetFiles[i];
 				dumParams->offsets.azParamsFile=azParamsFiles[i];
 			}
 			if(rOffsetFlag==TRUE || threeDOffFlag==TRUE) {
-				dumParams->offsets.rParamsFile=rParamsFiles[i];
-				dumParams->offsets.rFile=rOffsetFiles[i];
+				dumParams->offsets.rParamsFile = rParamsFiles[i];
+				dumParams->offsets.rFile = rOffsetFiles[i];
 			} else {
-				dumParams->offsets.rParamsFile=NULL;
-				dumParams->offsets.rFile=NULL;
+				dumParams->offsets.rParamsFile = NULL;
+				dumParams->offsets.rFile = NULL;
 			}
 			dumParams->offsets.bnS = NULL;
 			dumParams->offsets.bpS = NULL;
 			dumParams->offsets.azInit = FALSE;
-			dumParams->offsets.rOffS=0.0;
+			dumParams->offsets.rOffS=0.0;  
 			dumParams->offsets.deltaB = useDeltaB(offsetFiles[i], outputImage->deltaB);
 			if(inputImage[i].passType == DESCENDING ) 
 				addToList(phaseFiles[i], dumParams, &(inputImage[i]), &desc, descImages, &vhD,

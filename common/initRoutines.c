@@ -84,7 +84,8 @@ float shelfMaskCorrection(inputImageStructure *currentImage, vhParams *currentPa
 /*
   Compute Range,theta,thetatd, and ReH for azimuth, range coords
 */
-void geometryInfo(conversionDataStructure *cP,inputImageStructure *currentImage,double azimuth,double range, double z, double thetaC,double *ReH,double *Range,double *theta,double *thetaD, double *psi,double zSp) {
+void geometryInfo(conversionDataStructure *cP,inputImageStructure *currentImage,double azimuth,double range, double z, 
+					double thetaC,double *ReH,double *Range,double *theta,double *thetaD, double *psi,double zSp) {
 	
 	if(cP->ReH == NULL) error("geometryInfo : ReH[] not defined");
 	if(azimuth < cP->azSize && azimuth >= 0) *ReH = cP->ReH[(int)azimuth];
@@ -182,6 +183,7 @@ void computeA(double lat,double lon,double x,double y,    inputImageStructure *a
 	conversionDataStructure *aCp,*dCp;
 	double invSin2;
 	double twok;
+	double cosAlphaBeta, cosAlpha, cosBeta, sinBeta, sinAlphaBeta;
 	/* Get geometry params */
 	aCp = &(aPhaseImage->cpAll);
 	dCp = &(dPhaseImage->cpAll);
@@ -195,10 +197,15 @@ void computeA(double lat,double lon,double x,double y,    inputImageStructure *a
 	beta = xyAngle - aHAngle;
 	/*  Compute A matrix	*/
 	invSin2 = 1.0/pow(sin(alpha),2.0);
-	A[0][0] = invSin2*(cos(beta)       -cos(alpha)*cos(alpha+beta));
-	A[0][1] = invSin2*(cos(alpha+beta) -cos(alpha)*cos(beta));
-	A[1][0] = invSin2*(sin(beta)       -sin(alpha+beta)*cos(alpha));
-	A[1][1] = invSin2*(sin(alpha+beta) -sin(beta)*cos(alpha));
+	cosAlphaBeta = cos(alpha+beta);
+	cosAlpha = cos(alpha);
+	cosBeta = cos(beta);
+	sinBeta = sin(beta);
+	sinAlphaBeta = sin(alpha+beta);
+	A[0][0] = invSin2*(cosBeta       -cosAlpha * cosAlphaBeta);
+	A[0][1] = invSin2*(cosAlphaBeta - cosAlpha * cosBeta);
+	A[1][0] = invSin2*(sinBeta       -sinAlphaBeta*cosAlpha);
+	A[1][1] = invSin2*(sinAlphaBeta - sinBeta*cosAlpha);
 	/* make sure sufficient difference   in angles for 3d solution	*/
 	if(fabs(alpha) < 0.8 || fabs(alpha) > (2*PI-0.8)) A[0][0]=-LARGEINT;
 }
@@ -219,6 +226,7 @@ void computeB(double x, double y, double z, double B[2][2], double *dzdx, double
 	double  zx1,zx2,zy1,zy2;
 	double x1,y1,x2,y2;
 	double  dx,dy;
+	double tanAPsi, tanDPsi;
 	xyDEM dem;
 	dem = *xydem;
 	/* Use 90 meter spacing */
@@ -239,10 +247,12 @@ void computeB(double x, double y, double z, double B[2][2], double *dzdx, double
 		*dzdy = (zy1-zy2)/(KMTOM*dy);
 	}
 	/* Form B matrix */
-	B[0][0] = *dzdx/tan(aPsi);
-	B[0][1] = *dzdy/tan(aPsi);
-	B[1][0] = *dzdx/tan(dPsi);
-	B[1][1] = *dzdy/tan(dPsi);
+	tanAPsi = tan(aPsi);
+	tanDPsi = tan(dPsi);
+	B[0][0] = *dzdx/tanAPsi;
+	B[0][1] = *dzdy/tanAPsi;
+	B[1][0] = *dzdx/tanDPsi;
+	B[1][1] = *dzdy/tanDPsi;
 	return;
 }
 
@@ -350,10 +360,99 @@ void errorsToXY(double er,double ea, double *ex, double *ey, double xyAngle, dou
 }
 
 /*
+  Returns positive value if a point (x0,y0) is to the left of the line formed by two points (x1,y1) and(x2,y2)
+*/
+static float isLeft(double x0, double y0,double x1,double y1,double x2,double y2){
+	return (x1-x0) * (y2-y0) - (x2 -x0) * (y1-y0);
+}
+
+/*
+	Check if a point is in a closed rect with ccw points.
+*/
+static int inRect(double xP, double yP,double *xR,double *yR){
+	int i;
+	/* Any point not left indicates point outside rectangle for CCW check */
+	for(i=0; i < 4; i++) if(isLeft(xP, yP, xR[i], yR[i], xR[i+1], yR[i+1]) < 0) return(FALSE);
+	return TRUE;
+}
+
+static void xyMinMax(double *xR, double *yR, double *minX, double *minY, double *maxX, double *maxY){
+	int i;
+	*minX = 1e20; *minY = 1e20; *maxX = -1e20; *maxY = -1e20;
+	for(i=0; i < 4; i++) {
+		*minX = min(xR[i], *minX);  *minY = min(yR[i], *minY);
+		*maxX = max(xR[i], *maxX);  *maxY = max(yR[i], *maxY);
+	}
+}
+
+/*
   Compute bounding box for area of intersection of and ascending and descending pass
  */
 void getIntersect(inputImageStructure *dPhaseImage,inputImageStructure *aPhaseImage,
-		  int *iMin,int *iMax,int *jMin,int *jMax, outputImageStructure *outputImage)
+		  int *iMin,int *iMax,int *jMin,int *jMax, outputImageStructure *outputImage) 
+{
+	extern double Rotation;
+	double minX,maxX,minY,maxY;
+	double minXa,maxXa,minYa,maxYa;
+	double minXd,maxXd,minYd,maxYd;
+	double pad;
+	double xaP[6],yaP[6];
+	double xdP[6],ydP[6];
+	int inA,inD, intersect;
+	int i,j;
+	*iMin=0; *iMax=0; *jMin=0; *jMax=0;
+	/*
+	 Compute xy coords of rectangles, with CCW order. Tack center point on the end.
+	*/
+    lltoxy1(aPhaseImage->latControlPoints[1],aPhaseImage->lonControlPoints[1],xaP,yaP,Rotation,outputImage->slat);
+	lltoxy1(aPhaseImage->latControlPoints[2],aPhaseImage->lonControlPoints[2],xaP+1,yaP+1,Rotation,outputImage->slat);
+	lltoxy1(aPhaseImage->latControlPoints[4],aPhaseImage->lonControlPoints[4],xaP+2,yaP+2,Rotation,outputImage->slat);
+	lltoxy1(aPhaseImage->latControlPoints[3],aPhaseImage->lonControlPoints[3],xaP+3,yaP+3,Rotation,outputImage->slat);
+	lltoxy1(aPhaseImage->latControlPoints[0],aPhaseImage->lonControlPoints[0],xaP+5,yaP+5,Rotation,outputImage->slat);
+	xaP[4] = xaP[0]; yaP[4] = yaP[0];  /* Complete polygon */
+	lltoxy1(dPhaseImage->latControlPoints[1],dPhaseImage->lonControlPoints[1],xdP,ydP,Rotation,outputImage->slat);
+	lltoxy1(dPhaseImage->latControlPoints[2],dPhaseImage->lonControlPoints[2],xdP+1,ydP+1,Rotation,outputImage->slat);
+	lltoxy1(dPhaseImage->latControlPoints[4],dPhaseImage->lonControlPoints[4],xdP+2,ydP+2,Rotation,outputImage->slat);
+	lltoxy1(dPhaseImage->latControlPoints[3],dPhaseImage->lonControlPoints[3],xdP+3,ydP+3,Rotation,outputImage->slat);
+	lltoxy1(dPhaseImage->latControlPoints[0],dPhaseImage->lonControlPoints[0],xdP+5,ydP+5,Rotation,outputImage->slat);
+	xdP[4] = xdP[0]; ydP[4] = ydP[0];
+	intersect = FALSE;
+	/* If any point from one rect falls in the other they intersect */
+	minX = 1e20; minY = 1e20; maxX = -1e20; maxY = -1e20;
+	for(i=0; i < 6; i++) { /* This checks corners and centers */
+		inA = inRect(xdP[i], ydP[i], xaP, yaP);
+		inD = inRect(xaP[i], yaP[i], xdP, ydP);
+		/*fprintf(stderr, "%i %i %f %f %f %f %f\n", inA, inD, xdP[i],ydP[i], xaP[i],yaP[i], dPhaseImage->latControlPoints[i]);*/
+		if (inA == TRUE || inD  == TRUE) {
+			intersect = TRUE;
+		}
+	}
+	/* Compute xy bounds */
+	xyMinMax(xdP, ydP, &minXd, &minYd, &maxXd, &maxYd);
+	xyMinMax(xaP, yaP, &minXa, &minYa, &maxXa, &maxYa);
+	minX = max(minXa, minXd); /* Take inner bounds to restrict to just overlap */
+	maxX = min(maxXa, maxXd);
+	minY = max(minYa, minYd); 
+	maxY = min(maxYa, maxYd);
+	/* Compute image bounds */
+	if(intersect == FALSE) { *iMin=0; *iMax=0; *jMin=0; *jMax=0; return;}
+	pad=15000.; 
+	*iMin=(int)((minY*KMTOM-outputImage->originY - pad)/outputImage->deltaY);
+	*jMin=(int)((minX*KMTOM-outputImage->originX - pad)/outputImage->deltaX);
+	*iMax=(int)((maxY*KMTOM-outputImage->originY + pad)/outputImage->deltaY);
+	*jMax=(int)((maxX*KMTOM-outputImage->originX + pad)/outputImage->deltaX);
+	*iMin=max(*iMin,0); *jMin=max(*jMin,0);
+	*iMax=min(outputImage->ySize,*iMax); *jMax=min(outputImage->xSize,*jMax);
+	return;
+}
+
+
+
+/*
+  OBSOLETE REMOVE AT SOME POINT
+ */
+void getIntersectOld(inputImageStructure *dPhaseImage,inputImageStructure *aPhaseImage,
+		  int *iMin,int *iMax,int *jMin,int *jMax, outputImageStructure *outputImage) 
 {
 	extern double Rotation;
 	double a,b,c,d;
@@ -452,8 +551,10 @@ void getIntersect(inputImageStructure *dPhaseImage,inputImageStructure *aPhaseIm
 			inA=TRUE;
 		if(xiP[i] >= minXd && xiP[i]< maxXd && yiP[i] >=minYd && yiP[i] < maxYd)
 			inD=TRUE;
+		fprintf(stderr,"**** %f %f %i %i\n", xiP[i], yiP[i], inA, inD);
 	}
-	if(inA==FALSE || inD == FALSE) { *iMin=0; *iMax=0; *jMin=0; *jMax=0;}
+	return;
+	if(inA==FALSE && inD == FALSE) { *iMin=0; *iMax=0; *jMin=0; *jMax=0;}
 }
 
 /*
@@ -489,7 +590,7 @@ void computeSceneAlpha(outputImageStructure *outputImage,	inputImageStructure *a
 		if(fabs(alpha) < 0.7 || fabs(alpha) > (2*PI-0.7)) {
 			*iMax=0; *jMax=0;
 			fprintf(stderr,"---No solution for headings %f %f %f\n",aHAngle*RTOD,dHAngle*RTOD,alpha*RTOD);
-		} else fprintf(stderr,"*** Solution for headings %f %f %f \n",aHAngle*RTOD,dHAngle*RTOD,alpha*RTOD);
+		} /* else fprintf(stderr,"*** Solution for headings %f %f %f \n",aHAngle*RTOD,dHAngle*RTOD,alpha*RTOD); */
 	}
 }
 
@@ -576,7 +677,7 @@ double thetaRReZReH(double R,double ReZ, double ReH) {
  */
 double psiRReZReH(double R,double ReZ, double ReH) {
 	double theta;
-	theta=thetaRReZReH( R,ReZ,ReH );
+	theta = thetaRReZReH( R,ReZ,ReH );
 	return asin((ReH/ReZ)*sin(theta));
 }
 
