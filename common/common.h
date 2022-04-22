@@ -13,7 +13,7 @@
 #define GROUNDINGZONE 2
 #define NOSOLUTION 5
 /* elipsoid */
-#define F 1.0d/298.257222563
+#define F (double)1.0/298.257222563
 #define EMINOR 6356.7523142
 #define EMAJOR 6378.137
 /*
