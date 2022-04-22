@@ -36,4 +36,18 @@ error-weighted average from whatever combination of the five methods can be appl
 
 **landsatMosaic** This directory contains the Landsat mosaicking modules for **mosaic3d**
 
+# Other Repositories Needed to Compile
+
+This mosaicking code requires code from the following repositories:
+
+[cRecipes](https://github.com/fastice/cRecipes): A handful of Numerical Recipes from C routines with modifications as needed.
+
+[clib](https://github.com/fastice/clib/tree/master): Some utilities for opening files used by the mosaicking code.
+
+[geotiff](https://github.com/fastice/geotiff): Some geotiff library include files for cases where they are not part of the system installation.
+
+[landsatSource64](https://github.com/fastice/landsatSource64/tree/master): Code for offset tracking in pairs of Landsat image with the same path row. Some of the code is required by the mosaicker.
+
+[triangle](https://github.com/fastice/triangle/blob/master/README.md): Ancient triangle code from the 1990s need to compile (maintains some rarely used functionality).
+
 
