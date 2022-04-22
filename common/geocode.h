@@ -138,7 +138,11 @@ typedef struct inputImageType {
 	double minLat;
 	double maxLat;
 	double minLon;
-	double maxLon;	
+	double maxLon;
+	double minX;
+	double maxX;
+	double minY;
+	double maxY;	
 	conversionDataStructure **conversionData;
 	conversionDataStructure cpAll;
 	SARData par;
@@ -181,6 +185,7 @@ typedef struct outputImageType {
 	double originX;
 	double originY;
 	double slat;    /* this has not been fully implemented yet */
+	int makeTies;
 	void **image;
 	void **image2; /* Second Image for special applications (i.e vx,vy) */
 	void **image3; /* Third image for 3-d velocities */
@@ -203,6 +208,7 @@ typedef struct outputImageType {
 	  Mask for ice shelf
 	*/    
 	ShelfMask *shelfMask;
+	xyDEM *verticalCorrection;
 	/*  flags for velocity work */
 	int noVhFlag;  
 	int no3d;

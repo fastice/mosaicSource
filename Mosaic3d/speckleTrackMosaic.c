@@ -20,6 +20,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 	vhParams *currentParams;
 	conversionDataStructure *cP;
 	inputImageStructure *currentImage;
+	xyDEM *vCorrect;
 	double ReH, Re;
 	float **vXimage,**vYimage,**vZimage;
 	float **scaleX,**scaleY,**scaleZ;
@@ -28,7 +29,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 	double range, azimuth; /* range,azimuth coords */
 	double Range;          /* Slant Range */
 	double x,y,zSp,zWGS84;
-	double thetaC,thetaCfixed, thetaD;  /* Center look angle and deviation from center */
+	double thetaC, thetaD;  /* Center look angle and deviation from center */
 	double theta;           /* Look angle */
 	double psi,cotanpsi;    /* Incidence angle and its cotan */
 	double hAngle;          /* Heading angle */
@@ -46,7 +47,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 	float **vxTmp,**vyTmp,**vzTmp,**fScale,**sxTmp,**syTmp;
 	float **errorX,**errorY;
 	float da,dr;
-	double vx,vy,vz;
+	double vx,vy,vz, dzdtSubmergence;
 	double dzdx,dzdy;
 	double tCenter,tOffCenter,deltaOffCenter;
 	int32 i,j;
@@ -57,6 +58,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 	fprintf(stderr,"**** SPECKLE TRACKING SOLUTION ****\n");
 	fprintf(outputImage->fpLog,";\n; Entering speckleTrackMosaic(.c)\n;\n");
 	shelfMask = outputImage->shelfMask;
+	vCorrect = outputImage->verticalCorrection;
 	/*
 	  Pointers to output images
 	*/
@@ -65,32 +67,31 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 	/*
 	  Compute feather scale for existing ,Then undo the prior normalization so errors are all weighted.
 	*/
-	computeScale((float **)vXimage,fScale, outputImage->ySize,  outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT));
-	undoNormalization(outputImage,vXimage,vYimage,vZimage,errorX,errorY, scaleX,scaleY,scaleZ,fScale,statsFlag);
+	computeScale((float **)vXimage, fScale, outputImage->ySize, outputImage->xSize,fl, (float)1.0, (double)(-LARGEINT));
+	undoNormalization(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, fScale, statsFlag);
 	/*
 	  Loop over images
 	*/
-	count=1;
-	currentParams=params;
-	tCenter=(outputImage->jd1+outputImage->jd2)*0.5;
+	count = 1;
+	currentParams = params;
+	tCenter=(outputImage->jd1+outputImage->jd2 + 1.)*0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
 	for(currentImage=images; currentImage != NULL;  currentImage=currentImage->next) {
 		/* Compute central time, and delta from nominal*/
 		tOffCenter=currentImage->julDay+currentParams->nDays*0.5;
-		deltaOffCenter=tOffCenter-tCenter;
+		deltaOffCenter = tOffCenter-tCenter;
 		/* Error check weight */
 		if( fabs(currentImage->weight-1.0) > 0.01 && outputImage->timeOverlapFlag==FALSE)
 			error("non unity weight, but overlap flag not set\n");
-		if(currentParams->offsets.rFile ==NULL || currentImage->weight < 0.00001 ) {
+		if(currentParams->offsets.rFile == NULL || currentImage->weight < 0.00001 ) {
 			currentParams=currentParams->next;
 			continue; /* Skip if no data*/
 		}
-		fprintf(stderr,"RIGHT(+)/LEFT(-) %i - # %i Weight %f - tOff %f %f %f\n", currentImage->lookDir ,count, currentImage->weight,deltaOffCenter,tCenter,tOffCenter);
+		fprintf(stderr,"RIGHT(+)/LEFT(-) %i - # %i Weight %f - tOff %f %f %f\n", currentImage->lookDir, count, currentImage->weight, deltaOffCenter, tCenter, tOffCenter);
 		count++;
 		/*
 		  Conversions initialization and get bounding box
 		*/
-		cP=setupGeoConversions (currentImage, &azSLPixSize, &rSLPixSize,&Re, &ReH,&thetaC,&ddum1,&thetaCfixed);
-		thetaCfixed=thetaC; /* TEMP FIX TO CHECK */
+		cP = setupGeoConversions (currentImage, &azSLPixSize, &rSLPixSize, &Re, &ReH, &thetaC, &ddum1, &ddum2);
 		getRegion(currentImage,&iMin,&iMax,&jMin,&jMax,outputImage);
 		/*
 		  Read Offset
@@ -117,19 +118,19 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 				/*
 				  Get slope and elevation
 				*/
-				xyGetZandSlope(lat,lon,x,y,&zSp,&zWGS84,&dzda,&dzdr,cP, currentParams,currentImage);
+				xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, currentImage);
 				validData=FALSE;
 				if(zSp > (MINELEVATION+1) && zSp < 9999.) { /* If valid z ....*/
 					/* Get range azimuth coords */
-					llToImageNew(lat,lon,zWGS84,&range,&azimuth,currentImage);
+					llToImageNew(lat, lon, zWGS84, &range, &azimuth, currentImage);
 					/* Note use theta c fixed, which is referenced to baseline */
-					geometryInfo(cP, currentImage,azimuth, range, zSp,thetaCfixed, &ReH,&Range,&theta,&thetaD,&psi,zSp);
+					geometryInfo(cP, currentImage, azimuth, range, zSp, thetaC, &ReH, &Range, &theta, &thetaD, &psi, zSp);
 					cotanpsi = 1.0/tan(psi);
 					/*
 					  Get azimuth and range components from the offset field. Note these values come back as meters
 					*/
-					da=interpAzOffset(range,azimuth,&(currentParams->offsets), currentImage,Range,theta ,azSLPixSize);
-					dr=interpRangeOffset(range,azimuth,   &(currentParams->offsets),  currentImage,Range,thetaD ,rSLPixSize,theta,&demError);
+					da = interpAzOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
+					dr = interpRangeOffset(range, azimuth, &(currentParams->offsets),  currentImage, Range, thetaD, rSLPixSize, theta, &demError);
 					/*
 					  If shelf mask, get mask value
 					*/
@@ -141,16 +142,20 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 					*/
 					if( fabs(dr) < 13.0E4 && fabs(da) < 10.0e4 &&  sMask != GROUNDINGZONE  && ( !(sMask == SHELF && outputImage->noTide==TRUE))) {
 						/* Moved inside of if statement 3/1/16 */
-						sigmaA=interpAzSigma(range,azimuth, &(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
-						sig2Off=computeSig2AzParam(sin(theta),cos(theta),  azimuth,  Range,currentImage,&(currentParams->offsets));
-						sigmaA=sqrt(sigmaA*sigmaA  + sig2Off);
-						sigmaR=interpRangeSigma(range,azimuth,	&(currentParams->offsets),currentImage,Range,thetaD ,rSLPixSize);
+						sigmaA = interpAzSigma(range,azimuth, &(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
+						sig2Off = computeSig2AzParam(sin(theta),cos(theta),  azimuth,  Range,currentImage,&(currentParams->offsets));
+						sigmaA = sqrt(sigmaA*sigmaA  + sig2Off);
+						sigmaR = interpRangeSigma(range,azimuth,	&(currentParams->offsets),currentImage,Range,thetaD ,rSLPixSize);
 						sig2Base = computeSig2Base( sin(thetaD),cos(thetaD), azimuth,currentImage ,&(currentParams->offsets));
-						sigmaR= sqrt(sigmaR*sigmaR + demError*demError +  sig2Base);
+						sigmaR = sqrt(sigmaR*sigmaR + demError*demError + sig2Base);
 						/*
 						  SHELF MASK CORRECTION HERE
 						*/
-						dr-= shelfMaskCorrection(currentImage,currentParams,sMask,x,y,psi,&sigmaR);
+						dr -= shelfMaskCorrection(currentImage, currentParams, sMask, x, y, psi, &sigmaR);
+						if(vCorrect != NULL) {
+								dzdtSubmergence = interpVCorrect(x, y, vCorrect);
+								dr -= - dzdtSubmergence * cos(psi) * (double)currentParams->nDays/365.25;
+							}
 						/* 
 						   Compute velocity
 						*/
@@ -169,25 +174,26 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						   slopes on shelves, should be small (especially relative to the 3% quoted error. 
 						*/
 						if(sMask==SHELF) { vr = (dr*scaleDr + va*cotanpsi*0.0)/(1.0-cotanpsi*0.0); }
+				
 						else {vr = (dr*scaleDr + va*cotanpsi*dzda)/(1.0-cotanpsi*dzdr); }
-						ea=sigmaA * (365.25/(double)currentParams->nDays);
+						ea = sigmaA * (365.25/(double)currentParams->nDays);
 						/* If pixel already done and azimuth offsets used,
 						   assume azimuth offsets have already been used so multiply sqrt(2)
 						   to avoid double averaging. 
 						   This only applies if phase is being used too.
 						*/
-						if(outputImage->noVhFlag==FALSE && vXimage[i][j] > (-LARGEINT+1)) 	ea *=1.41421;
-						er=sigmaR * scaleDr;
+						if(outputImage->noVhFlag == FALSE && vXimage[i][j] > (-LARGEINT+1)) ea *=1.41421;
+						er = sigmaR * scaleDr;
 						/* 
 						   Rotate velocity back to xy coordinates 
 						*/               
-						rotateFlowDirectionToXY(vr,va,&vx,&vy,xyAngle,hAngle);
-						rotateFlowDirectionToXY(dzdr,dzda,&dzdx,&dzdy,xyAngle,hAngle);
+						rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
+						rotateFlowDirectionToXY(dzdr, dzda, &dzdx, &dzdy, xyAngle, hAngle);
 						/* 
 						   Clip data 
 						*/
-						noData=FALSE;
-						if(refVel->clipFlag==TRUE  ) noData= clipVel( x,  y, vx,vy,refVel);
+						noData = FALSE;
+						if(refVel->clipFlag == TRUE) noData= clipVel( x, y, vx, vy, refVel);
 						/* NOTE THIS RETURNS VARIANCES */
 						errorsToXY(er,ea,&ex,&ey,xyAngle,hAngle);
 						/*
@@ -208,7 +214,9 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 							/* 
 							   If overlap flag = true, then use the vz buff for deltaT
 							*/
-							if( outputImage->timeOverlapFlag==TRUE ) {
+							if(outputImage->makeTies == TRUE) {
+									vzTmp[i][j] = vz;
+							} else if(outputImage->timeOverlapFlag == TRUE) {
 								vzTmp[i][j] =(float)(deltaOffCenter * sqrt(scX*scY));
 							} else if(statsFlag==FALSE) {
 								if(outputImage->vzFlag==VZDEFAULT)	vzTmp[i][j] =(float) vz; /* vz ; */

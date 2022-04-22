@@ -41,7 +41,7 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	double dbhds,dbcds;
 	int i,i1,k,j,npts,l1,l2;
 	double result[5], azconst[5]; /* fit result, constant used to condition solution */
-	double varP,sigP,meanP,xtmp;
+	double varP,sigP,meanP,xtmp, weightSum;
 	conversionDataStructure *cP;
 	int nParams;
 	int pIndex[5];
@@ -84,6 +84,9 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	sigB = dvector(1,ma); 
 	Cp=dmatrix(1,ma,1,ma);  
 	sigP=10.0;
+	/* Compute mean weight for renormalization */
+		weightSum = 0.0;
+		for(i=0; i < nData; i++) if(fabs(tiePoints->phase[i]) < 1.0E6) weightSum += tiePoints->weight[i]; 
 	/*
 	  Run 3 times 1) initial estimate with unknown errors, 2) use estimate to determine residual 3) final solution with sigma detemermine by residual
 	 */
@@ -117,7 +120,16 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 				if(tiePoints->constOnlyFlag==TRUE) { y[i1] -= r0*sin(theta)*dbcds;   xtmp-=r0*sin(theta)*dbcds;}
 				/* Compute mean and variance between model (xtmp) and corrected data (y) */
 				varP+=(y[i1]-xtmp)*(y[i1]-xtmp); meanP+=(y[i1]-xtmp);
-				sig[i1] = sigP;
+				/* Updated 12/17/21:
+				Add capability to weight sigmas to emphasize certain points (e.g., rock w=1) and de-emphasize others (ice that could change w=10).
+				The noise may be the same for all points, but the weights help limit points where we think there could be subtle biases. To try and keep
+				the mean noise level to that of the data, the normalization will keep the mean sigma consistent with the data. This is not much of a
+				problem if most of the points have the same weight. But in cases where say there are 10% low weight points and 90% high weight, this will drive the
+				sigmas on the low weight (good) to unreasonably low errors. Either way, it shouldn't affect the solution, but it could skew the covariance matrix
+				and hence the baseline error estimates. To avoid this situation, sigmas cannot drop below 0.1.
+				*/
+				sig[i1] = max(sigP * tiePoints->weight[i] * npts/weightSum, 0.1*sigP); 
+				/* sig[i1] = sigP; */
 				j++;
 			} /* End if */
 		} /* End for i */
@@ -153,7 +165,8 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	 */
 	fprintf(stdout,";\n; Ntiepoints/Ngiven used= %i/%i\n;\n",npts,nData);
 	fprintf(stdout,"; X2 %f \n",chisq);
-	fprintf(stdout,";*  sigma*sqrt(X2/n)= %f \n",sigP*sqrt(chisq/(double)npts));
+	/* 12/17/21: Remove chisq since sigP is direct estimate of the variance - note left text X2/n in case other prgrams expect it */
+	fprintf(stdout,";*  sigma*sqrt(X2/n)= %f \n",sigP); /**sqrt(chisq/(double)npts));*/
 	fprintf(stdout,"; Covariance Matrix \n;");
 	
 	for(l1=1; l1 <=4; l1++) {

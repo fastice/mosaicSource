@@ -12,6 +12,7 @@ void readXYDEMcrop(char *xyFile, xyDEM *xydem,float xmin,float xmax,float ymin,f
 {  
 	extern int HemiSphere;
 	extern double Rotation;
+	extern double SLat;	
 	FILE *fp;
 	float **image;
 	int lineCount=0, eod;
@@ -155,6 +156,7 @@ void readXYDEMcrop(char *xyFile, xyDEM *xydem,float xmin,float xmax,float ymin,f
 void readXYDEMGeoInfo(char *xyFile, xyDEM *xydem, int resetProjection) {
 	extern int HemiSphere;
 	extern double Rotation;
+	extern double SLat;
 	FILE *fp;
 	float **image;
 	int lineCount=0, eod;
@@ -229,6 +231,7 @@ void readXYDEMGeoInfo(char *xyFile, xyDEM *xydem, int resetProjection) {
 	/* Force projection to match dem */
 	if(resetProjection == TRUE) {
 		Rotation = xydem->rot;
+		SLat = xydem->stdLat;
 	}
 }
 
@@ -256,9 +259,9 @@ void readXYDEM(char *xyFile, xyDEM *xydem)
 	/*
 	  Read input file
 	*/ 
-	image = (float **)mallocImage(xydem->ySize,xydem->xSize);
+	image = (float **)mallocImage(xydem->ySize, xydem->xSize);
 	for(i=0; i < xydem->ySize; i++) {
-		freadBS(image[i],sizeof(float),xydem->xSize,fp,FLOAT32FLAG);        
+		freadBS(image[i],sizeof(float),xydem->xSize, fp, FLOAT32FLAG);        
 	}
 
 	xydem->z = image;

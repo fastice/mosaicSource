@@ -28,8 +28,10 @@ void svInterpBnBp(inputImageStructure *inputImage, Offsets *offsets, double azim
 	iAzimuth=(int)(azimuth+0.5);
 	iAzimuth=min(max(0,iAzimuth),inputImage->azimuthSize);
 	/* Nearest neighbor */
-	*bnS=offsets->bnS[iAzimuth];
-	*bpS=offsets->bpS[iAzimuth];
+	
+	*bnS = offsets->bnS[iAzimuth];
+	*bpS = offsets->bpS[iAzimuth];
+	/*if(iAzimuth % 2500 == 0) fprintf(stderr,"--- %f %f %i %i %d\n", (float)*bnS, (float)*bpS, iAzimuth, inputImage->azimuthSize, offsets->bpS  );*/
 }
 
 /* convert range and time on the lat/lon on the ellipsoid */
@@ -203,8 +205,8 @@ void svInitBnBp(inputImageStructure *inputImage, Offsets *offsets ) {
 	double Re,H, thetaC;
 	double ReHBuffer[MAXAZIMUTHLINES], ReH;
 	int i;
-	Re=inputImage->cpAll.Re;
-	H=inputImage->par.H;
+	Re =inputImage->cpAll.Re;
+	H = inputImage->par.H;
 	if(inputImage->cpAll.ReH != NULL) ReH =inputImage->cpAll.ReH[(int) (inputImage->azimuthSize)/2];
 	else error("missing reH in svInitBnBp");
 	thetaC = thetaRReZReH(inputImage->cpAll.RCenter,(Re+0),ReH);
@@ -215,17 +217,18 @@ void svInitBnBp(inputImageStructure *inputImage, Offsets *offsets ) {
 	inputImage2.isInit=-1111; /* Signal not to allocate memory */
 	initllToImageNew( &inputImage2);
 	memcpy(&(offsets->sv2),&(inputImage2.sv),sizeof(inputImage2.sv));
-	offsets->dt1t2=inputImage->cpAll.sTime-inputImage2.cpAll.sTime;
+	offsets->dt1t2=inputImage->cpAll.sTime - inputImage2.cpAll.sTime;
 	fprintf(stderr,"times %f %f %f\n",inputImage->cpAll.sTime,inputImage2.cpAll.sTime,offsets->dt1t2);
-	svOffsets(inputImage,&inputImage2, offsets,&offR,&offA);
-	offsets->bnS=(float *)malloc(sizeof(float)*inputImage->azimuthSize);
-	offsets->bpS=(float *)malloc(sizeof(float)*inputImage->azimuthSize);
-	offsets->rConst=offR;
+	svOffsets(inputImage, &inputImage2, offsets, &offR, &offA);
+	offsets->bnS = (float *)malloc(sizeof(float)*inputImage->azimuthSize);
+	offsets->bpS = (float *)malloc(sizeof(float)*inputImage->azimuthSize);
+	offsets->rConst = offR;
+	/* Compute baseline along track */
 	for(i=0; i < inputImage->azimuthSize; i++) {
-		azTime=inputImage->cpAll.sTime + i * inputImage->nAzimuthLooks /inputImage->par.prf;		
-		svBaseTCN(azTime,offsets->dt1t2,&(inputImage->sv),&(offsets->sv2),bTCN);
+		azTime = inputImage->cpAll.sTime + i * inputImage->nAzimuthLooks /inputImage->par.prf;		
+		svBaseTCN(azTime, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);
 		svBnBp(azTime,thetaC,offsets->dt1t2,&(inputImage->sv),&(offsets->sv2),&bnS,&bpS);
-		/*if(i % 1 == 0) fprintf(stderr,"%d %f %f\n",i,bnS,bpS);*/
+		/*if(i % 2500 == 0) fprintf(stderr,"=== %d %f %f\n",i,bnS,bpS);*/
 		offsets->bnS[i]=bnS;
 		offsets->bpS[i]=bpS;		
 	}
@@ -260,9 +263,9 @@ void svOffsets(inputImageStructure *image1,inputImageStructure *image2, Offsets 
 	for(i=0;  i < 5; i++) {
 		llToImageNew(image1->latControlPoints[i],image1->lonControlPoints[i],0,&range1,&azimuth1,image1);
 		llToImageNew(image1->latControlPoints[i],image1->lonControlPoints[i],0,&range2,&azimuth2,image2);
-		Re=earthRadius(image1->latControlPoints[i]*DTOR,EMINOR,EMAJOR)*KMTOM;		
+		Re = earthRadius(image1->latControlPoints[i]*DTOR,EMINOR,EMAJOR)*KMTOM;		
 
-		azTime=image1->cpAll.sTime + azimuth1 * image1->nAzimuthLooks /image1->par.prf;				
+		azTime = image1->cpAll.sTime + azimuth1 * image1->nAzimuthLooks /image1->par.prf;				
 		svBaseTCN(azTime,offsets->dt1t2,&(image1->sv),&(offsets->sv2),bTCN);
 		svBnBp(azTime,thetaC,offsets->dt1t2,&(image1->sv),&(offsets->sv2),&bn,&bp);
 		r1=image1->par.rn + range1  * image1->nRangeLooks * image1->par.slpR;
@@ -273,7 +276,9 @@ void svOffsets(inputImageStructure *image1,inputImageStructure *image2, Offsets 
 		/* This is the offset for one image to the other */
 		deltaRo=(range2-range1) * image1->nRangeLooks * image1->par.slpR;
 		deltaA=a2-a1;
+		/*
 		fprintf(stderr," %f %f %10.5f %10.5f %10.5f %10.5f   d  %10.5f %10.5f %10.5f %10.5f \n",image1->latControlPoints[i],image1->lonControlPoints[i],  r1,r2,a1,a2,deltaRo,deltaRb,deltaRo-deltaRb,deltaA);
+		*/
 		/* If the difference is larger than this, there was a problem with scenes with a large difference in areas */
 		if(range2 > 0 && range2 < image2->rangeSize & azimuth2 > 0 && azimuth2 < image2->azimuthSize) {
 			*cnstR += (deltaRo-deltaRb); 
@@ -285,7 +290,7 @@ void svOffsets(inputImageStructure *image1,inputImageStructure *image2, Offsets 
 		*cnstR=*cnstR/(double)nPts;
 		*cnstA=*cnstA/(double)nPts;
 	} else {	*cnstR=0.0; *cnstA=0.0; }
-	fprintf(stderr,"dR,dA %f %f %i\n",*cnstR,*cnstA,nPts);
+	fprintf(stderr,"\033[1;31m dR,dA %f %f %i\033[0m\n",*cnstR,*cnstA,nPts);
 }
 
 void svBaseTCN(double myTime, double dt1t2, stateV *sv1,stateV *sv2,double bTCN[3]) {

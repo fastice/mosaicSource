@@ -15,7 +15,7 @@
 */
 
 
-    void lltoxy1(double alat,double alon,double *x, double *y, double dlam, 
+    void lltoxy1(double alat,double alon, double *x, double *y, double dlam, 
                 double slat)
 { 
 /*  
@@ -77,7 +77,7 @@
             tmp = pow( (1.-e*sin(DTOR*rlat))/(1.+e*sin(DTOR*rlat)),(e/2.0) );
             t[i1] = t[i1]/tmp;
         }
-	cm=cos(DTOR*slat)/sqrt(1.-e2 * pow(sin(DTOR*slat),2.0) );
+	cm = cos(DTOR*slat)/sqrt(1.-e2 * pow(sin(DTOR*slat),2.0) );
         rho= re * cm * t[0] / t[1];
         *x =  rho * sn * sin( DTOR*(alon+dlam) );
         *y = -rho * sn * cos( DTOR*(alon+dlam) );

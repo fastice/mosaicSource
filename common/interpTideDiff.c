@@ -38,7 +38,7 @@ double interpTideDiff(double x, double y, xyDEM xydem)
 	/*
 	  Use bilinear interpolation to compute height.
 	*/
-	z = ((1.0 - t)*(1.0 - u) * p1 + t * (1.0 - u) * p2 +    t * u * p3 +                (1.0 - t) * u* p4);
+	z = ((1.0 - t)*(1.0 - u) * p1 + t * (1.0 - u) * p2 +    t * u * p3 + (1.0 - t) * u* p4);
 
 	return z;
 }

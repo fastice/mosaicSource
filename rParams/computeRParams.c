@@ -63,16 +63,17 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 	double bTCN[3];
 	double bnFix,bpFix;
 	int pIndex[7];
+	double weightSum, tmp;
 	double t;
 	nParams=4.;
-
+	/* Determine number of parameters in the fit */
 	if(tiePoints->bnbpdBpFlag ==TRUE) nParams=3.;
 	else if(tiePoints->quadB ==TRUE) nParams=6.;
 	else if(tiePoints->bpdBpFlag ==TRUE) nParams=2.;
 	else if(tiePoints->constOnlyFlag ==TRUE) nParams=1.;
 	/* Overide any ofther flags for deltab cases */
-	if(tiePoints->deltaB == DELTABCONST) nParams=1;
-	if(tiePoints->deltaB == DELTABQUAD) nParams=6;	
+	if(tiePoints->deltaB == DELTABCONST) nParams = 1;
+	if(tiePoints->deltaB == DELTABQUAD) nParams = 6;	
 	fprintf(stderr,"*** nParams = %f %i\n",nParams,(int)tiePoints->constOnlyFlag);
 	a = dvector(1,nParams);
 	/* Added 6/12/07 to adjust ReH along track */
@@ -101,14 +102,14 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 	ma = nParams;
 	fprintf(stderr,"ma %i\n",ma);
 	x = (modelValues *) malloc( (npts + 1) * sizeof(modelValues));
-	y = dvector(1,npts);
-	sig = dvector(1,npts);
-	u = dmatrix(1, npts,1,ma);
+	y = dvector(1, npts);
+	sig = dvector(1, npts);
+	u = dmatrix(1, npts, 1, ma);
 	v = dmatrix(1,ma,1,ma);
-	w = dvector(1,ma);   
-	sigB=dvector(1,ma);
-	C6=dmatrix(1,6,1,6);
-	Cp=dmatrix(1,ma,1,ma);
+	w = dvector(1, ma);   
+	sigB  =dvector(1, ma);
+	C6 = dmatrix(1,6,1,6);
+	Cp = dmatrix(1, ma, 1, ma);
 	/*
 	  Loop twice, first using flattening value of bsq, and then value
 	  from first fit. Should easily converge with just two iterations
@@ -116,10 +117,10 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 	  Changed to use base estimate only. Leaving loop for possible
 	  later modification.
 	*/
-	kPrint=2;
-	sigP=1.0;  /* Use for first try */
-	cnst=tiePoints->cnstR;
-	for(k=0; k<=kPrint; k++) {
+	kPrint = 2;
+	sigP = 1.0;  /* Use for first try */
+	cnst = tiePoints->cnstR;
+	for(k=0; k<= kPrint; k++) {
 		if(k == 0) {
 			if(tiePoints->deltaB == DELTABNONE) {
 				Bn=  tiePoints->BnCorig;  Bp =tiePoints->BpCorig; 
@@ -133,37 +134,43 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 		varP=0.0; meanP=0.0;
 		fprintf(stderr,"K- %i %f %f %f %f %f %f %f\n",k,Bn,Bp,dBn,dBp,dBnQ,dBpQ,cnst);
 		j = 0;
+		/* Compute mean weight for renormalization */
+		weightSum = 0.0;
+		for(i=0; i < nData; i++) if(fabs(tiePoints->phase[i]) < 1.0E6) weightSum += tiePoints->weight[i]; 
+		/*
+			Loop to setup solution
+		*/
 		for(i=0; i < nData; i++) {
 			if(fabs(tiePoints->phase[i]) < 1.0E6) { /* Use only good points */
 				i1 = j+1;
 				zSp = tiePoints->z[i];
-				r0 =  RNear + rOffset + tiePoints->r[i] * dr;
-				azimuth=(int)tiePoints->a[i];
+				r0 = RNear + rOffset + tiePoints->r[i] * dr;
+				azimuth = (int)tiePoints->a[i];
 				ReH=getReH(cP,&inputImage,azimuth);
-				theta =thetaRReZReH(r0,(Re+zSp),ReH);
+				theta = thetaRReZReH(r0,(Re+zSp),ReH);
 				thetaD = theta - thetaC;
-				x[i1].x = tiePoints->x[i]/(inputImage.azimuthSize *  inputImage.nAzimuthLooks * AzimuthPixelSize);
+				x[i1].x = tiePoints->x[i] / (inputImage.azimuthSize * inputImage.nAzimuthLooks * AzimuthPixelSize);
 				x[i1].thetaD = thetaD;
 				/* Baseline line or SV */
 				if(tiePoints->deltaB == DELTABNONE) {
-					bn= bPoly(Bn,dBn, dBnQ,x[i1].x); 
-					bp= bPoly(Bp,dBp, dBpQ,x[i1].x); 
+					bn = bPoly(Bn, dBn, dBnQ, x[i1].x); 
+					bp = bPoly(Bp, dBp, dBpQ, x[i1].x); 
 				} else {
 					azTime=cP->sTime +azimuth * inputImage.nAzimuthLooks /inputImage.par.prf;
 					svBaseTCN(azTime,offsets->dt1t2,&(inputImage.sv),&(offsets->sv2),bTCN);
 					svBnBp(azTime,thetaC,offsets->dt1t2,&(inputImage.sv),&(offsets->sv2),&bnS,&bpS);
 					bnFix= bPoly(Bn,dBn, dBnQ,x[i1].x);
 					bpFix= bPoly(Bp,dBp, dBpQ,x[i1].x);
-					bp= bpS + bpFix;					
+					bp = bpS + bpFix;					
 					bn = bnS + bnFix;
-					cnst=tiePoints->cnstR;
+					cnst = tiePoints->cnstR;
 				}
-				tiePoints->bsq[i]=bp*bp + bn*bn;
+				tiePoints->bsq[i] = bp*bp + bn*bn;
 				/*
 				  This is removing the non-linear term in Equation 7, Jglac 1996, to keep solution linear. It removes
 				  the approximate delta^2 based on original solution 
 				*/
-				deltaO= -bn*sin(thetaD) -bp*cos(thetaD) + tiePoints->bsq[i]/(2.*r0);
+				deltaO = -bn*sin(thetaD) - bp*cos(thetaD) + tiePoints->bsq[i]/(2.*r0);
 				y[i1] = tiePoints->phase[i] - tiePoints->bsq[i]/(2*r0) + deltaO*deltaO/(2.0*r0);
 				/* Topographic contribution in mosaicker, Equation 7 jglac - sol of quad eq*/									
 				xtmp = (sqrt( pow(r0,2.0) -2.0*r0*(bn*sin(thetaD) + bp*cos(thetaD)) + bn*bn + bp*bp) - r0 + cnst);
@@ -175,27 +182,34 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 					xtmp -= (tiePoints->bsq[i]/(2*r0)- deltaO*deltaO/(2.0*r0) );
 				}
 				/* Sum mean and variance */
-				
-				varP+=(y[i1]-xtmp)*(y[i1]-xtmp); meanP+=(y[i1]-xtmp);
+				varP += (y[i1]-xtmp)*(y[i1]-xtmp); meanP+=(y[i1]-xtmp);
 				/*	if(fabs((y[i1]-xtmp)) > 1300) fprintf(stderr,"%i %f %f %f %f %f %f %f\n",i1,y[i1],xtmp,deltaO,bn,bp,r0,cnst   );*/
 				/*
 				  Subtract known terms for bpFlag
 				*/
 				if(tiePoints->deltaB == DELTABNONE) {
-					if(tiePoints->bnbpdBpFlag == TRUE )           y[i1] -= - sin(thetaD) *  bnQZero(tiePoints,x[i1].x);
-					else if(tiePoints->bpdBpFlag == TRUE )       y[i1] -= - sin(thetaD) *  bnQ(tiePoints,x[i1].x);
-					else if(tiePoints->constOnlyFlag == TRUE )	y[i1] -= - sin(thetaD) * bnQ(tiePoints,x[i1].x) - cos(thetaD) * bpQZero(tiePoints,x[i1].x);
+					if(tiePoints->bnbpdBpFlag == TRUE )        y[i1] -= - sin(thetaD) * bnQZero(tiePoints,x[i1].x);
+					else if(tiePoints->bpdBpFlag == TRUE )     y[i1] -= - sin(thetaD) * bnQ(tiePoints,x[i1].x);
+					else if(tiePoints->constOnlyFlag == TRUE ) y[i1] -= - sin(thetaD) * bnQ(tiePoints,x[i1].x) - cos(thetaD) * bpQZero(tiePoints,x[i1].x);
 				} else {
 					y[i1] -= - sin(thetaD) * bnS - cos(thetaD) * bpS  + tiePoints->cnstR ;
-				}
-				sig[i1] = sigP; 
+				}	
+				/* Updated 12/17/21:
+				Add capability to weight sigmas to emphasize certain points (e.g., rock w=1) and de-emphasize others (ice that could change w=10).
+				The noise may be the same for all points, but the weights help limit points where we think there could be subtle biases. To try and keep
+				the mean noise level to that of the data, the normalization will keep the mean sigma consistent with the data. This is not much of a
+				problem if most of the points have the same weight. But in cases where say there are 10% low weight points and 90% high weight, this will drive the
+				sigmas on the low weight (good) to unreasonably low errors. Either way, it shouldn't affect the solution, but it could skew the covariance matrix
+				and hence the baseline error estimates. To avoid this situation, sigmas cannot drop below 0.1.
+				*/
+				sig[i1] = max(sigP * tiePoints->weight[i] * npts/weightSum, 0.1*sigP); 
 				j++;
 			} /* End if */
 		} /* End for i */
-		varP=varP/(double)npts;
-		meanP=meanP/(double)npts;
-		sigP=sqrt(varP-meanP*meanP);
-		fprintf(stderr,"k= %i v= %lf  sig= %lf mean = %lf\n",k,varP,sigP,meanP);
+		varP = varP/(double)npts;
+		meanP = meanP/(double)npts;
+		sigP = sqrt(varP - meanP*meanP);
+		fprintf(stderr,"k= %i v= %lf  sig= %lf mean = %lf\n", k, varP, sigP, meanP);
 		if(i1 < nParams) {
 			fprintf(stderr,"rParams: Insufficient Number (%i)  of Valid tie points \n",i1);
 			fewPoints();
@@ -240,7 +254,7 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 			Bn=0; Bp=a[1];  dBn=0; dBp=0.0; dBnQ=0.,dBpQ=0.; cnst=tiePoints->cnstR;
 			pIndex[1]=0;  pIndex[2]=0; pIndex[3]=0; pIndex[4]=0; pIndex[5]=0; pIndex[6]=1;
 			fprintf(stderr,"fit 1 %f %i\n",a[1],ma);
-		} else if(tiePoints->deltaB ==DELTABQUAD) {
+		} else if(tiePoints->deltaB == DELTABQUAD) {
 			if(npts < 6) fewPoints();			
 			svdfit((void *)x,y,sig,npts,a,ma,u,v,w, &chisq,&rParamsCoeffsQuadCorrect);
 			cnst=0.0;
@@ -250,7 +264,8 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 		svdvar(v,ma,w,Cp);
 		fprintf(stderr," --- %f %f %f %f %f %f %f\n",Bn,Bp,dBn,dBp,dBnQ,dBpQ,cnst);
 	} 
-	fprintf(stdout,";* sigma*sqrt(X2/n)= %lf  \n",sigP*sqrt(chisq/(double)npts));
+	/* 12/17/21: Remove chisq since sigP is direct estimate of the variance - note left text X2/n in case other prgrams expect it */
+	fprintf(stdout,";* sigma*sqrt(X2/n)= %lf \n", sigP);
 	fprintf(stdout,"; Pseudo erors \n;");
 	if(tiePoints->deltaB == DELTABNONE) 
 		fprintf(stdout,"; Covariance Matrix  Bn, dBn,dBp, dBnQ, dBpQ, const\n;");
@@ -266,7 +281,6 @@ void computeRParams( tiePointsStructure *tiePoints, inputImageStructure inputIma
 		} 
 		fprintf(stdout,"\n");
 	}
-
 	if(tiePoints->deltaB == DELTABNONE ) {
 		fprintf(stdout,"; Bn Bp dBn dBp const dBnQ dBpQ \n");		
 		if(tiePoints->bnbpdBpFlag == TRUE) {

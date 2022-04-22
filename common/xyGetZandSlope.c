@@ -19,17 +19,17 @@ void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp, d
 	/* 
 	   Conversion from output grid to perhaps alternate xy projection  added 9/11/96
 	*/
-	lltoxy1(lat,lon,&xi,&yi,vhParam->xydem.rot,vhParam->xydem.stdLat);
+	lltoxy1(lat, lon, &xi, &yi, vhParam->xydem.rot, vhParam->xydem.stdLat);
 	/* 
 	   Get height
 	*/
-	*zWGS84 = interpXYDEM(xi,yi,vhParam->xydem); 
-	zOrig=*zWGS84;
+	*zWGS84 = interpXYDEM(xi, yi, vhParam->xydem); 
+	zOrig = *zWGS84;
 	if( *zWGS84 <= (MINELEVATION+1) || *zWGS84 > 10000.0) return;
 	/*
 	  Ellipsoidal to spherical earth correction
 	*/
-	*zSp = *zWGS84 +  ( earthRadius(lat*DTOR,image->par.ReMinor, image->par.ReMajor) * KMTOM   - cP->Re);
+	*zSp = *zWGS84 + (earthRadius(lat*DTOR,image->par.ReMinor, image->par.ReMajor) * KMTOM   - cP->Re);
 	/*
 	  Compute flow direction in xy coords from dem and angle of x from north 
 	*/
@@ -37,7 +37,9 @@ void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp, d
 	/*
 	  Avoid really large slopes ???
 	*/ 
-	if(slopeMag > 0.1) {dzdx= dzdx/slopeMag * 0.1; dzdy =dzdy/slopeMag * 0.1;} 
+	dzdx = limitSlope(dzdx, 0.1);
+	dzdy = limitSlope(dzdy, 0.1);
+	/* if(slopeMag > 0.1) {dzdx= dzdx/slopeMag * 0.1; dzdy =dzdy/slopeMag * 0.1;} */
 	/*
 	  Take care of slopes in low areas near ice shelf fronts
 	*/
@@ -46,7 +48,7 @@ void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp, d
 	/* 
 	   Compute angle between range direction and north 
 	*/        
-	hAngle = computeHeading(lat,lon,0,image,cP);
+	hAngle = computeHeading(lat, lon, 0, image, cP);
 	if(hAngle > (2.0001*PI)) { *zSp = 1000000.; *zWGS84=1000000;  return; }
 	/* 
 	   Rotate dzdx,dzdy to dr,da 
@@ -68,10 +70,10 @@ static  void computeXYslope(double lat,double lon, double *dzdx, double *dzdy,  
 
 	dx = xydem.deltaX;
 	dy = xydem.deltaY;
-	lltoxy1(lat,lon,&x,&y,xydem.rot,xydem.stdLat);
-	z = interpXYDEM(x,y,xydem);
-	z1x = interpXYDEM(x+dx,y,xydem);
-	z1y = interpXYDEM(x,y+dy,xydem);	
+	lltoxy1(lat, lon, &x, &y, xydem.rot, xydem.stdLat);
+	z = interpXYDEM(x, y, xydem);
+	z1x = interpXYDEM(x+dx ,y, xydem);
+	z1y = interpXYDEM(x, y+dy, xydem);	
 	if( z <= MINELEVATION || z1x <= MINELEVATION || z1y <= MINELEVATION ||
 	    z > 10000.0 || z1x > 10000.0 || z1y > 10000.0 ) {
 		*dzdx=0; *dzdy = 0.0; *slopeMag = 0.0; return;

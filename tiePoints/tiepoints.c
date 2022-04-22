@@ -130,8 +130,6 @@ void main(int argc, char *argv[])
 	if(shelfMaskFile != NULL) {
 		readShelf(&outputImage,shelfMaskFile);
 	} else outputImage.shelfMask=NULL;
-
-
 	/*
 	  Compute image coords and get z from dem if necessary
 	*/
@@ -147,8 +145,11 @@ void main(int argc, char *argv[])
 	/*
 	  Motion corrections
 	*/
-	if(motionFlag == TRUE || vrFlag==TRUE) 
+	if(motionFlag == TRUE || vrFlag==TRUE) {
+		fprintf(stderr, "Before motion corrections\n");
 		addMotionCorrections(inputImage,&tiePoints);
+		fprintf(stderr, "After motion corrections\n");		
+	 }
 	/*
 	  Output results for checking to sterr
 	*/

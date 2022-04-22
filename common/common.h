@@ -19,6 +19,7 @@
 /*
   Constants
 */
+#define MINVCORRECT -100
 #define RANGEONLY 0
 #define RANGEANDAZIMUTH 1
 #define LARGEINT 2000000000
@@ -191,6 +192,7 @@ typedef struct tiePointsType {
 	double *vy;
 	double *vz;
 	double *vyra;
+	double *weight;
 	double cnstA; /* const dead reckoned az offset */
 	double cnstR;	/* const dead reckoned rg offset */
 	/*
@@ -243,9 +245,10 @@ double computeHeading(double lat,double lon,double z, inputImageStructure *input
 /* Initialize a floating point matrix */
 void initFloatMatrix(float **x,long int nr,long int nc,float initValue);
 int getDataStringSpecial(FILE *fp, int lineCount, char *line,int *eod, char special, int *specialFound);
-void getBaseline(char *baselineFile, vhParams *params);
+void getBaseline(char *baselineFile, vhParams *params, int noPhase);
 void rotateFlowDirectionToXY(double drn,double dan, double *dxn, double *dyn, double xyAngle, double hAngle);
 void rotateFlowDirectionToRA(double dxn,double dyn,  double *dan, double *drn,  double xyAngle, double hAngle);
+double limitSlope(double slope, double maxSlope);
 void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp,double *zWGS84, double *da, double *dr,
 		    conversionDataStructure *cP,vhParams *vhParam, inputImageStructure *slantRangeDEM);
 
@@ -255,7 +258,7 @@ void errorsToXY(double er,double ea, double *ex, double *ey,  double xyAngle, do
 double interpXYDEM(double x, double y, xyDEM xydem);
 void getRegion(inputImageStructure *image, int *iMin,int *iMax, int *jMin,int *jMax,  outputImageStructure *outputImage);
 unsigned char getShelfMask(ShelfMask *shelfMask,double x, double y);
-void computePhiZ(double *phiZ,double z,  double azimuth,vhParams *vhParam,  inputImageStructure *phaseImage, double thetaD,double Range,	 double ReH,double ReHfixed, double Re, double thetaC,double *phaseError);
+void computePhiZ(double *phiZ, double azimuth,vhParams *vhParam,  inputImageStructure *phaseImage, double thetaD,double Range,	 double ReH,double ReHfixed, double Re, double thetaC,double *phaseError);
 double interpTideDiff(double x, double y, xyDEM xydem);
 void  getIrregData(irregularData *irregData);
 void addIrregData(irregularData *irregDat,  outputImageStructure *outputImage, float fl);
@@ -329,6 +332,7 @@ double thetaRReZReH(double R,double ReZ, double ReH);
 double psiRReZReH(double R,double ReZ, double ReH);
 double slantRange(double rho,double ReZ, double ReH);
 void readShelf(outputImageStructure *outputImage,char *shelfMaskFile);
+void readGeodatFile(char *geodatFile, double *x0, double *y0, double *deltaX, double *deltaY, int *sx, int *sy);
 void initOutputImage(outputImageStructure *outputImage, inputImageStructure inputImage);
 void getDEM(char *demFile, void *dem1);
 void smlocateZD(double rxs,  double rys,  double rzs, double rvsx, double rvsy, double rvsz, double rsl,double *lat, double *lon, double lookDir, double trgalt);
@@ -355,3 +359,4 @@ int rangeAzimuthToLL(double *rg, double range,double iFloat,double rhoSp,double 
 double groundRangeToLLNew(double groundRange, double azimuth, double *lat,double *lon, inputImageStructure *inputImage,int recycle);
 void llToECEF(double lat,double lon,double h, double *x,double *y,double *z);
 void getState(double myTime,inputImageStructure *inputImage, double *xs,double *ys, double *zs, double *vsx, double *vsy, double *vsz);
+double interpVCorrect(double x, double y, xyDEM *vCorrect);

@@ -34,6 +34,7 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 	vhParams *currentParams;
 	conversionDataStructure *cP;
 	inputImageStructure *currentImage;
+	xyDEM *vCorrect;
 	double ReH, Re;
 	float **vXimage,**vYimage,**vZimage;
 	float **scaleX,**scaleY,**scaleZ;
@@ -50,11 +51,11 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 	double scalePhase;      /* Scale factor from phase to range diff */
 	double delta;           /* Range difference */
 	double hAngle;          /* Heading angle */
-	double va,vr;           /* Components of vel in azimuth and range */
+	double va,vr, vz;           /* Components of vel in azimuth and range */
 	double xyAngle;         /* Angle from north */
 	double er,ea,ex,ey;           /* Relative errors */
 	double sigmaR,sigmaA;
-	double phaseError;
+	double phaseError, dzdtSubmergence;
 	double tideError; /* Added 05/21/03 */
 	double tCenter,tOffCenter,deltaOffCenter;
 	float azSLPixSize, dum;
@@ -65,6 +66,7 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 	float **vxTmp,**vyTmp,**vzTmp,**fScale,**sxTmp,**syTmp;
 	float **errorX,**errorY;
 	float da;
+	double c1, c2;
 	double vx,vy;
 	int i,j;
 	int count;                /* Current image counter - info only */
@@ -73,6 +75,7 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 	fprintf(stderr,"MOSAICVH\n");
 	fprintf(outputImage->fpLog,";\n; Entering makeVhMosaic(.c)\n");
 	shelfMask = outputImage->shelfMask;
+	vCorrect = outputImage->verticalCorrection;
 	/*
 	  Pointers to output images
 	*/
@@ -87,43 +90,46 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 	  Loop over  images
 	*/
 	currentParams=params;
-	tCenter=(outputImage->jd1+outputImage->jd2)*0.5;
+	tCenter=(outputImage->jd1+outputImage->jd2 + 1.)*0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
 	count=1;
-	for(currentImage=images; currentImage != NULL;  currentImage=currentImage->next) {
-		tOffCenter=currentImage->julDay+currentParams->nDays*0.5;
-		deltaOffCenter=tOffCenter-tCenter;
+	for(currentImage=images; currentImage != NULL;  currentImage = currentImage->next, currentParams = currentParams->next) {
+		tOffCenter= currentImage->julDay + currentParams->nDays * 0.5;
+		deltaOffCenter = tOffCenter - tCenter;
 		twok = 4.0* PI / currentImage->par.lambda;
 		/*
 		  Skip iteration if offsets requested but no offset file
 		*/
-		if(currentParams->offsetFlag==TRUE && currentParams->offsets.file==NULL) {
-			currentParams=currentParams->next;
-			fprintf(stderr,"Skipping %s :no offsets given\n",currentImage->file);
+		if(currentParams->offsetFlag == TRUE && currentParams->offsets.file == NULL) {
+			fprintf(stderr,"Skipping %s :no offsets given\n", currentImage->file);
 			continue;
 		}
 		fprintf(stderr,"\n\n--- %s\n\n", currentParams->offsets.file);
 		if(currentImage->lookDir == LEFT)
 			fprintf(stderr,"LEFT %i\n",count);
 		else
-			fprintf(stderr,"RIGHT %i Weight %f - tOff %f %f %f\n",count, currentImage->weight,deltaOffCenter,tCenter,tOffCenter);
+			fprintf(stderr,"RIGHT %i nDays %f Weight %f - tOff %f %f %f\n",count, currentParams->nDays, currentImage->weight,deltaOffCenter,tCenter,tOffCenter);
 		count++;
 		/*
 		  Read in image
 		*/    
-		if(strstr(currentImage->file,"nophase") != NULL) goto ascskip;
-		getMosaicInputImage( currentImage);
+		fprintf(stderr,"|%s|", currentImage->file);
+		if(strstr(currentImage->file, "nophase") != NULL) {
+			fprintf(stderr,"Skipping %s :no phase given\n",currentImage->file);
+			continue;
+		}
+		getMosaicInputImage(currentImage);
 		/*
 		  Read offset file if needed.
 		*/
 		if(currentParams->offsetFlag==TRUE) {
-			readOffsets( &(currentParams->offsets));
+			readOffsets(&(currentParams->offsets));
 			getAzParams(&(currentParams->offsets));
 		}
 		/*
 		  Conversions initialization
 		*/
-		cP=setupGeoConversions (currentImage, &azSLPixSize, &dum,&Re, &ReH,&thetaC,&ReHfixed,&thetaCfixedReH);
-		fprintf(stderr,"RNear %f %f %f %f %f %fn", cP->RNear,thetaC*RTOD,thetaCfixedReH*RTOD,cP->Re,currentImage->par.H,currentImage->par.rn);
+		cP = setupGeoConversions (currentImage, &azSLPixSize, &dum,&Re, &ReH,&thetaC,&ReHfixed,&thetaCfixedReH);
+		fprintf(stderr,"RNear/Center, thetaC, thetaCfixed, RE %f %f %f %f %f \n", cP->RNear,cP->RCenter, thetaC*RTOD,thetaCfixedReH*RTOD,cP->Re);
 		/*
 		  Get bounding box of image
 		*/
@@ -144,7 +150,7 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 				/*
 				  Get slope and elevation
 				*/
-				xyGetZandSlope(lat,lon,x,y,&zSp,&zWGS84,&dzda,&dzdr,cP,  currentParams,currentImage);
+				xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr ,cP, currentParams,currentImage);
 				validData=FALSE;
 				if(zSp > (MINELEVATION+1) && zSp < 9999.) { /* If valid z ....*/
 					/* 
@@ -163,11 +169,11 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 					*/
 					if( phase > -2.0E7 && sMask != GROUNDINGZONE  && ( !(sMask == SHELF && outputImage->noTide==TRUE))) {
 						/* Compute look angles,ReH, and Range*/
-						geometryInfo(cP, currentImage,azimuth, range,zSp,thetaC, &ReH,&Range,&theta,&thetaD, &psi,zSp);
+						geometryInfo(cP, currentImage,azimuth, range, zSp,thetaC, &ReH, &Range,&theta, &thetaD, &psi,zSp);
 						/* 
 						   Compute phase due to topography and correct phase
 						*/
-						computePhiZ(&phiZ,zSp,azimuth, currentParams, currentImage, thetaD,Range,ReH,ReHfixed,Re,thetaCfixedReH,&phaseError);
+						computePhiZ(&phiZ, azimuth, currentParams, currentImage, thetaD, Range, ReH, ReHfixed, Re, thetaCfixedReH, &phaseError);
 						phase = phase - phiZ;
 						/*
 						  Shelf correction if mask indicates
@@ -176,9 +182,13 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 						/* 
 						   Convert phase to delta 
 						*/
-						scalePhase=( 365.25/(double)(currentParams->nDays *twok*sin(psi)) ); 
-						delta = phase*scalePhase;
-						sigmaR=phaseError * scalePhase;
+						scalePhase = (365.25/(double)(currentParams->nDays *twok*sin(psi)) ); 
+						delta = phase * scalePhase; /* m/yr */
+						if(vCorrect != NULL) {
+								dzdtSubmergence = interpVCorrect(x, y, vCorrect);
+								delta -= -dzdtSubmergence * cos(psi); /* (double)currentParams->nDays/365.25;*/
+						}
+						sigmaR = phaseError * scalePhase;
 						/* 
 						   Compute angle between range direction and north and xy angle
 						*/
@@ -187,20 +197,24 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 						/*	
 							Get azimuth component from the offset field.
 						*/
-						da=interpAzOffset(range,azimuth,&(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
-						sigmaA=interpAzSigma(range,azimuth, &(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
+						if(currentParams->offsetFlag == TRUE) {
+							da = interpAzOffset(range,azimuth,&(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
+							sigmaA = interpAzSigma(range,azimuth, &(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
+						} else {da=0; sigmaA=1;} /* This mode is for debugging to get line of site phase */
 						/*
 						  Note va for left sign flip done in interpAzOffset
 						*/
 						va = da * (365.25/(double)currentParams->nDays);
 						/* 
 						   zero slope correction for small vel since vertical vel is < than noise 
+						   And assume really large slopes are bad >.1
 						*/
-						if(fabs(vr) < 30.0 && fabs(va) < 30.0 ) {
+						if( (fabs(vr) < 10.0 && fabs(va) < 10.0)) {
 							dzda = 0.0; dzdr = 0.0; 
-						}
+						} 
 						cotanpsi=1.0/tan(psi);
 						vr = (delta + va*cotanpsi*dzda)/(1.0-cotanpsi*dzdr);
+						vz = va * dzda + vr * dzdr;
 						/*
 						  if good date continue
 						*/
@@ -208,7 +222,7 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 							/* 
 							   Rotate velocity back to xy coordinates 
 							*/               
-							rotateFlowDirectionToXY(vr,va,&vx,&vy,xyAngle,hAngle);
+							rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
 							ea= sigmaA * (365.25/(double)currentParams->nDays);
 							/* 
 							   Weight error by sqrt(2) to avoid double avging when speckle track solution   done (if done).       
@@ -217,17 +231,19 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 							er=sigmaR;         
 							/* NOTE THIS RETURNS VARIANCES */           
 							errorsToXY(er,ea,&ex,&ey,xyAngle,hAngle);
-							scX=1.0/ex;
-							scY=1.0/ey;
-							vxTmp[i][j] = (float)vx*scX;
-							vyTmp[i][j] = (float)vy*scY;
-							validData=TRUE;
-							if( outputImage->timeOverlapFlag==TRUE ) {
-								vzTmp[i][j] =(float)(deltaOffCenter * sqrt(scX*scY));
+							scX = 1.0 / ex;
+							scY = 1.0 / ey;
+							vxTmp[i][j] = (float) vx * scX;
+							vyTmp[i][j] = (float) vy * scY;
+							validData = TRUE;
+							if(outputImage->makeTies == TRUE) {
+									vzTmp[i][j] = vz;
+							} else if( outputImage->timeOverlapFlag==TRUE ) {
+								vzTmp[i][j] = (float) (deltaOffCenter * sqrt(scX*scY));
 							} else {
-								if(outputImage->vzFlag==VZDEFAULT)	  	vzTmp[i][j] =(float)phase; 
-								else if(outputImage->vzFlag==VZHORIZONTAL) vzTmp[i][j] =(float)delta;
-								else  if(outputImage->vzFlag==VZVERTICAL)	vzTmp[i][j] = (float)delta*sin(psi)/cos(psi) ;  /* undo h by * sin, then make vert /cos */
+								if(outputImage->vzFlag == VZDEFAULT) vzTmp[i][j] =(float) phase; 
+								else if(outputImage->vzFlag == VZHORIZONTAL) vzTmp[i][j] =(float) delta;
+								else  if(outputImage->vzFlag == VZVERTICAL)	vzTmp[i][j] = (float) delta * sin(psi) / cos(psi);  /* undo h by * sin, then make vert /cos */
 							}
 							sxTmp[i][j] = scX;
 							syTmp[i][j] = scY;
@@ -242,8 +258,7 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 					vxTmp[i][j]=(float)-LARGEINT; fScale[i][j]=0.0;
 				} 
 			} /* j loop */
-		}  /* i loop */
-	ascskip:
+		}  /* i loop */	
 		/*
 		  Compute scale array for feathering.
 		*/    
@@ -254,10 +269,6 @@ void makeVhMosaic(inputImageStructure *images,vhParams *params,  outputImageStru
 		*/
 		redoNormalization(currentImage->weight,outputImage,iMin, iMax, jMin,jMax, vXimage,vYimage,vZimage,errorX,errorY,
 				  scaleX,scaleY,scaleZ,fScale,vxTmp,vyTmp,vzTmp, sxTmp,syTmp,  FALSE);
-		/*
-		  Update image pointer
-		*/
-		currentParams=currentParams->next;
 	} /* End asc loop */
 	/**************************END OF MAIN LOOP ******************************/
 	endScale(outputImage,vXimage,vYimage,vZimage,errorX,errorY, scaleX,scaleY,scaleZ,FALSE);	

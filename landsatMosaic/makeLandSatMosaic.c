@@ -102,13 +102,13 @@ void makeLandSatMosaic(landSatImage *LSImages,outputImageStructure *outputImage,
 	/***********************************Loop over images******************************** */
 	count=1;
 	fprintf(stderr,"Outside image loop %i\n",HemiSphere);
-	tCenter=(outputImage->jd1+outputImage->jd2)*0.5;
+	tCenter=(outputImage->jd1+outputImage->jd2 + 1.)*0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
 	tHalfWidth=(outputImage->jd2-outputImage->jd1)*0.5;
 	for(currentImage=LSImages; currentImage != NULL;   currentImage=currentImage->next) {
 		deltaT=currentImage->matches.jdLate-currentImage->matches.jdEarly;  /* time seperation */	
 		fprintf(stderr,"current ls image weight %f %f %f %f\n",currentImage->weight,currentImage->matches.jdEarly,currentImage->matches.jdLate,deltaT);
 		/*  Get bounding box of image*/
-		getLSRegion(currentImage,&iMin,&iMax,&jMin,&jMax,outputImage);
+		getLSRegion(currentImage, &iMin, &iMax, &jMin, &jMax, outputImage);
 		/* Keeps dT from moving outside of interval - see notes - added 10/9/2019 */
 		if(currentImage->weight < 0.5) {iMax=-1; jMax=-1;}
 		/*  **************** Now loop over output grid*****************  */
@@ -385,8 +385,10 @@ static void getLSRegion(landSatImage *image, int32 *iMin,int32 *iMax,  int32 *jM
 	*jMin=(int)((minX*KMTOM-outputImage->originX - pad)/outputImage->deltaX);
 	*iMax=(int)((maxY*KMTOM-outputImage->originY + pad)/outputImage->deltaY);
 	*jMax=(int)((maxX*KMTOM-outputImage->originX + pad)/outputImage->deltaX);
+	fprintf(stderr,"%i %i %i %i -- ", *iMin, *iMax, *jMin, *jMax);
 	*iMin=max(*iMin,0); *jMin=max(*jMin,0);
 	*iMax=min(outputImage->ySize,*iMax); *jMax=min(outputImage->xSize,*jMax);
+	fprintf(stderr,"%i %i  %i %i\n ", *iMin, *iMax, *jMin, *jMax);
 }
 
 double **rDistSaveLS=NULL;

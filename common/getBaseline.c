@@ -6,7 +6,7 @@
 /*
   Input baseline info.
 */
-void getBaseline(char *baselineFile, vhParams *params)
+void getBaseline(char *baselineFile, vhParams *params, int noPhase)
 {
 	FILE *fp;
 	double BnEst,BpEst,dBnEst,dBpEst,dBpEstQ,dBnEstQ;
@@ -23,7 +23,7 @@ void getBaseline(char *baselineFile, vhParams *params)
 	*/
 	for(i=1; i <=6; i++)    for(j=1; j <=6; j++) params->C[i][j]=0;
 	params->sigma=PI; /* Default value */
-	if( strstr(baselineFile,"nobaseline") != NULL ) {
+	if( strstr(baselineFile,"nobaseline") != NULL || noPhase == TRUE) {
 		/* No baseline used for this solution so return */
 		params->Bn  = 0;    params->Bp = 0;
 		params->dBn = 0;   params->dBp  = 0;
@@ -36,8 +36,8 @@ void getBaseline(char *baselineFile, vhParams *params)
 	*/
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	lineCount=getDataString(fp,lineCount,line,&eod);
-	if( sscanf(line,"%i",&nBaselines) != 1)   error("%s  %i", "getBaseline -- Missing baseline params at line:",lineCount);
-	if(nBaselines < 1 || nBaselines > 3)   error("getBaseline -- invalid number of baselines at line %i\n",  lineCount);
+	if( sscanf(line,"%i",&nBaselines) != 1)   error("getBaseline -- Missing baseline params at line: %i of %s",lineCount, baselineFile);
+	if(nBaselines < 1 || nBaselines > 3)   error("getBaseline -- invalid number of baselines at line %i of %s\n",  lineCount, baselineFile);
 	if(nBaselines > 1) lineCount=getDataString(fp,lineCount,line,&eod);
 	if(nBaselines > 2) lineCount=getDataString(fp,lineCount,line,&eod);
 	/*
@@ -63,7 +63,6 @@ void getBaseline(char *baselineFile, vhParams *params)
 			tmp+=strlen("sigma*sqrt(X2/n)=");  sscanf(tmp,"%lf",&fdum1); params->sigma=fdum1;
 		}
 	}
-	/*for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",(params->C[i][1]),(params->C[i][2]),(params->C[i][3]),(params->C[i][4]),(params->C[i][5]),(params->C[i][6]));*/
 	fprintf(stderr,"sigma*sqrt(X2/n) = %lf\n",params->sigma);
 	/*
 	  Input baseline estimated with tiepoints.

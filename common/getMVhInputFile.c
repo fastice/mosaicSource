@@ -50,7 +50,6 @@ void  getMVhInputFile(char *inputFile,char ***phaseFiles, char ***geodatFiles, c
 	outputImage->deltaY = deltaY * KMTOM;
 	outputImage->originX = xo * KMTOM;
 	outputImage->originY = yo * KMTOM;
-
 	/*
 	  Input ReMajor,ReMinor, Rc, phic, H
 	*/

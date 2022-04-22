@@ -74,7 +74,7 @@ float interpAzSigma(double range,double azimuth,Offsets *offsets,  inputImageStr
    Interpolate range offset  map for velocity generation and apply baseline/geometry corrections
 */
 float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputImageStructure *inputImage,
-			double Range,double thetaD, float rSLPixSize, double theta, double *demError)
+			double Range, double thetaD, float rSLPixSize, double theta, double *demError)
 {
 	float result;
 	float zeroOffset;
@@ -83,19 +83,20 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	double  xsq;
 	double imageLength, normAzimuth, azimuthML;
 	/*	  Compute azimuth in image coord stuff	*/
-	azimuthML=azimuth; /* compute coords will convert input azimuth to range offsets, so save */
+	azimuthML = azimuth; /* compute coords will convert input azimuth to range offsets, so save */
 	computeCoordsForInterp(inputImage,offsets,&range,&azimuth,&imageLength,&normAzimuth);
 	/* 
 	   Baseline or deltaBaseline (SV case)
 	*/
-	xsq=normAzimuth*normAzimuth;
+	xsq = normAzimuth*normAzimuth;
 	bn = offsets->bn + offsets->dBn * normAzimuth + offsets->dBnQ * xsq;
 	bp = offsets->bp + offsets->dBp * normAzimuth + offsets->dBpQ * xsq;
+	
 	/* 
 	 State vector baseline ?
 	*/
 	if(offsets->deltaB != DELTABNONE) {
-		svInterpBnBp(inputImage,offsets,azimuthML,&bnS,&bpS);
+		svInterpBnBp(inputImage, offsets, azimuthML, &bnS, &bpS);
 		bn = bnS + bn;
 		bp = bpS + bp;
 	}
@@ -103,7 +104,7 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	/*
 	  Note this can be derived from Eq 7, JGlac 1996, page 566. Solution for quadratic equation
 	*/   
-	zeroOffset = sqrt( pow(Range,2.0) -2.0*Range*(bn*sin(thetaD) + bp*cos(thetaD)) + bSq)  - Range + offsets->rConst;
+	zeroOffset = sqrt(pow(Range, 2.0) -2.0*Range*(bn*sin(thetaD) + bp*cos(thetaD)) + bSq)  - Range + offsets->rConst;
 	/*
  	if(range > 0 && range < inputImage->rangeSize && azimuth > 0 && azimuth < inputImage->azimuthSize) {
 	fprintf(stderr,"NEW zereOffsets,thetaD,bn,bp %f %f %f %f %f %f %f\n",zeroOffset,thetaD*RTOD,bn,bp,range,azimuth,Range);
@@ -114,13 +115,13 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	/*
 	  Interpolate 
 	*/
-	result = bilinearInterp((float **)offsets->dr,range,azimuth,offsets->nr,offsets->na,-0.9999*LARGEINT,(float)-LARGEINT);
+	result = bilinearInterp((float **)offsets->dr, range, azimuth, offsets->nr, offsets->na, -0.9999*LARGEINT, (float)-LARGEINT);
 	if (result < -0.9999*LARGEINT) return -LARGEINT;
 	/*    
 	   apply corrections 
 	*/
 	result *= rSLPixSize; /* This puts offset in meters */
-	result -=zeroOffset;  /* Substract the offset in meters */
+	result -= zeroOffset;  /* Substract the offset in meters */
 	return result;
 }
 

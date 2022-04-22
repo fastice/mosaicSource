@@ -226,5 +226,5 @@
 */
           tiePoints->delta[i] = delta;
     }
-
+fprintf(stderr,"leaving addBaselineCorrections.c\n");
  }

@@ -164,7 +164,7 @@ void readBothOffsets( Offsets *offsets)
 static char *RgOffsetsParamName(char *rParamsFile,char *newFile,int deltaB) {
 	char *suffix[3] = {"",".deltabp",".quad"};
 	if(deltaB > DELTABQUAD || deltaB < DELTABNONE) error("invalide deltaB flag %i",deltaB);
-	return(appendSuffix(rParamsFile,suffix[deltaB],newFile));
+	return(appendSuffix(rParamsFile, suffix[deltaB], newFile));
 }
 
 
@@ -181,7 +181,7 @@ void getRParams( Offsets *offsets)
 	/*
 	  Input parm info
 	*/
-	RgOffsetsParamName(offsets->rParamsFile,paramFile,offsets->deltaB);
+	RgOffsetsParamName(offsets->rParamsFile, paramFile, offsets->deltaB);
 	fp = fopen(paramFile,"r");
 	if(fp == NULL) {
 		/* If quad or const doesn't exist revert to original */
@@ -195,8 +195,8 @@ void getRParams( Offsets *offsets)
 	*/
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	lineCount=getDataString(fp,lineCount,line,&eod);
-	if( sscanf(line,"%i",&nBaselines) != 1)   error("%s  %i", "getBaseline -- Missing baseline params at line:",lineCount);
-	if(nBaselines < 1 || nBaselines > 3)   error("getBaseline -- invalid number of baselines at line %i\n",  lineCount);
+	if( sscanf(line,"%i",&nBaselines) != 1)   error("getRparams -- Missing baseline params at line %i: of %s",lineCount, paramFile);
+	if(nBaselines < 1 || nBaselines > 3)   error("getRParams -- invalid number of baselines at line %i of %s\n",  lineCount, paramFile);
 
 	if(nBaselines > 1) lineCount=getDataString(fp,lineCount,line,&eod);
 	if(nBaselines > 2) lineCount=getDataString(fp,lineCount,line,&eod);
@@ -204,27 +204,28 @@ void getRParams( Offsets *offsets)
 	  Read covariance matrix if there is one. 
 	*/
 	readCov(fp,6,offsets->Cr, &(offsets->sigmaRresidual),line);
-	for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",
-		(offsets->Cr[i][1]),(offsets->Cr[i][2]),(offsets->Cr[i][3]),(offsets->Cr[i][4]),(offsets->Cr[i][5]),(offsets->Cr[i][6]));	
+	/* for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",
+		(offsets->Cr[i][1]),(offsets->Cr[i][2]),(offsets->Cr[i][3]),(offsets->Cr[i][4]),(offsets->Cr[i][5]),(offsets->Cr[i][6]));*/
 	fprintf(stderr,"range sigma*sqrt(X2/n) = %lf (m)\n",offsets->sigmaRresidual);
 	/*
 	  Input baseline estimated with tiepoints.
 	*/
 	/*lineCount=getDataString(fp,lineCount,line,&eod);*/
-	dBpQ=0.0;
-	dBnQ=0.0;
+	dBpQ = 0.0;
+	dBnQ = 0.0;
 	if(sscanf(line,"%lf%lf%lf%lf%lf%lf%lf",&bn,&bp,&dBn,&dBp,&rConst,&dBnQ,&dBpQ) != 7) {
 		if( sscanf(line,"%lf%lf%lf%lf%lf",&bn,&bp,&dBn,&dBp,&rConst) != 5) 
 			error( "\n\ngetRoffsets:Invalid range offset baseline file\nFile: %s\nLine: %s", offsets->rParamsFile,line);
 	}
 	offsets->bn=bn; offsets->bp=bp; 
-	offsets->dBn=dBn; offsets->dBp=dBp; offsets->rConst=rConst;  
+	offsets->dBn=dBn; offsets->dBp=dBp; 
+	/* This parameter will get calculated in the SV basline init routine if its used, so only set for computed baseline */
+	if(offsets->deltaB == DELTABNONE) offsets->rConst=rConst;  
 	offsets->dBnQ=dBnQ; offsets->dBpQ=dBpQ;
 
 	fprintf(stderr,"bn %f %f %f bp %f %f %f off %f\n",offsets->bn,offsets->dBn,
 		offsets->dBnQ,offsets->bp,offsets->dBp,offsets->dBpQ,offsets->rConst);
 	fclose(fp);
-
 }
 
 
@@ -248,9 +249,8 @@ void readRangeOrRangeOffsets( Offsets *offsets,int orbitType)
 	/* 
 	   Set up for offsets type 
 	*/
-	eFileR=offsets->rFile;   
-	eFileR=appendSuffix(eFileR,".sr",bufd);
-	fprintf(stderr,"--- Reading offset file %s %i %i\n",eFileR,offsets->nr,offsets->na);
+	eFileR = offsets->rFile;   
+	eFileR = appendSuffix(eFileR,".sr",bufd);
 
 	if(orbitType == ASCENDING) {
 		offsets->dr = (float **)lBuf1;
@@ -271,14 +271,13 @@ void readRangeOrRangeOffsets( Offsets *offsets,int orbitType)
 	/*
 	  Read files
 	*/
-	readOffsetFile(offsets->dr ,offsets->nr,offsets->na,offsets->rFile);
-	readOffsetFile(offsets->sr ,offsets->nr,offsets->na,eFileR);		      
-	fprintf(stderr,"error File %s\n",eFileR);
+	readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
+	readOffsetFile(offsets->sr, offsets->nr, offsets->na, eFileR);
 }
 	      
 static char *AzOffsetsParamName(char *aParamsFile,char *newFile,int deltaB) {
 	char *suffix[3] = {"",".const",".svlinear"};
-	if(deltaB > DELTABQUAD || deltaB < DELTABNONE) error("invalide deltaB flag %i",deltaB);
+	if(deltaB > DELTABQUAD || deltaB < DELTABNONE) error("invalid deltaB flag %i",deltaB);
 	return(appendSuffix(aParamsFile,suffix[deltaB],newFile));
 }
 
@@ -306,7 +305,7 @@ void getAzParams( Offsets *offsets)
 	/*
 	  Skip past initial data lines
 	*/
-	lineCount=getDataString(fp,lineCount,line,&eod);   
+	lineCount = getDataString(fp,lineCount,line,&eod);   
 	/*
 	  Read covariance matrix if there is one. 
 	*/

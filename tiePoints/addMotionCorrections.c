@@ -48,16 +48,17 @@ void addMotionCorrections(inputImageStructure inputImage,  tiePointsStructure *t
 	for(i=0; i < tiePoints->npts; i++) {
 		lat = tiePoints->lat[i];
 		lon = tiePoints->lon[i];
+		z = tiePoints->z[i];
 		/*
 		  Convert lat/lon to image coordinates
 		*/                     
-		z = 0.0;
-		llToImageNew(lat,lon,z,&range1,&azimuth1,&inputImage); 
-		hAngle=computeHeading(lat,lon,z,&inputImage,&(inputImage.cpAll));
+		z = sphericalToWGSElev(z, lat, Re); /* 0.0;*/
+		llToImageNew(lat, lon, z ,&range1, &azimuth1, &inputImage);
+		hAngle = computeHeading(lat, lon, z, &inputImage, &(inputImage.cpAll));
 		/*
 		  Compute angle for ps coordinats from north
 		*/
-		computeXYangleNoDem(lat,lon,&xyAngle,tiePoints->stdLat);
+		computeXYangleNoDem(lat, lon, &xyAngle, tiePoints->stdLat);
 		/*
 		  Compute angle for CW rotation of ps to radar
 		*/
@@ -68,21 +69,22 @@ void addMotionCorrections(inputImageStructure inputImage,  tiePointsStructure *t
 		if(tiePoints->vrFlag==FALSE) {
 			vyra = tiePoints->vx[i] * cos(rotAngle) - tiePoints->vy[i] * sin(rotAngle);
 		} else vyra=tiePoints->vx[i];
+
 		z = tiePoints->z[i];
-		zWGS=sphericalToWGSElev(z,lat,Re);
-		llToImageNew(lat,lon,zWGS,&range1,&azimuth1,&inputImage);
-		ReH= getReH( cP, &inputImage,azimuth1);
-		r1 = RNear + inputImage.nRangeLooks * RangePixelSize*range1;
-		theta=thetaRReZReH(r1,(Re+z),ReH);
-		psi=psiRReZReH(r1,(Re+z),ReH);
+		zWGS = sphericalToWGSElev(z, lat, Re);
+		llToImageNew(lat, lon, zWGS, &range1, &azimuth1, &inputImage);
+		ReH = getReH(cP, &inputImage, azimuth1);
+		r1 = RNear + inputImage.nRangeLooks * RangePixelSize * range1;
+		theta = thetaRReZReH(r1, (Re+z), ReH);
+		psi = psiRReZReH(r1, (Re + z), ReH);
 		/*
 		  Compute phase correction for motion
 		*/
-		tSign =1.0;
-		if(tiePoints->timeReverseFlag == TRUE) tSign= -1.0;
-		phiDisplacement = tSign*twok*deltaT* (  vyra*sin(psi) -tiePoints->vz[i]*cos(psi)  );
-		tiePoints->phase[i] -=  phiDisplacement;
-		tiePoints->vyra[i] =  vyra;
+		tSign = 1.0;
+		if(tiePoints->timeReverseFlag == TRUE) tSign = -1.0;
+		phiDisplacement = tSign * twok * deltaT * (vyra * sin(psi) - tiePoints->vz[i] * cos(psi));
+		tiePoints->phase[i] -= phiDisplacement;
+		tiePoints->vyra[i] = vyra;
 	}
 
 	return;

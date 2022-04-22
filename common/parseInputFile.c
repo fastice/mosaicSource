@@ -73,7 +73,6 @@ static int parseStateVectors(FILE *fp, int lineCount,inputImageStructure *inputI
 	int  eod, i;
 	
 	sv = &(inputImage->sv);
-	fprintf(stderr,"Parsing State Vector Info\n");	
 	/*
 	  If state flag set read state vector information and initialize 
 	  par structure
@@ -154,7 +153,10 @@ static void parseGeoInfo(inputImageStructure *inputImage, char *line, char *inpu
 
 
 static int parseControlPoints(FILE *fp, int lineCount,inputImageStructure *inputImage, char *inputFile) {
-	double lat,lon;	
+	extern int HemiSphere;
+	extern double Rotation;
+	extern double SLat;
+	double lat,lon, x, y, sLat;	
 	int eod,i;
 	char line[512];
 	/*
@@ -165,12 +167,21 @@ static int parseControlPoints(FILE *fp, int lineCount,inputImageStructure *input
 	/*
 	  Input corner points
 	*/
+	if(SLat < 0) { /* SLat not already set, then guess */
+		if(HemiSphere == NORTH) sLat = 70.0; else sLat = 71.0;
+	} sLat = SLat;
+	inputImage->minX = 1e30; inputImage->maxX =-1.e30; inputImage->minY = 1e30; inputImage->maxY =-1.e30;
 	for(i = 1; i < 5; i++) {
 		lineCount=getDataString(fp,lineCount,line,&eod);
 		if(sscanf(line,"%lf %lf",&lat,&lon) != 2)
 			error("%s %s %i %s %i", inputFile, "parseInputFile -- Missing parameters for control point: ",i, "at line: ",lineCount); 
 		inputImage->latControlPoints[i] = lat;
 		inputImage->lonControlPoints[i] = lon;
+		lltoxy1(lat, lon, &x, &y, Rotation, sLat);
+		inputImage->minX = min(inputImage->minX, x);
+		inputImage->maxX = max(inputImage->maxX, x);
+		inputImage->minY = min(inputImage->minY, y);
+		inputImage->maxY = max(inputImage->maxY, y);
 	}
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	if(sscanf(line,"%lf %lf",&lat,&lon) != 2)
@@ -274,7 +285,7 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	parseLambda(inputImage, line,eod);
 	/* State vectors */
 	lineCount=parseStateVectors(fp, lineCount,inputImage,inputFile);
-	fprintf(stderr,"%f %i\n",sv->t0,sv->nState);
+	fprintf(stderr,"SV ts, n: %f %i\n",sv->t0,sv->nState);
 	/* Get delta T and correct Time*/
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	/* Parse deltaT if one exists */

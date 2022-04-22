@@ -49,20 +49,20 @@ void addVelCorrections(inputImageStructure *inputImage, tiePointsStructure *tieP
 			if(tiePoints->vrFlag==FALSE) {
 				vyra = tiePoints->vx[i] * cos(rotAngle) - tiePoints->vy[i] * sin(rotAngle);
 			} else vyra=tiePoints->vx[i];
-			zSp=tiePoints->z[i];
-			zWGS = tiePoints->z[i] - Re + earthRadius(tiePoints->lat[i]*DTOR ,EMINOR,EMAJOR) * 1000.0 ;
+			zSp = tiePoints->z[i];
+			zWGS = tiePoints->z[i] - Re + earthRadius(tiePoints->lat[i]*DTOR, EMINOR, EMAJOR) * 1000.0;
 			/*fprintf(stderr,"%f %f %f %f\n",Re, earthRadius(tiePoints->lat[i]*DTOR ,EMINOR,EMAJOR) * 1000.0 ,zSp,zWGS);*/
-			llToImageNew(lat,lon,zWGS,&range1,&azimuth1,inputImage);
+			llToImageNew(lat, lon, zWGS, &range1, &azimuth1, inputImage);
 			if(cP->ReH == NULL) error("geometryInfo : ReH[] not defined");
 			if(azimuth1 < cP->azSize && azimuth1 >= 0) ReH = cP->ReH[(int)azimuth1];
 			r1 = RNear + inputImage->nRangeLooks * RangePixelSize*range1;
-			psi = psiRReZReH(r1,(Re+zSp),ReH);
+			psi = psiRReZReH(r1,(Re+zSp), ReH);
 			/*
 			  Compute phase correction for motion
 			*/
-			tSign =1.0;
+			tSign = 1.0;
 			if(tiePoints->timeReverseFlag == TRUE) tSign= -1.0;
-			displacement = tSign*deltaT*(  vyra*sin(psi)  -tiePoints->vz[i]*cos(psi)  );
+			displacement = tSign * deltaT * (vyra*sin(psi) - tiePoints->vz[i] * cos(psi));
 			tiePoints->phase[i] -=  displacement;
 			tiePoints->vyra[i] =  vyra;
 			/*

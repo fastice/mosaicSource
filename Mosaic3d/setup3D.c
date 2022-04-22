@@ -17,10 +17,10 @@ float dateWeight(double jd1,double jd2,double jdRange1, double jdRange2)
 	  output window. The max allowed is what would be the case if the obs window and the output window were the same
 	  size. This helps estimage avoid getting too skewed in time.
 	*/
-	dT=jdRange2-jdRange1; /* time range */
-	jdMid=0.5*(jd1+jd2);
-	jdMidRange=0.5*(jdRange1+jdRange2);
-	tDiff=fabs(jdMid-jdMidRange);
+	dT = jdRange2 - jdRange1; /* time range */
+	jdMid = 0.5*(jd1 + jd2 + 1.0); /* Added the 1 on Dec 1 to fix center problem */
+	jdMidRange = 0.5*(jdRange1 + jdRange2);
+	tDiff = fabs(jdMid - jdMidRange);
 	if(tDiff > dT) return(0.0);
 	/* 
 	   no real date check, so return 1.0
@@ -129,7 +129,7 @@ static void addToList(char *phaseFile,vhParams *dumParams, inputImageStructure *
 	if( strstr(phaseFile,"nophase") == NULL) { 
 		*maxR=max(*maxR,inputImage->rangeSize);
 		*maxA=max(*maxA,inputImage->azimuthSize);
-		fprintf(stderr,"maxR,A %i %i\n",*maxR,*maxA);
+		/* fprintf(stderr,"maxR,A %i %i\n",*maxR,*maxA); */
 	}
 
 }
@@ -171,11 +171,11 @@ static int useDeltaB(char *offsetFile, int deltaB){
 	strcpy(offsetFileCopy, offsetFile);
 	dname = dirname(offsetFileCopy);
 	catPath( svFile, dname, "motion/use.deltabp");
-	fprintf(stderr,"%s\n",svFile);
+	/* fprintf(stderr,"%s\n",svFile);*/
 	fprintf(stderr,"%i", access(svFile, F_OK));
 	if(access(svFile, F_OK) != -1) return(DELTABCONST);
 	catPath( svFile, dname, "motion/use.quad");
-	fprintf(stderr,"%s\n",svFile);
+	/* fprintf(stderr,"%s\n",svFile); */
 	fprintf(stderr,"%i", access(svFile, F_OK));
 	if(access(svFile, F_OK) != -1) return(DELTABQUAD);
 	return deltaB;
@@ -196,12 +196,12 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 	double julDay1,julDay2;
 	int maxRa,maxAa,maxRd,maxAd;
 	float weight, tmpWeight;
-	int i;
+	int i, noPhase;
 	char *dname;
 
 	fprintf(fpLog,";\n; Entering setUp3D\n;\n");
 	/*	  Initializations for maxes	*/
-	maxRa=0; maxAa=0; maxRd=0; maxAd=0;
+	maxRa = 0; maxAa = 0; maxRd = 0; maxAd = 0;
 	/*	  Malloc input images	*/
 	inputImage = (inputImageStructure *) malloc( sizeof(inputImageStructure)*nFiles);
 	/*
@@ -212,16 +212,16 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 	*nAsc=0; *nDesc=0;
 	for(i=0; i < nFiles; i++) {
 		inputImage[i].stateFlag = TRUE;
-		inputImage[i].llInit=FALSE;
+		inputImage[i].llInit = FALSE;
 		/*  Parse the Geodat file	*/
 		parseInputFile(geodatFiles[i], &(inputImage[i]));
-		julDay1=inputImage[i].julDay;
-		julDay2=inputImage[i].julDay+nDays[i];
+		julDay1 = inputImage[i].julDay;
+		julDay2 = inputImage[i].julDay+nDays[i];
 		/*    test within date range	*/
-		inputImage[i].used=FALSE;
-		weight=weights[i];
+		inputImage[i].used = FALSE;
+		weight = weights[i];
 		/*	Compute weight flag based on degree of overlap	*/
-		tmpWeight=dateWeight(julDay1,julDay2, outputImage->jd1,outputImage->jd2);
+		tmpWeight = dateWeight(julDay1, julDay2, outputImage->jd1, outputImage->jd2);
 		/* If  full (0.9999) overlap, so use image		*/
 		if(tmpWeight > 0.99999 ) inputImage[i].used=TRUE;
 		/* otherwise only use image if the timeOverlapFlag set, in which case cascade with other weights */
@@ -241,19 +241,31 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 			/*  Read tide correction files where they exist */
 			readTideCorrections(geodatFiles[i], &(inputImage[i]),fpLog,i );
 			/*	  Get baseline  */
-			getBaseline(baselineFiles[i],dumParams);
+			if(outputImage->no3d && outputImage->noVhFlag) noPhase = TRUE; else noPhase = FALSE;
+			getBaseline(baselineFiles[i],dumParams, noPhase);
 			/*	  Get time info	*/
 			fprintf(stderr,"time weight, nDays %f %f\n",weight, nDays[i]);
 			dumParams->nDays=nDays[i];
 			if(nDays[i] < 0) error("Negative number of days");
 			/*
 			  Read offsets if necessary - offset flag obsolete - it should always be true
-			*/      
-			dumParams->offsetFlag=offsetFlag;
-			dumParams->rOffsetFlag=rOffsetFlag;
-			if(offsetFlag==TRUE || threeDOffFlag==TRUE) {
+			*/  
+			dumParams->offsetFlag = offsetFlag;
+			dumParams->rOffsetFlag = rOffsetFlag;
+			if(offsetFlag==FALSE && threeDOffFlag==FALSE) {
+				dumParams->offsetFlag = FALSE;
+			} else { 
+				if(offsetFiles[i] == NULL) dumParams->offsetFlag = FALSE; 
+			}
+			if(rOffsetFlag==FALSE && threeDOffFlag==FALSE) {
+				dumParams->rOffsetFlag = FALSE;
+			} else {
+				if(rOffsetFiles[i] == NULL) dumParams->rOffsetFlag = FALSE;
+			}
+			/* fprintf(stderr,"%s\n", offsetFiles[i]); */
+			if(offsetFlag == TRUE || threeDOffFlag == TRUE) {
 				dumParams->offsets.file = offsetFiles[i];
-				dumParams->offsets.azParamsFile=azParamsFiles[i];
+				dumParams->offsets.azParamsFile = azParamsFiles[i];
 			}
 			if(rOffsetFlag==TRUE || threeDOffFlag==TRUE) {
 				dumParams->offsets.rParamsFile = rParamsFiles[i];
@@ -261,11 +273,11 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 			} else {
 				dumParams->offsets.rParamsFile = NULL;
 				dumParams->offsets.rFile = NULL;
-			}
+			} 
 			dumParams->offsets.bnS = NULL;
 			dumParams->offsets.bpS = NULL;
 			dumParams->offsets.azInit = FALSE;
-			dumParams->offsets.rOffS=0.0;  
+			dumParams->offsets.rOffS = 0.0;  
 			dumParams->offsets.deltaB = useDeltaB(offsetFiles[i], outputImage->deltaB);
 			if(inputImage[i].passType == DESCENDING ) 
 				addToList(phaseFiles[i], dumParams, &(inputImage[i]), &desc, descImages, &vhD,
@@ -273,7 +285,7 @@ void  setup3D(int nFiles,char **phaseFiles, char **geodatFiles,  char **baseline
 			else 
 				addToList(phaseFiles[i],dumParams,  &(inputImage[i]), &asc, ascImages, &vhA,
 				ascParams, &maxRa,&maxAa, nAsc );
-		} else {  geodatFiles[i]=NULL;} /* Case where not in time range */
+		} else {geodatFiles[i]=NULL;} /* Case where not in time range */
 	} 
 	fprintf(stderr,"NAsc %i  NDesc %i\n",*nAsc,*nDesc);
 	/*

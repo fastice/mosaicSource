@@ -14,6 +14,7 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 	int notdone;      /* Loop flag */
 	double z=0;
 	double vx=0.0, vy=0.0,vz=0.0;
+	double weight;
 	char lineBuffer[LINEMAX+1];
 	char *line;       /* Input line buffer */
 	int lineCount=0;
@@ -36,19 +37,26 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 	tiePoints->vy = (double *)malloc(sizeof(double)*MAXTIEPOINTS);
 	tiePoints->vz = (double *)malloc(sizeof(double)*MAXTIEPOINTS);
 	tiePoints->vyra = (double *)malloc(sizeof(double)*MAXTIEPOINTS);
+	tiePoints->weight = (double *)malloc(sizeof(double)*MAXTIEPOINTS);
 	/* End 4/2/7 fix */
-
+	weight = 1.0;
 	tiePoints->npts=0;
 	while( notdone == TRUE ) {                 /* Loop to read lines */
 		linelength = fgetline(fp,line,LINEMAX); /* Read line */
 		lineCount++;
+		
 		if( strchr(line,ENDDATA) != NULL ) 
 			notdone = FALSE;                    /* End of data, set exit flag */
 		else if( strchr(line,COMMENT) == NULL ) {   /* If not comment, parse */
 			if(tiePoints->motionFlag == TRUE) { 
-				if(sscanf(line,"%lf%lf%lf%lf%lf%lf",  &lat,&lon,&z,&vx,&vy,&vz) != 6) {/*motion ties*/
-					fprintf(stderr,"%lf %lf %lf %lf %lf %lf",lat,lon,z,vx,vy,vz);
-					error("%s  %i", "readTiePoints: -- Invalid # of parameters at line:", lineCount);
+				/*motion ties, if 7 values read weight*/
+				if(sscanf(line,"%lf%lf%lf%lf%lf%lf%lf",  &lat,&lon,&z,&vx,&vy,&vz, &weight) != 7) {
+					/* Fell through 7, so now try 6 and set weight to one */
+					weight = 1.0; 
+					if(sscanf(line,"%lf%lf%lf%lf%lf%lf",  &lat,&lon,&z,&vx,&vy,&vz) != 6) {
+							fprintf(stderr,"%lf %lf %lf %lf %lf %lf",lat,lon,z,vx,vy,vz);
+							error("%s  %i", "readTiePoints: -- Invalid # of parameters at line:", lineCount);
+					}
 				}
 			} else if(tiePoints->vrFlag == TRUE) { 
 				if(sscanf(line,"%lf%lf%lf%lf%lf%lf",  &lat,&lon,&z,&vx,&vy,&vz) != 5) {/*motion ties*/
@@ -70,6 +78,7 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 			tiePoints->vx[tiePoints->npts] = vx;     
 			tiePoints->vy[tiePoints->npts] = vy;     
 			tiePoints->vz[tiePoints->npts] = vz;       
+			tiePoints->weight[tiePoints->npts] = weight;
 			(tiePoints->npts)++;
 			if(tiePoints->npts >= MAXTIEPOINTS) /* Too many tiepts ? */
 				error("readTiePoints -- MAXTIEPOINTS=%i exceeded", MAXTIEPOINTS);

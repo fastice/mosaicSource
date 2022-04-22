@@ -36,6 +36,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/interpOffsets.o \
 			common/$(MACHTYPE)-$(OSTYPE)/interpPhaseImage.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
+	                common/$(MACHTYPE)-$(OSTYPE)/interpVCorrect.o \
 			common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
 			common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \

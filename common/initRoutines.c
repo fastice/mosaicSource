@@ -44,8 +44,8 @@ void interpTideError(double *phaseError,  inputImageStructure *phaseImage,	vhPar
 /* 
 	Compute theta and other info: not for now compute thetaCfixed and thetaC the same way 
 */
-conversionDataStructure *setupGeoConversions (inputImageStructure *currentImage, float *azSLPixSize, float *rSLPixSize,double *Re, double *ReH,
-					      double *thetaC,double *ReHfixed,double *thetaCfixedReH) {
+conversionDataStructure *setupGeoConversions (inputImageStructure *currentImage, float *azSLPixSize, float *rSLPixSize, double *Re, double *ReH,
+					      double *thetaC,double *ReHfixed, double *thetaCfixedReH) {
 	conversionDataStructure *cP;
 
 	initllToImageNew( currentImage);
@@ -55,8 +55,11 @@ conversionDataStructure *setupGeoConversions (inputImageStructure *currentImage,
 	*Re = cP->Re;
 	if(cP->ReH != NULL) *ReH =cP->ReH[(int) (currentImage->azimuthSize)/2]; 
 	else { error(" setup setupGeoConversion *ReH = cP->Re + cP->H"); }
-	*ReHfixed=*ReH;	
-	*thetaC = thetaRReZReH( cP->RCenter, (*Re+0), *ReH);	
+	/* This uses the central value state-vector determined value */
+	*thetaC = thetaRReZReH( cP->RCenter, (*Re+0), *ReH);
+	/* This uses the nominal value from the geodat and corresponds to what was used by changeflat
+	It is needed to compensate for the changeflat corrections in phase calculations */
+	*ReHfixed=*Re + currentImage->par.H;		
 	*thetaCfixedReH=thetaRReZReH(cP->RCenter, (*Re+0), *ReHfixed);
 	return(cP);
 }
@@ -64,7 +67,7 @@ conversionDataStructure *setupGeoConversions (inputImageStructure *currentImage,
 /*
   Compute corrections based on shelf mask
 */
-float shelfMaskCorrection(inputImageStructure *currentImage, vhParams *currentParams,unsigned char sMask,double x,double y,double psi, double*sigmaR) {
+float shelfMaskCorrection(inputImageStructure *currentImage, vhParams *currentParams, unsigned char sMask, double x, double y, double psi, double*sigmaR) {
 	double tdTemp,drCorrect,tideError;
 	if(sMask == SHELF) {
 		/* DeltaTideError=-vz * cospsi * deltaT */   
@@ -94,7 +97,7 @@ void geometryInfo(conversionDataStructure *cP,inputImageStructure *currentImage,
 	/* 
 	   Compute look and inc angles
 	*/
-	*theta=thetaRReZReH(*Range,(cP->Re+zSp),*ReH);
+	*theta = thetaRReZReH(*Range, (cP->Re+zSp), *ReH);
 	*thetaD = *theta - thetaC;
 	*psi = psiRReZReH(*Range,(cP->Re+zSp),*ReH);
 }
@@ -219,6 +222,14 @@ static int badZ(double z1) {
 }
 
 /*
+Avoid overly large slopes
+*/
+double limitSlope(double slope, double maxSlope) {
+	if(fabs(slope) <= maxSlope) return slope;
+	return copysign(maxSlope, slope);
+}
+
+/*
   Computer B matrix for 3D vel solution
  */
 void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi,xyDEM *xydem)
@@ -241,10 +252,10 @@ void computeB(double x, double y, double z, double B[2][2], double *dzdx, double
 	zy2 = interpXYDEM(x,y2,dem);
 	/* Zero slopes if bad data */		
 	if( badZ(zx1)==TRUE || badZ(zx2) == TRUE || badZ(zy1)==TRUE || badZ(zy2) == TRUE) {
-		*dzdx=0.0; *dzdy = 0.0;
+		*dzdx = 0.0; *dzdy = 0.0;
 	} else {
-		*dzdx = (zx1-zx2)/(KMTOM*dx);
-		*dzdy = (zy1-zy2)/(KMTOM*dy);
+		*dzdx = limitSlope((zx1-zx2) / (KMTOM * dx), 0.1);
+		*dzdy = limitSlope((zy1-zy2) / (KMTOM * dy), 0.1);
 	}
 	/* Form B matrix */
 	tanAPsi = tan(aPsi);

@@ -81,7 +81,7 @@ landSatImage  *parseLSInputs(char *inputFile, landSatImage *LSImages,double jd1,
 			tmpWeight=dateWeight(LSImages->matches.jdEarly,LSImages->matches.jdLate, jd1,jd2);
 			LSImages->weight=0.0;
 			/* Case 1 overlapflag - accept anthing with better than 5% overlap, or strictly in range > 99% overlap */
-						fprintf(stderr,"tmpW %f %i\n",tmpWeight,timeOverlapFlag);			
+						/*fprintf(stderr,"tmpW %f %i\n",tmpWeight,timeOverlapFlag);	*/		
 			if( (timeOverlapFlag == TRUE && tmpWeight > 0.05) || (timeOverlapFlag==FALSE && tmpWeight > 0.99) ) {
 				/* Image is in range so populate with fit and other data */
 				firstImage->nImages++;
