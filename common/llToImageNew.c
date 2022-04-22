@@ -132,12 +132,12 @@ void llToECEF(double lat,double lon,double h, double *x,double *y,double *z) {
 	double f,latCos,latSin;
 	double F2,C,S;
 	double dtor;
-	dtor=(2.0 * 3.141592653589793d)/360.0;
+	dtor=(2.0 * (double)3.141592653589793)/360.0;
 	latCos=cos(lat*dtor);
 	latSin=sin(lat*dtor);	
 	f =-(EMINOR/EMAJOR - 1.0);
 	F2=(1.0 - f)*(1.0 -f);
-	C = 1.0d / sqrt(latCos*latCos + F2*latSin*latSin);
+	C = (double)1.0 / sqrt(latCos*latCos + F2*latSin*latSin);
 	S = C*F2;
 	*x=(EMAJOR*1000.0 * C + h) * latCos * cos(lon*dtor);
 	*y=(EMAJOR*1000.0 * C + h) * latCos * sin(lon*dtor);
