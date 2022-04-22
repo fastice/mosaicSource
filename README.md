@@ -1,6 +1,6 @@
 # mosaicSource
 
-This repository contains many of the C-language programs used to produce Greenland Ice Mapping Project (GrIMP) velocity mosaics. To compile, code from several other repositories is needed as described below.
+This repository contains many of the C-language programs used to produce Greenland Ice Mapping Project (GrIMP) velocity mosaics. To compile, code from several other repositories is needed as described below. For product of products, these routines are generalled called as part of Python [workflow](https://github.com/fastice/mosaicWorkflow).
 
 ## Code Summary
 
