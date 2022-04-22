@@ -50,4 +50,6 @@ This mosaicking code requires code from the following repositories:
 
 [triangle](https://github.com/fastice/triangle/blob/master/README.md): Ancient triangle code from the 1990s need to compile (maintains some rarely used functionality).
 
-![](https://github.com/fastice/GrIMPTools/blob/main/Email.png)
+## For Further Information
+
+Please address questions to ![](https://github.com/fastice/GrIMPTools/blob/main/Email.png).
