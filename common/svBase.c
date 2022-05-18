@@ -276,11 +276,9 @@ void svOffsets(inputImageStructure *image1,inputImageStructure *image2, Offsets 
 		/* This is the offset for one image to the other */
 		deltaRo=(range2-range1) * image1->nRangeLooks * image1->par.slpR;
 		deltaA=a2-a1;
-		/*
-		fprintf(stderr," %f %f %10.5f %10.5f %10.5f %10.5f   d  %10.5f %10.5f %10.5f %10.5f \n",image1->latControlPoints[i],image1->lonControlPoints[i],  r1,r2,a1,a2,deltaRo,deltaRb,deltaRo-deltaRb,deltaA);
-		*/
-		/* If the difference is larger than this, there was a problem with scenes with a large difference in areas */
-		if(range2 > 0 && range2 < image2->rangeSize & azimuth2 > 0 && azimuth2 < image2->azimuthSize) {
+		/*fprintf(stderr," %f %f r1,r2 %10.5f %10.5f a1,a2 %10.5f %10.5f   d  %10.5f %10.5f %10.5f %10.5f \n",image1->latControlPoints[i], image1->lonControlPoints[i],  r1,r2,a1,a2,deltaRo,deltaRb,deltaRo-deltaRb,deltaA);*/
+		/* this ensures that the azimuth difference relative to the early time for the first image */
+		if(azimuth1 < 100 ) {
 			*cnstR += (deltaRo-deltaRb); 
 			*cnstA += deltaA;
 			nPts++;
@@ -302,7 +300,7 @@ void svBaseTCN(double myTime, double dt1t2, stateV *sv1,stateV *sv2,double bTCN[
 
 	/* Interp state vectors for R & V */
 	n=(long int)( (myTime - sv1->times[1])/(sv1->deltaT)+.5);
-	n=min(max(0,n-2), sv1->nState-NUSESTATE);
+
 	/* Position in master image */
 	polintVec(&(sv1->times[n]), &(sv1->x[n]), &(sv1->y[n]),&(sv1->z[n]),  &(sv1->vx[n]), &(sv1->vy[n]),&(sv1->vz[n]),
 		  myTime,&(R1[0]), &(R1[1]), &(R1[2]), &(V1[0]), &(V1[1]), &(V1[2]));

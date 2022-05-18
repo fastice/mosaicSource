@@ -103,8 +103,9 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	bSq = bn*bn + bp*bp;
 	/*
 	  Note this can be derived from Eq 7, JGlac 1996, page 566. Solution for quadratic equation
-	*/   
-	zeroOffset = sqrt(pow(Range, 2.0) -2.0*Range*(bn*sin(thetaD) + bp*cos(thetaD)) + bSq)  - Range + offsets->rConst;
+	*/
+/*fprintf(stderr,"bn %f  bp %f off %f\n",bn,bp,offsets->rConst);*/
+	zeroOffset = sqrt(pow(Range, 2.0) - 2.0 * Range * (bn*sin(thetaD) + bp*cos(thetaD)) + bSq)  - Range + offsets->rConst;
 	/*
  	if(range > 0 && range < inputImage->rangeSize && azimuth > 0 && azimuth < inputImage->azimuthSize) {
 	fprintf(stderr,"NEW zereOffsets,thetaD,bn,bp %f %f %f %f %f %f %f\n",zeroOffset,thetaD*RTOD,bn,bp,range,azimuth,Range);

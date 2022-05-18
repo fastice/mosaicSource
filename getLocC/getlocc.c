@@ -29,6 +29,7 @@ double RangePixelSize=RANGEPIXELSIZE; /* Range PixelSize */
 double AzimuthPixelSize=AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int HemiSphere=NORTH;
 double Rotation=45.;
+double SLat=-91.0;
 void *offBufSpace1,*offBufSpace2,*offBufSpace3,*offBufSpace4;
 void *lBuf1,*lBuf2,*lBuf3,*lBuf4;
 char *Abuf1,*Abuf2,*Dbuf1,*Dbuf2;

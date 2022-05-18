@@ -61,7 +61,7 @@ double AzimuthPixelSize=AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int sepAscDesc=TRUE;   
 int HemiSphere=NORTH;
 double Rotation=45.;
-double SLat=-1.;
+double SLat=-91.;
 
     
 float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */

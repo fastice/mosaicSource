@@ -167,7 +167,7 @@ static int parseControlPoints(FILE *fp, int lineCount,inputImageStructure *input
 	/*
 	  Input corner points
 	*/
-	if(SLat < 0) { /* SLat not already set, then guess */
+	if(SLat < -90.) { /* SLat not already set, then guess */
 		if(HemiSphere == NORTH) sLat = 70.0; else sLat = 71.0;
 	} sLat = SLat;
 	inputImage->minX = 1e30; inputImage->maxX =-1.e30; inputImage->minY = 1e30; inputImage->maxY =-1.e30;

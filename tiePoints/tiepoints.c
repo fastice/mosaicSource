@@ -38,7 +38,7 @@ double AzimuthPixelSize=AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 char *shelfMaskFile;
 int HemiSphere=NORTH;
 double Rotation=45.;
-    
+double SLat=-91.0;    
 float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
 
 void *offBufSpace1,*offBufSpace2,*offBufSpace3,*offBufSpace4;

@@ -30,6 +30,7 @@ double AzimuthPixelSize=AZIMUTHPIXELSIZE;  /* Azimuth PixelSize */
 int BufferLines = 512;         /* # of lines of nonoverlap in buffer */
 int HemiSphere=NORTH;
 double Rotation=45.;
+double SLat = -91.0;
 char *Abuf1,*Abuf2,*Dbuf1,*Dbuf2;
 
 void main(int argc, char *argv[])

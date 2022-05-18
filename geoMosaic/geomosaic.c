@@ -39,6 +39,7 @@ double RangePixelSize = RANGEPIXELSIZE; /* Range PixelSize */
 double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int HemiSphere = NORTH;
 double Rotation = 45.;
+double SLat=-91.0;
 int nearestDate = -1;
 int hybridZ = -1;
 int noPower = -1;

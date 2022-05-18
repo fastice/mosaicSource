@@ -34,6 +34,7 @@ double RangePixelSize=RANGEPIXELSIZE; /* Range PixelSize */
 double AzimuthPixelSize=AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int HemiSphere=NORTH;
 double Rotation=45.;
+double SLat=-91.0;
 float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
 
 
