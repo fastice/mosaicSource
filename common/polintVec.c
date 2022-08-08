@@ -6,7 +6,7 @@ static void intError(double *xa,double x) {
 	int j;
 	fprintf(stderr,"ERROR POLINTVEC\n");
 	for (j=1;j<=NUSESTATE;j++) 
-		fprintf(stderr," %f %f",xa[j],x);                           
+		fprintf(stderr,"%i %f %f\n",j, xa[j], x);                           
 	        error("Error in routine polintvec");
 }
 /* This is based on POLINT, but it works about 4x faster than 6 seperate calls */

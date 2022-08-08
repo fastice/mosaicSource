@@ -13,6 +13,7 @@
    Compute angle for CW rotation of ps to radar
 */
     rotAngle = hAngle - xyAngle;
+   /* fprintf(stderr,"%f\n", rotAngle);*/
 /*
     Compute range displacement vyra by ccw rot from ps to ra
 */      

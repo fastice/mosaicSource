@@ -174,8 +174,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						   slopes on shelves, should be small (especially relative to the 3% quoted error. 
 						*/
 						if(sMask==SHELF) { vr = (dr*scaleDr + va*cotanpsi*0.0)/(1.0-cotanpsi*0.0); }
-				
-						else {vr = (dr*scaleDr + va*cotanpsi*dzda)/(1.0-cotanpsi*dzdr); }
+						else {vr = (dr*scaleDr + va*cotanpsi*dzda) / (1.0-cotanpsi*dzdr); }
 						ea = sigmaA * (365.25/(double)currentParams->nDays);
 						/* If pixel already done and azimuth offsets used,
 						   assume azimuth offsets have already been used so multiply sqrt(2)
@@ -200,6 +199,8 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						  Compute vertical velocity
 						*/
 						vz = vx * dzdx + vy * dzdy;
+
+					 /*vx=dzdx; vy=dzdy;*/
 						if(noData==FALSE) {
 							currentImage->used=TRUE;
 							if(statsFlag==FALSE) {

@@ -41,12 +41,10 @@ static void RTtoLatLon(inputImageStructure *inputImage,double r,double myTime,do
 	double xs,ys,zs,vsx,vsy,vsz;
 	sv=&(inputImage->sv);
 	n=(long int)((myTime - sv->times[1])/(sv->deltaT)+.5);
-	n=min(max(0,n-2), sv->nState-NUSESTATE);	
+	n=min(max(0,n-2), sv->nState-NUSESTATE);
 	polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]),&(sv->z[n]),  &(sv->vx[n]), &(sv->vy[n]),&(sv->vz[n]), myTime, &xs,&ys ,&zs, &vsx,&vsy ,&vsz);
 	smlocateZD( xs*MTOKM,  ys*MTOKM,  zs*MTOKM, vsx*MTOKM,vsy*MTOKM, vsz*MTOKM, r*MTOKM,lat,lon,(double)(inputImage->lookDir),0.0);
 }
-
-
 
  typedef struct  {
         double r;
@@ -300,7 +298,7 @@ void svBaseTCN(double myTime, double dt1t2, stateV *sv1,stateV *sv2,double bTCN[
 
 	/* Interp state vectors for R & V */
 	n=(long int)( (myTime - sv1->times[1])/(sv1->deltaT)+.5);
-
+        n=min(max(0,n-2), sv1->nState-NUSESTATE);
 	/* Position in master image */
 	polintVec(&(sv1->times[n]), &(sv1->x[n]), &(sv1->y[n]),&(sv1->z[n]),  &(sv1->vx[n]), &(sv1->vy[n]),&(sv1->vz[n]),
 		  myTime,&(R1[0]), &(R1[1]), &(R1[2]), &(V1[0]), &(V1[1]), &(V1[2]));

@@ -429,11 +429,13 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 
 static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int orbitPriority) {
 	int i1, j1;
+	if(orbitPriority < 0) return;
+	
 	for (i1=0; i1 < outputImage->ySize; i1++) {
 		for(j1=0; j1 < outputImage->xSize; j1++) {
 			if(scale[i1][j1] > 0) {
 				/* this assumes that dates are larger than 1000, and we won't sum more than 1000*/
-				if(scale[i1][j1] < 10000 && orbitPriority < 0) image[i1][j1] /=scale[i1][j1]; 
+				if(scale[i1][j1] < 10000) image[i1][j1] /=scale[i1][j1]; 
 			}
 		}
 	}
@@ -479,7 +481,7 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 					} else if(orbitPriority == DESCENDING) {
 						/* either put in data if none already, or if not descending replace */
 						if( scale[i1][j1] < -0.1 || scale[i1][j1] == ASCENDING) {
-							image[i1][j1]= imageTmp[i1][j1]*inputImage->weight;
+							image[i1][j1]= imageTmp[i1][j1] * inputImage->weight;
 							scale[i1][j1] = inputImage->passType;
 							psiBuf[i1][j1] = psiBufTmp[i1][j1];
 							gBuf[i1][j1] = gBufTmp[i1][j1];														
