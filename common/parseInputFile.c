@@ -14,7 +14,7 @@ static void parseImageDate(inputImageStructure *inputImage, char *line, char *in
 	char *tmp,*tmp1;
 	int m, done;
 	int mm,dd,yyyy;
-        fprintf(stderr,"%s %s\n",line,inputFile);     
+        fprintf(stderr,"%s %s",line,inputFile);     
 	if((tmp=strchr(line,':'))==NULL) {
 		error("--invalid date in %s %s\n",inputFile,tmp);
 	}
@@ -26,7 +26,7 @@ static void parseImageDate(inputImageStructure *inputImage, char *line, char *in
 		   tmp[m] == '6' || tmp[m] == '7' || tmp[m] == '8' || tmp[m] == '9' || m>=strlen(tmp)) done=1; else if(tmp[m] == '0') tmp[m]=' ';
 		m++;
 	}   
-	fprintf(stderr,"%s\n",tmp);
+	/*fprintf(stderr,"%s\n",tmp);*/
 	sscanf(tmp,"%i\n",&dd);
 	if(tmp1=strstr(tmp,"JAN"),tmp1 != NULL) mm=1;
 	else if(tmp1=strstr(tmp,"FEB"), tmp1 != NULL) mm=2;
@@ -45,7 +45,7 @@ static void parseImageDate(inputImageStructure *inputImage, char *line, char *in
 	inputImage->year=yyyy;
 	inputImage->month=mm;
 	inputImage->day=dd;
-	fprintf(stderr,"mm,dd,yyyy %i %i %i\n",mm,dd,yyyy);
+	/* fprintf(stderr,"mm,dd,yyyy %i %i %i\n",mm,dd,yyyy);*/
 }
 
 static void parseTime(inputImageStructure *inputImage, char *line, int eod) {
@@ -116,9 +116,9 @@ static void parseDeltaT(inputImageStructure *inputImage, long julDayInt, char *l
 	if(par->sec < .0) {par->sec += 60; par->min -=1;}
 	if(par->min > 59) {par->min -= 60; par->hr +=1;}
 	if(par->min < 0) {par->min += 60; par->hr -=1;}    
-	fprintf(stderr,"***DeltaTCorrect* %f %i %i %f\n",deltaTCorrect,par->hr,par->min,par->sec);    
+	/*fprintf(stderr,"***DeltaTCorrect* %f %i %i %f\n",deltaTCorrect,par->hr,par->min,par->sec);    */
 	inputImage->julDay=(double)julDayInt + (par->hr*3600.+par->min*60.+par->sec)/86400.;
-	fprintf(stderr,"julday %li %lf\n",julDayInt,inputImage->julDay);
+	/*fprintf(stderr,"julday %li %lf\n",julDayInt,inputImage->julDay);*/
 }
 
 static void parseSize(inputImageStructure *inputImage, char *line, char *inputFile) {
@@ -129,7 +129,7 @@ static void parseSize(inputImageStructure *inputImage, char *line, char *inputFi
 	inputImage->azimuthSize = na;
 	inputImage->nRangeLooks = nlr;
 	inputImage->nAzimuthLooks = nla;
-	fprintf(stderr,"%i %i %i %i %i\n",nr,na,nlr,nla,sizeof(nla));
+	/*fprintf(stderr,"%i %i %i %i %i\n",nr,na,nlr,nla,sizeof(nla));*/
 }
 
 static void parseGeoInfo(inputImageStructure *inputImage, char *line, char *inputFile) { 
@@ -148,7 +148,7 @@ static void parseGeoInfo(inputImageStructure *inputImage, char *line, char *inpu
 	inputImage->par.ReMinor = ReMinor;	
 	/* This is applied here, so it should not be applied elsewhere */
 	inputImage->par.rangeError=rangeError;
-	fprintf(stderr,"*** Range Error = %f\n",rangeError);
+	/* fprintf(stderr,"*** Range Error = %f\n",rangeError);*/
 }
 
 
@@ -199,7 +199,7 @@ static void parsePixelSize(inputImageStructure *inputImage, char *line, char *in
 	inputImage->rangePixelSize = (double)inputImage->nRangeLooks * RangePixelSize;
 	inputImage->par.slpA=AzimuthPixelSize;
 	inputImage->par.slpR=RangePixelSize;	
-	fprintf(stderr,"Range/Azimuth Pixel sizes %f %f\n",RangePixelSize,AzimuthPixelSize);
+	/*fprintf(stderr,"Range/Azimuth Pixel sizes %f %f\n",RangePixelSize,AzimuthPixelSize);*/
 }
 
 static void parseAscDesc(inputImageStructure *inputImage, char *line, char *inputFile) {
@@ -248,7 +248,7 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	par->label=(char *)malloc(strlen(line)+1);
 	par->label[0]='\0';
 	strcat(par->label,line);
-	fprintf(stderr,"par->label %s\n",par->label);
+	fprintf(stderr,"\n----\npar->label %s",par->label);
 	/*	  Parse date	*/     
 	fgetline(fp,line,512); /* Read line */
 	parseImageDate(inputImage,line,inputFile);
@@ -285,7 +285,7 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	parseLambda(inputImage, line,eod);
 	/* State vectors */
 	lineCount=parseStateVectors(fp, lineCount,inputImage,inputFile);
-	fprintf(stderr,"SV ts, n: %f %i\n",sv->t0,sv->nState);
+	/*fprintf(stderr,"SV ts, n: %f %i\n",sv->t0,sv->nState);*/
 	/* Get delta T and correct Time*/
 	lineCount=getDataString(fp,lineCount,line,&eod);
 	/* Parse deltaT if one exists */

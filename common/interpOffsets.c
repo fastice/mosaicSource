@@ -5,7 +5,9 @@
        This file contains interpAzOffsets, interpAzSigma, interpRangeOffsets, interpRangeSigma, which are used to interpolate the offsets fields.
 */
 
-static void computeCoordsForInterp(inputImageStructure *inputImage ,Offsets *offsets, double *range,double *azimuth,double *imageLength,double *normAzimuth);
+static void computeCoordsForInterp(inputImageStructure *inputImage ,Offsets *offsets, double range, double azimuth,
+							    double *rangeOff,double *azimuthOff,double *imageLength,double *normAzimuth);
+
 #define MAXSIG 0.2
 /*
    Interpolate azimuth offsets map for velocity generation and apply baseline/geometry corrections
@@ -17,22 +19,24 @@ float interpAzOffset(double range,double azimuth,Offsets *offsets, inputImageStr
 	double alongTrack;
 	double imageLength, normAzimuth;
 	double azimuthML, rangeML;
+	double azimuthOff, rangeOff;
 	/*
 	  Compute azimuth in image coord stuff
 	*/
 	azimuthML=azimuth; /* compute coords will convert input azimuth to range offsets, so save */
-	rangeML=range; /* compute coords will convert input azimuth to range offsets, so save */		
-	computeCoordsForInterp(inputImage,offsets,&range,&azimuth,&imageLength,&normAzimuth);
+	rangeML=range; /* compute coords will convert input azimuth to range offsets, so save */
+	
+	computeCoordsForInterp(inputImage,offsets, range, azimuth, &rangeOff, &azimuthOff, &imageLength,&normAzimuth);
         alongTrack=normAzimuth*offsets->doffdx;
 	/*
 		Interpolate 
 	*/
-	result = bilinearInterp((float **)offsets->da,range,azimuth,offsets->nr,offsets->na,-0.9999*LARGEINT,(float)-LARGEINT);
+	result = bilinearInterp((float **)offsets->da, rangeOff, azimuthOff, offsets->nr, offsets->na, -0.9999*LARGEINT, (float)-LARGEINT);
 	if (result < -0.9999*LARGEINT) return -LARGEINT;
 	if(offsets->deltaB != DELTABNONE) {
-		zeroOffset=svAzOffset(inputImage,offsets,rangeML,azimuthML) ; /* Offset from SV */
+		zeroOffset = svAzOffset(inputImage, offsets, rangeML, azimuthML) ; /* Offset from SV */
+
 	} else zeroOffset=0.0;
-	
 	zeroOffset += (float)offsets->c1 + Range*sin(theta)*offsets->dbcds -   Range * cos(theta)*offsets->dbhds;
 	/* Apply scaling corrections */
 	if(inputImage->lookDir==LEFT) result *=-1.0;
@@ -51,15 +55,16 @@ float interpAzSigma(double range,double azimuth,Offsets *offsets,  inputImageStr
 	double alongTrack;
 	double imageLength, normAzimuth;
 	double sigmaStreaks;
+	double rangeOff, azimuthOff;
 	/*
 	  Compute azimuth in image coord stuff
 	*/
-	computeCoordsForInterp(inputImage,offsets,&range,&azimuth,&imageLength,&normAzimuth);
+	computeCoordsForInterp(inputImage,offsets, range, azimuth, &rangeOff, &azimuthOff, &imageLength,&normAzimuth);
 	alongTrack=normAzimuth*offsets->doffdx;	
 	/*
 	 Interpolate
 	*/
-	result = bilinearInterp((float **)offsets->sa,range,azimuth,offsets->nr,offsets->na,-0.99999*LARGEINT,(float)-LARGEINT);
+	result = bilinearInterp((float **)offsets->sa, rangeOff, azimuthOff, offsets->nr,offsets->na,-0.99999*LARGEINT,(float)-LARGEINT);
 	/*if (result < -0.99999*LARGEINT) return -LARGEINT;	*/
 	/* Added 10/20/2017 to cap errors at MAXSIG of a pixel - sigma streaks could make it larger */
 	if(result > MAXSIG || result < 0) result=MAXSIG;
@@ -82,9 +87,11 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	double bnS,bpS;
 	double  xsq;
 	double imageLength, normAzimuth, azimuthML;
+	double rangeOff, azimuthOff;
+	
 	/*	  Compute azimuth in image coord stuff	*/
 	azimuthML = azimuth; /* compute coords will convert input azimuth to range offsets, so save */
-	computeCoordsForInterp(inputImage,offsets,&range,&azimuth,&imageLength,&normAzimuth);
+	computeCoordsForInterp(inputImage,offsets, range, azimuth, &rangeOff, &azimuthOff, &imageLength,&normAzimuth);
 	/* 
 	   Baseline or deltaBaseline (SV case)
 	*/
@@ -116,7 +123,7 @@ float interpRangeOffset(double range,double azimuth,Offsets *offsets,   inputIma
 	/*
 	  Interpolate 
 	*/
-	result = bilinearInterp((float **)offsets->dr, range, azimuth, offsets->nr, offsets->na, -0.9999*LARGEINT, (float)-LARGEINT);
+	result = bilinearInterp((float **)offsets->dr, rangeOff, azimuthOff, offsets->nr, offsets->na, -0.9999*LARGEINT, (float)-LARGEINT);
 	if (result < -0.9999*LARGEINT) return -LARGEINT;
 	/*    
 	   apply corrections 
@@ -133,16 +140,15 @@ float interpRangeSigma(double range,double azimuth,Offsets *offsets,  inputImage
 {
 	float result;
 	double imageLength, normAzimuth;
+	double rangeOff, azimuthOff;
 	/*
 	  Compute azimuth in image coord stuff
 	*/
-	computeCoordsForInterp(inputImage,offsets,&range,&azimuth,&imageLength,&normAzimuth);
+	computeCoordsForInterp(inputImage,offsets, range, azimuth, &rangeOff, &azimuthOff, &imageLength,&normAzimuth);
 	/*
 	 Interpolate
 	*/
-	result = bilinearInterp((float **)offsets->sr,range,azimuth,offsets->nr,offsets->na,-0.9999*LARGEINT,(float)-LARGEINT);
-	
-	/*if (result < -0.9999*LARGEINT) return -LARGEINT;	*/
+	result = bilinearInterp((float **)offsets->sr,rangeOff, azimuthOff, offsets->nr,offsets->na,-0.9999*LARGEINT,(float)-LARGEINT);
 	/* 
 		If sigma range is set, it represents a minimum error 
 	*/
@@ -152,15 +158,18 @@ float interpRangeSigma(double range,double azimuth,Offsets *offsets,  inputImage
 	return result;
 }
 
-static void computeCoordsForInterp(inputImageStructure *inputImage ,Offsets *offsets,
-							    double *range,double *azimuth,double *imageLength,double *normAzimuth) {
+static void computeCoordsForInterp(inputImageStructure *inputImage ,Offsets *offsets, double range, double azimuth,
+							    double *rangeOff,double *azimuthOff,double *imageLength,double *normAzimuth) {
 	/*
 	  Compute azimuth in image coord stuff
 	*/
+	double azFirstCenter, rgFirstCenter; /* SL coordinate of the center of the first multi-look pixel */
 	/* added 10/30/2013 to fix azimuth problem -((inputImage->nAzimuthLooks-1)*0.5)  . */
+	rgFirstCenter = (inputImage->nRangeLooks - 1) * 0.5;
+	azFirstCenter = (inputImage->nAzimuthLooks - 1) * 0.5;
 	*imageLength = (double)inputImage->azimuthSize;   
-	*normAzimuth = (*azimuth-0.5* (*imageLength))/ (*imageLength);
-	*range=  (*range * inputImage->nRangeLooks     - ((inputImage->nRangeLooks  -1)*(-0.5)) -offsets->rO)/offsets->deltaR;
-	*azimuth=(*azimuth * inputImage->nAzimuthLooks - ((inputImage->nAzimuthLooks-1)*(-0.5)) -offsets->aO)/offsets->deltaA;
+	*normAzimuth = (azimuth-0.5* (*imageLength))/ (*imageLength);
+	*rangeOff =  (rgFirstCenter + range * inputImage->nRangeLooks - offsets->rO)/offsets->deltaR;
+	*azimuthOff =(azFirstCenter + azimuth * inputImage->nAzimuthLooks - offsets->aO)/offsets->deltaA;
 	return;
 }

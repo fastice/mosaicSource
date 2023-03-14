@@ -6,8 +6,9 @@ static double xyScaleApprox(double lat, double stdLat)
 {
 /*
   This is a much simpler formula than the xyscale in the rest of the code, but it agrees to at least 3 or 4 digits, which is close enough for scaling derivatives
+  Assumes lat is same hemisphere as slat
 */
-	return (1.0 + sin(lat * DTOR))/(1.0 + sin(stdLat*DTOR));
+	return (1.0 + sin(fabs(lat) * DTOR))/(1.0 + sin(stdLat*DTOR));
 }
 
 void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp, double *zWGS84,double *da, double *dr,
@@ -39,7 +40,7 @@ void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp, d
 	/*
 	  Ellipsoidal to spherical earth correction
 	*/
-	*zSp = *zWGS84 + (earthRadius(lat*DTOR,image->par.ReMinor, image->par.ReMajor) * KMTOM   - cP->Re);
+	*zSp = *zWGS84 + (earthRadius(lat*DTOR,image->par.ReMinor, image->par.ReMajor) * KMTOM  - cP->Re);
 	/*
 	  Compute flow direction in xy coords from dem and angle of x from north 
 	*/
@@ -49,7 +50,8 @@ void xyGetZandSlope(double lat, double  lon,  double x, double y, double *zSp, d
 	*/
 	dzdx = dzdx / psScale;
 	dzdy = dzdy / psScale;
-	slopeMag = slopeMag / psScale;		
+	slopeMag = slopeMag / psScale;
+	/*fprintf(stderr,"%f\n",psScale);*/
 	/*
 	  Avoid really large slopes ???
 	*/ 

@@ -10,7 +10,7 @@
   Output simulated image. Writes two files one for image, and xxx.simdat 
   with image header info
 */
-void outputSimulatedImage(sceneStructure scene,char *outputFile,        char *demFile, char *displacementFile)
+void outputSimulatedImage(sceneStructure scene, char *outputFile,  char *demFile, char *displacementFile)
 {   
 	FILE *imageFP, *imageDatFP;
 	int i,j;
@@ -20,7 +20,7 @@ void outputSimulatedImage(sceneStructure scene,char *outputFile,        char *de
 	/*
 	  Open image outputfile
 	*/
-	if(scene.toLLFlag==FALSE) {
+	if(scene.toLLFlag==FALSE && scene.saveLLFlag==FALSE) {
 		imageFP = fopen(outputFile,"w");
 		if(imageFP == NULL) 
 			error("*** outputSimulatedImage: Error opening %s ***\n",outputFile);
@@ -55,7 +55,7 @@ void outputSimulatedImage(sceneStructure scene,char *outputFile,        char *de
 		fprintf(stderr,"writing %s\n",buf1);
 		imageFP = fopen(buf1,"w");		    
 		for(i=0; i < scene.aSize; i++) {
-			fwriteBS(scene.lonImage[i],scene.rSize,sizeof(double),imageFP,FLOAT64FLAG);		    
+			fwriteBS(scene.lonImage[i], scene.rSize,sizeof(double), imageFP,FLOAT64FLAG);		    
 		}
 		if(scene.maskFlag == TRUE) {
 			buf1[0]='\0';

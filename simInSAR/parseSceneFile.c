@@ -63,10 +63,19 @@ void parseSceneFile(char *sceneFile, sceneStructure *scene)
 		scene->rO=0;
 		scene->dR=1;
 		scene->dA=1;
+		/* Save lat/lon as */
+		if(scene->saveLLFlag == TRUE) {
+			scene->latImage = (double **)  malloc(scene->aSize * sizeof(double *) );
+			scene->lonImage = (double **) malloc(scene->aSize * sizeof(double *) );		
+			for(i=0; i < scene->aSize; i++) {
+				scene->lonImage[i] = (double *)malloc( scene->rSize * sizeof(double) );		    
+				scene->latImage[i] =  (double *)malloc( scene->rSize * sizeof(double) );
+			}
+		}
 		/*
 		  Init space for image 
-		*/
-		scene->image = (float **) malloc(scene->aSize * sizeof(float *) );
+		*/		
+		scene->image = (float **) malloc(scene->aSize * sizeof(float *) );		
 		for(i=0; i < scene->aSize; i++) {
 			scene->image[i] = (float *)malloc( scene->rSize * sizeof(float) );
 		}

@@ -12,9 +12,7 @@ static void readOffsetFile(float **data,int nr, int na,char *offsetFile);
  */
 void readOffsetDataAndParams(Offsets *offsets) {
 	readBothOffsets(offsets);
-	fprintf(stderr,"Read az est\n");
 	getAzParams(offsets);
-	fprintf(stderr,"Read aBaseline\n");
 	getRParams(offsets);
 	fprintf(stderr,"Offsets and paramters read\n");	
 	if(offsets->deltaB != DELTABNONE && offsets->geo2==NULL)
@@ -110,7 +108,7 @@ static void readOffsetParams(char *datFile, Offsets *offsets) {
 	        path=dirname(datFile);
 		offsets->geo1=mergePath(file1,path);
 		offsets->geo2=mergePath(file2,path);
-		fprintf(stderr,"geo1 %s geo2 %s\n",offsets->geo1,offsets->geo2);
+		fprintf(stderr,"Reading geo1 & geo2. ");
 	}
 	fclose(fp);			  
 }
@@ -121,11 +119,11 @@ static void readOffsetParams(char *datFile, Offsets *offsets) {
 static void readOffsetFile(float **data,int nr, int na,char *offsetFile) {
 	FILE *fp;
 	int i;
-	fprintf(stderr,"--- Reading offset file %s",offsetFile);
+	/*fprintf(stderr,"--- Reading offset file %s",offsetFile);*/
 	fp = openInputFile(offsetFile);
 	for(i=0; i < na; i++) freadBS(data[i],sizeof(float),nr,fp, FLOAT32FLAG);
 	fclose(fp);
-	fprintf(stderr,"- done - \n");	
+	/* fprintf(stderr,"- done - \n");	*/
 }
 
 /* 
@@ -155,10 +153,15 @@ void readBothOffsets( Offsets *offsets)
 	/*
 	  Read files
 	*/
+	fprintf(stderr, "Reading da");
 	readOffsetFile(offsets->da ,offsets->nr,offsets->na,offsets->file);
+	fprintf(stderr, ", dr");	
 	readOffsetFile(offsets->dr ,offsets->nr,offsets->na,offsets->rFile);
+	fprintf(stderr, ", sa");		
 	readOffsetFile(offsets->sa ,offsets->nr,offsets->na,eFileA);
+	fprintf(stderr, ", sr");			
 	readOffsetFile(offsets->sr ,offsets->nr,offsets->na,eFileR);
+	fprintf(stderr, ".\n");			
 }
 
 static char *RgOffsetsParamName(char *rParamsFile,char *newFile,int deltaB) {
@@ -188,7 +191,7 @@ void getRParams( Offsets *offsets)
 		fp=openInputFile(offsets->rParamsFile);
 		offsets->deltaB=DELTABNONE;
 	}
-	fprintf(stderr,"deltaB %i\n",offsets->deltaB);
+	/*fprintf(stderr,"deltaB %i\n",offsets->deltaB);*/
 	for(i=1; i<=6; i++) for(j=1; j<=6; j++) offsets->Cr[i][j]=0.0;
 	/*
 	  Skip past initial data lines

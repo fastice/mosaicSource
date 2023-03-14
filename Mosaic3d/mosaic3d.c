@@ -30,7 +30,7 @@ static void removeOutOfBounds(outputImageStructure *outputImage, inputImageStruc
 static void findOutBounds(outputImageStructure *outputImage, inputImageStructure *ascImages, inputImageStructure *descImages, landSatImage *LSImages, int *autoSize, int writeBlank);
 static void mallocOutputImage(outputImageStructure *outputImage);
 static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,char **outFileBase, float *fl, char **irregFile,  char **shelfMaskFile,
-		     double *tieThresh,  char **extraTieFile, char **tideFile,int *north,     char **landSatFile,int *threeDOffFlag,float *timeThresh,
+		     double *tieThresh,  char **extraTieFile, char **tideFile,int *north,  char **landSatFile,int *threeDOffFlag, float *timeThresh, float *timeThreshPhase,
 		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage, int *writeBlank, char **verticalCorrectionFile);
 static void write3Doutput( outputImageStructure outputImage, char *outFileBase );
 static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *outputImage,vhParams *params, char *outFileBase, char *demFile, int writeBlank);
@@ -88,7 +88,7 @@ void main(int argc, char *argv[])
 	char *demFile, *inputFile, *outFileBase;
 	char **phaseFiles, **geodatFiles,**baselineFiles;
 	float *weights, *nDays;
-	float timeThresh;		 /* For mosaicking 3Offsets only use crossing pairs with this many days seperation */
+	float timeThresh, timeThreshPhase;		 /* For mosaicking 3Offsets only use crossing pairs with this many days seperation */
 	float fl;      		         /* Feathering length */
 	char *irregFile;   		/* File with irregularly spaced data for interpolation */
 	char **azParamsFiles,**offsetFiles;       /* Az paramter and offest files */
@@ -108,7 +108,7 @@ void main(int argc, char *argv[])
 	*/
 	readArgs(argc,argv, &inputFile, &demFile, &outFileBase,&fl, &irregFile,&shelfMaskFile, &tieThresh, 
 			&extraTieFile, &tideFile, &northFlag, &landSatFile, &threeDOffFlag,
-		 	&timeThresh,&date1,&date2,&refVel,&statsFlag, &outputImage, &writeBlank, &verticalCorrectionFile);
+		 	&timeThresh, &timeThreshPhase, &date1,&date2,&refVel,&statsFlag, &outputImage, &writeBlank, &verticalCorrectionFile);
 	 /* Added August 2021 to set projection parameters from DEM */
 	readXYDEMGeoInfo(demFile, &dem, TRUE);			 
 	/* Removed no offset flag version */
@@ -209,7 +209,7 @@ void main(int argc, char *argv[])
 	  Step 0: Mosaic using ascending and descending data where possible.
 	*/
 	if((nAsc+nDesc) > 0)  {
-		make3DMosaic(images,descImages,params,descParams,&dem, &outputImage,fl,outputImage.no3d);
+		make3DMosaic(images,descImages,params,descParams,&dem, &outputImage,fl,outputImage.no3d, timeThreshPhase);
 	}
 	/*
 	  Step 1: 
@@ -228,9 +228,6 @@ void main(int argc, char *argv[])
 	/*
 	  Step 3: Include fully speckle-tracked data
 	*/
-
-	
-
 	if(outputImage.rOffsetFlag==TRUE && (nAsc+nDesc) > 0) {
 		speckleTrackMosaic(images,params,&outputImage,fl, &refVel,statsFlag);
         } else  fprintf(outputImage.fpLog,";\n; rOffset flag False, not Entering speckleTrackMosaic\n;\n");
@@ -253,7 +250,7 @@ void main(int argc, char *argv[])
 	/* 
 	   write meta file
 	*/
-	haveData=writeMetaFile(images, &outputImage,params,outFileBase, demFile, writeBlank);
+	haveData=writeMetaFile(images, &outputImage, params, outFileBase, demFile, writeBlank);
 	if(landSatFile != NULL) haveData=TRUE;
 	/*
 	  Output result
@@ -356,9 +353,9 @@ static void init3DImages( outputImageStructure *outputImage, referenceVelocity *
 				}
 			} else {
 				errorX[i][j]=0.0;errorY[i][j]=0.0;
-				scaleX[i][j]=0.0; vXimage[i][j]=0.0;
-				scaleY[i][j]=0.0; vYimage[i][j]=0.0;
-				scaleZ[i][j]=0.0; vZimage[i][j]=0.0;
+				scaleX[i][j]=0.0; vXimage[i][j]=-2.e9;
+				scaleY[i][j]=0.0; vYimage[i][j]=-2.e9;
+				scaleZ[i][j]=0.0; vZimage[i][j]=-2.e9;
 			}
 		}
 	}
@@ -703,7 +700,7 @@ static int32 writeMetaFile( inputImageStructure *image,outputImageStructure *out
 
 
 static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,char **outFileBase, float *fl, char **irregFile,  char **shelfMaskFile,
-		       double *tieThresh,  char **extraTieFile, char **tideFile,int *north,     char **landSatFile,int *threeDOffFlag,float *timeThresh,
+		       double *tieThresh,  char **extraTieFile, char **tideFile, int *north,  char **landSatFile,int *threeDOffFlag,float *timeThresh, float *timeThreshPhase,
 		     char **date1,char **date2, referenceVelocity *refVel, int *statsFlag, outputImageStructure *outputImage, int *writeBlank, char **verticalCorrectionFile)
 {
 	extern int sepAscDesc;   
@@ -743,6 +740,7 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
 	*tideFile = NULL;
 	*north=FALSE;
 	*timeThresh=12;
+	*timeThreshPhase = 548; /* Allow pairing with in 1.5 years */
 	*writeBlank = FALSE;
 	vzFlag=VZDEFAULT;
 	*statsFlag=FALSE;
@@ -789,6 +787,8 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
 			sscanf(argv[i+1],"%f",fl); i++; 
 		} else if(strstr(argString,"timeThresh") != NULL) {
 			sscanf(argv[i+1],"%f",timeThresh); i++; 
+		} else if(strstr(argString,"timePhaseThresh") != NULL) {
+			sscanf(argv[i+1],"%f",timeThreshPhase); i++; 
 		} else if(strstr(argString,"irreg") != NULL) {
 			*irregFile =  argv[i+1]; i++;
 		} else if(strstr(argString,"noVh") != NULL) {
@@ -852,7 +852,7 @@ static void readArgs(int argc,char *argv[], char **inputFile,  char **demFile,ch
  
 static void usage()
 { 
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
 	      "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 	      "Usage:", 
 	      " mosaic3d -north -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
@@ -884,6 +884,7 @@ static void usage()
 	      "\toffsets =\t\t Use offset azimuth offset data for second component ",
 	      "\trOffsets =\t\t Use offset data for both components where needed ",	      
 	      "\ttimeThresh =\t\t For 3D crossing offset solution, only use pairs within timeThresh days (def=12)",
+	      "\ttimePhaseThresh =\t\t For 3D crossing phase solution, only use pairs within timePhaseThresh days (def=548 days: 1.5 years)",	      
 	      "\tirregFile =\t\t File with list of irregular input data",
 	      "\tvzFlag =\t\t Used for changing output in vertical channel 0 for default (vz correction), 1 horizontal 1/sin(psi), 2 for 1/vertical cos(psi), 3 flag for LOS scaled to m/yr, 4 inc angle",
 	      "\tstats =\t\t compute unweight mean vx, and vy and standard dev of the inputs (ex,ey) and number of points (vz) - works only for speckleTrack",	      
@@ -1041,9 +1042,9 @@ static void mallocOutputImage(outputImageStructure *outputImage)
 
 	for (j=0; j < outputImage->ySize; j++) {
 		for(k=0; k < outputImage->xSize; k++) {
-			scaleX[j][k]=0.0; vXimage[j][k]=0.0;
-			scaleY[j][k]=0.0; vYimage[j][k]=0.0;
-			scaleZ[j][k]=0.0; vZimage[j][k]=0.0;
+			scaleX[j][k]=0.0; vXimage[j][k]=-LARGEINT;
+			scaleY[j][k]=0.0; vYimage[j][k]=-LARGEINT;
+			scaleZ[j][k]=0.0; vZimage[j][k]=-LARGEINT;
 		}
 	}
 	fprintf(outputImage->fpLog,"; Returned from  mallocOutputImage\n");

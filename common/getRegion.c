@@ -22,8 +22,8 @@ void getRegion(inputImageStructure *image, int *iMin,int *iMax, int *jMin,int *j
 		*/
 		lltoxy1(image->latControlPoints[i],image->lonControlPoints[i],&xa1,&ya1,Rotation,outputImage->slat);
 		/* Commented out print statements 7/31/2015 */
-		fprintf(stderr,"%f %f %f %f\n",image->latControlPoints[i],image->lonControlPoints[i],xa1,ya1);
-		fprintf(stderr,"%f %f\n",Rotation,outputImage->slat);
+		/*fprintf(stderr,"%f %f %f %f\n",image->latControlPoints[i],image->lonControlPoints[i],xa1,ya1);
+		fprintf(stderr,"%f %f\n",Rotation,outputImage->slat);*/
 		if(i==1) {minX=xa1; maxX=xa1; minY=ya1; maxY=ya1;}
 		else {
 			minX=min(minX,xa1); maxX=max(maxX,xa1);
@@ -31,7 +31,7 @@ void getRegion(inputImageStructure *image, int *iMin,int *iMax, int *jMin,int *j
 		}
 	}
 
-	fprintf(stderr,"%f %f %f %f\n",minX, maxX, minY, maxY);
+	/* fprintf(stderr,"%f %f %f %f\n",minX, maxX, minY, maxY);*/
 	/*
 	  Compute i,j min,max with pad
 	*/ 

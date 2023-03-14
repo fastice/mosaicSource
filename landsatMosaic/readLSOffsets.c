@@ -190,7 +190,7 @@ static void parseLSOffsetMeta(char *datFile,  lsFit *fitDat,matchResult *matches
 				if(strstr(keyword,"ny") != NULL) { if(sscanf(value,"%i\n",&idum) != 1) error("parse LS Offsets nx"); matches->ny=idum; }
 				if(strstr(keyword,"stepX") != NULL) { if(sscanf(value,"%u\n",&udum) != 1) error("parse LS Offsets nx"); matches->stepX=udum; }
 				if(strstr(keyword,"stepY") != NULL) { if(sscanf(value,"%u\n",&udum) != 1) error("parse LS Offsets nx"); matches->stepY=udum; }
-				if(strstr(keyword,"EPSG") != NULL) { if(sscanf(value,"%i\n",&idum) != 1) error("parse LS Offsets proj"); fitDat->proj=idum; }
+				if(strstr(keyword,"EPSG") != NULL) { if(sscanf(value,"%i\n",&idum) != 1) error("parse LS Offsets proj: %s", value); fitDat->proj=idum; }
 				if(strstr(keyword,"slowFlag") != NULL) { if(sscanf(value,"%i\n",&idum) != 1) error("parse LS Offsets slowFlag"); fitDat->slowFlag=idum;}
 				if(strstr(keyword,"IntervalBetweenImages") != NULL) { if(sscanf(value,"%lf\n",&fdum) != 1) error("parse LS Offsets deltaT"); fitDat->deltaT=fdum; }
 			
@@ -212,7 +212,7 @@ static void parseLSOffsetMeta(char *datFile,  lsFit *fitDat,matchResult *matches
 	if(matches->nx <=0) error("ParseLSOffsetMeta: Invalid x0\n");
 	if(matches->nx <=0 ) error("ParseLSOffsetMeta: Invalid y0\n");
 	if(fitDat->deltaT < (NODATA +1)) error("ParseLSOffsetMeta: Invalid deltaT\n");
-	if(fitDat->deltaT <= 0) error("ParseLSOffsetMeta: Invalid proj\n");
+	if(fitDat->proj <= 0) error("ParseLSOffsetMeta: Invalid proj %i\n", fitDat->proj);
 	fclose(fp);
 }
 

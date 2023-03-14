@@ -109,7 +109,7 @@ void main(int argc, char *argv[])
 	/*
 	  Add baseline corrections for previously removed baselines
 	*/
-	addOffsetCorrections( &inputImage,&tiePoints);
+	addOffsetCorrections(&inputImage, &tiePoints);
 	/*
 	  Output results for checking to sterr
 	*/

@@ -52,13 +52,17 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 	double tCenter,tOffCenter,deltaOffCenter;
 	int32 i,j;
 	int iMin,iMax,jMin,jMax;
-	int count;                /* Current image counter - info only */
+	int count, total;                /* Current image counter - info only */
 	int validData;
 
 	fprintf(stderr,"**** SPECKLE TRACKING SOLUTION ****\n");
 	fprintf(outputImage->fpLog,";\n; Entering speckleTrackMosaic(.c)\n;\n");
+
 	shelfMask = outputImage->shelfMask;
 	vCorrect = outputImage->verticalCorrection;
+	/* Count total */
+	total = 0;
+	for(currentImage=images; currentImage != NULL;  currentImage=currentImage->next) total++;
 	/*
 	  Pointers to output images
 	*/
@@ -85,14 +89,14 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 		if(currentParams->offsets.rFile == NULL || currentImage->weight < 0.00001 ) {
 			currentParams=currentParams->next;
 			continue; /* Skip if no data*/
-		}
-		fprintf(stderr,"RIGHT(+)/LEFT(-) %i - # %i Weight %f - tOff %f %f %f\n", currentImage->lookDir, count, currentImage->weight, deltaOffCenter, tCenter, tOffCenter);
+		} 
+		fprintf(stderr,"\033[1;31mRIGHT(+)/LEFT(-): %i of %i\033[0m %s\n", count, total,  currentParams->offsets.file);
 		count++;
 		/*
 		  Conversions initialization and get bounding box
 		*/
 		cP = setupGeoConversions (currentImage, &azSLPixSize, &rSLPixSize, &Re, &ReH, &thetaC, &ddum1, &ddum2);
-		getRegion(currentImage,&iMin,&iMax,&jMin,&jMax,outputImage);
+		getRegion(currentImage,&iMin,&iMax,&jMin,&jMax,outputImage);		
 		/*
 		  Read Offset
 		*/
@@ -107,7 +111,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 		*/
 		da=0.0;
 		for(i=iMin; i < iMax; i++) {
-			if( (i % 100) == 0) fprintf(stderr,"-- %i  %f\n",i,currentImage->weight);
+			if( (i % 100) == 0) fprintf(stderr,"-- %i  %f %f\n",i,currentImage->weight,hAngle * 57.29);
 			y = (outputImage->originY + i*outputImage->deltaY) * MTOKM;
 			for(j=jMin; j < jMax; j++) {  
 				/*
@@ -142,11 +146,11 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 					*/
 					if( fabs(dr) < 13.0E4 && fabs(da) < 10.0e4 &&  sMask != GROUNDINGZONE  && ( !(sMask == SHELF && outputImage->noTide==TRUE))) {
 						/* Moved inside of if statement 3/1/16 */
-						sigmaA = interpAzSigma(range,azimuth, &(currentParams->offsets),currentImage,Range,theta ,azSLPixSize);
-						sig2Off = computeSig2AzParam(sin(theta),cos(theta),  azimuth,  Range,currentImage,&(currentParams->offsets));
+						sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
+						sig2Off = computeSig2AzParam(sin(theta), cos(theta),  azimuth,  Range, currentImage, &(currentParams->offsets));
 						sigmaA = sqrt(sigmaA*sigmaA  + sig2Off);
-						sigmaR = interpRangeSigma(range,azimuth,	&(currentParams->offsets),currentImage,Range,thetaD ,rSLPixSize);
-						sig2Base = computeSig2Base( sin(thetaD),cos(thetaD), azimuth,currentImage ,&(currentParams->offsets));
+						sigmaR = interpRangeSigma(range, azimuth, &(currentParams->offsets), currentImage, Range, thetaD, rSLPixSize);
+						sig2Base = computeSig2Base( sin(thetaD), cos(thetaD), azimuth, currentImage, &(currentParams->offsets));
 						sigmaR = sqrt(sigmaR*sigmaR + demError*demError + sig2Base);
 						/*
 						  SHELF MASK CORRECTION HERE
@@ -159,7 +163,7 @@ void speckleTrackMosaic(inputImageStructure *images,vhParams *params, 	outputIma
 						/* 
 						   Compute velocity
 						*/
-						hAngle = computeHeading(lat,lon,0., currentImage,cP);
+						hAngle = computeHeading(lat, lon, 0., currentImage, cP);
 						/* 
 						   Compute flow direction in xy coords from dem and angle of x from north 
 						*/

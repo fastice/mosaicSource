@@ -70,7 +70,6 @@ void main(int argc, char *argv[])
 		scene.imageMask = imageMask;  
 		fprintf(stderr,"++++ %f  %f\n",imageMask->x0,imageMask->y0);
 	} 
-	
 	/*
 	  Simulate InSAR image
 	*/
@@ -79,7 +78,7 @@ void main(int argc, char *argv[])
 	  Output image   
 	*/
 	if(scene.heightFlag == TRUE) fprintf(stderr,"Outputing DEM\n");
-	outputSimulatedImage(scene,outputFile,demFile,displacementFile);
+	outputSimulatedImage(scene, outputFile, demFile, displacementFile);
 
 	return; 
 }
@@ -96,7 +95,7 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 	double bnMid, dBn, bpMid, dBp;
 	int velocityFlag;
 
-	int bnFlag=FALSE, bnStartFlag=FALSE,toLLFlag=FALSE;
+	int bnFlag=FALSE, bnStartFlag=FALSE, toLLFlag=FALSE;
 	int bpFlag=FALSE, bpStartFlag=FALSE;
 	int i,n,flatFlag, heightFlag,maskFlag,offsetFlag;
 
@@ -116,7 +115,8 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 	bpEnd = bp;
 	velocityFlag = FALSE;
 	scene->llInput=NULL;
-	scene->toLLFlag=FALSE; 
+	scene->toLLFlag=FALSE; /* For offsets */
+	scene->saveLLFlag = FALSE;  /* for phase/geodat */
 	for(i=1; i <= n; i+=2) {
 		argString = strchr(argv[i],'-');  
 		if(strstr(argString,"bnStart") != NULL) {
@@ -149,6 +149,8 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 		} else if(strstr(argString,"toLL") != NULL) {
 			scene->toLLFlag=TRUE; 
 			scene->llInput=argv[i+1];
+		} else if(strstr(argString,"saveLL") != NULL) {
+			scene->saveLLFlag=TRUE; 
 		} else if(strstr(argString,"bpEnd") != NULL) {
 			sscanf(argv[i+1],"%lf",&bpEnd);  
 			bpStartFlag=TRUE;
@@ -220,18 +222,19 @@ static void readArgs(int argc,char *argv[], sceneStructure *scene, char **demFil
 static void usage()
 { 
 	error(
-	      "\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n",
+	      "\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
 	      "Simulate interferogram using a DEM",
 	      "Usage:",
 	      "siminsar -bn bn -dBn dBn -bp bp -dBp dBp ",
 	      "         -bnStart bnStart -bnEnd -bpStart bpStart -bpEnd ",
 	      "         -flat -height -rPix rPix -aPix deltA -velocity",
-	      "         -slantRangeDEM -xyDEM -mask -toLL file.dat",
+	      "         -slantRangeDEM -xyDEM -mask -saveLL -toLL file.dat",
 	      "          demFile displacementFile sceneFile outPutImage",
 	      "where",
 	      "                   ow compute and use defaults",
 	      "   mask            = output a mask using displaceMent file as mask",
 	      "   toLL file.dat = use an offsets.dat to produce lat/lon for each pixel - write outputimage.lat,.lon",
+	      "   saveLL  =  write outputimage.lat,.lo",	      
 	      "   bn            = normal component of baseline",
 	      "   dBn           = change in bn over scene (use instead of bnStart/end",
 	      "   bnStart/bnEnd = bn at start and end of scene",

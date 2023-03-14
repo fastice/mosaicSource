@@ -8,7 +8,7 @@ CFLAGS =	'-O3 -m32 -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 CCFLAGS =  '-O3 -m32 -D$(MACHTYPE) $(COMPILEFLAGS) '
 #-Wunused-variable'
 
-CCFLAGS1= '-O3'
+CCFLAGS1= -O3 -no-pie
 # uncomment to debug
 #CFLAGS =	'-g -m32 -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 #CCFLAGS =  '-g -m32 -D$(MACHTYPE) $(COMPILEFLAGS)'

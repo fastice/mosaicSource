@@ -177,7 +177,7 @@ void simInSARimage(sceneStructure *scene, void *dem,xyVEL *xyVel)
 					scene->image[iIndex][jLoop] = getShelfMask(scene->imageMask, x1, y1);
 				} else if(scene->heightFlag == TRUE && scene->toLLFlag == FALSE ) {
 					scene->image[iIndex][jLoop]= (float)(hWGS);
-				} else if(scene->toLLFlag == TRUE) {
+				} else if(scene->toLLFlag == TRUE || scene->saveLLFlag == TRUE) {
 					scene->latImage[iIndex][jLoop]=lat;
 					scene->lonImage[iIndex][jLoop]=lon;
 					/*fprintf(stderr,"%f %f\n",lat,lon,hWGS); error("stop");*/

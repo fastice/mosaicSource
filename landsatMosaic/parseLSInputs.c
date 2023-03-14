@@ -10,7 +10,7 @@
 #include "landsatSource64/Lsfit/lsfit.h"
 #include "mosaicSource/landsatMosaic/landSatMosaic.h"
 static void parseFitFile(lsFit *fitDat);
-char *lineBuf,  *keyBuf, *valueBuf;   /* Input line buffer */
+char *lineBufLS,  *keyBuf, *valueBuf;   /* Input line buffer */
 /*
   Parse a file with list of lansat images for inclusion in mosaic3d.
 */
@@ -18,17 +18,17 @@ float dateWeight(double jd1,double jd2,double jdRange1, double jdRange2);
 
 landSatImage  *parseLSInputs(char *inputFile, landSatImage *LSImages,double jd1,double jd2,int timeOverlapFlag)
 {
-        extern char *lineBuf,  *keyBuf, *valueBuf;   /* Input line buffer */
+        extern char *lineBufLS,  *keyBuf, *valueBuf;   /* Input line buffer */
 	FILE *fp;
 	int32 notdone, lineCount,lineLength;
 	landSatImage *tmpImage, *firstImage, *prevImage;
 	char *line,*lineSave;
 	char *matchFile,*fitFile,*maskFile;
 	float tmpWeight;
-	lineBuf=NULL; keyBuf=NULL; valueBuf=NULL;
+	lineBufLS = NULL; keyBuf=NULL; valueBuf=NULL;
 	keyBuf=(char *)malloc(sizeof(char)*(LINEMAX+1));
 	valueBuf=(char *)malloc(sizeof(char)*(LINEMAX+1));
-	lineBuf=(char *)malloc(sizeof(char)*(LINEMAX+1));
+	lineBufLS =(char *)malloc(sizeof(char)*(LINEMAX+1));
 
 	line=(char *)malloc(sizeof(char)*(LINEMAX+1));
 	lineSave=line; 
@@ -115,12 +115,12 @@ static void parseFitFile(lsFit *fitDat)
 {
 	int32 notdone,i,j;      /* Loop flag */
 	int32 linelength,lineCount;   /* Input line length */
-	extern char *lineBuf,  *keyBuf, *valueBuf;   /* Input line buffer */
+	extern char *lineBufLS,  *keyBuf, *valueBuf;   /* Input line buffer */
 	char *line, *keyword, *value;
 	FILE *fp;
 	double fdum1,fdum2,fdum3;
 
-	keyword=(char *)keyBuf; 	value=(char *)valueBuf;	line=(char *)lineBuf;
+	keyword=(char *)keyBuf; 	value=(char *)valueBuf;	line=(char *)lineBufLS;
 	/*
 	  Open file
 	*/

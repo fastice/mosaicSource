@@ -562,7 +562,7 @@ void getIntersectOld(inputImageStructure *dPhaseImage,inputImageStructure *aPhas
 			inA=TRUE;
 		if(xiP[i] >= minXd && xiP[i]< maxXd && yiP[i] >=minYd && yiP[i] < maxYd)
 			inD=TRUE;
-		fprintf(stderr,"**** %f %f %i %i\n", xiP[i], yiP[i], inA, inD);
+		/* fprintf(stderr,"**** %f %f %i %i\n", xiP[i], yiP[i], inA, inD);*/
 	}
 	return;
 	if(inA==FALSE && inD == FALSE) { *iMin=0; *iMax=0; *jMin=0; *jMax=0;}

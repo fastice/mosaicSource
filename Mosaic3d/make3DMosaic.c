@@ -45,7 +45,7 @@ static void printLatLon(	inputImageStructure  *inputImage) {
 
 
 void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImages, 
-		  vhParams *ascParams, vhParams *descParams,  xyDEM *dem,  outputImageStructure *outputImage,float fl,  int no3d)
+		  vhParams *ascParams, vhParams *descParams,  xyDEM *dem,  outputImageStructure *outputImage,float fl,  int no3d, float timeThreshPhase)
 {   
 	extern int HemiSphere;
 	extern double Rotation;
@@ -144,7 +144,9 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		for(dPhaseImage=aPhaseImage->next; dPhaseImage != NULL; dPhaseImage=dPhaseImage->next, dParams=dParams->next) {
 			dd++;
 			/* Use for calculating time skew 09/21/17 */			
-			tOffCenterD= dPhaseImage->julDay + dParams->nDays*0.5;		
+			tOffCenterD= dPhaseImage->julDay + dParams->nDays*0.5;
+			/* Skip if to far in time */
+			if(fabs(aPhaseImage->julDay - dPhaseImage->julDay) > timeThreshPhase)  continue;    
 			/*   Check inner image is not a nophase and only proceed with this iteration of the inner loop if so. */
 			if(strstr(dPhaseImage->file,"nophase") != NULL) continue;
 			/* 
@@ -170,7 +172,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			dPhaseImage->tolerance = geoTolerance;	
 			fprintf(stderr,"aPhaseImage %s %3.0f -- %5.3f -- %4i\n\n",aPhaseImage->file, aParams->nDays, aPhaseImage->par.lambda, aa);		
 			fprintf(stderr,"dPhaseImage %s %3.0f -- %5.3f -- %4i\n",  dPhaseImage->file, dParams->nDays, dPhaseImage->par.lambda, dd);
-			fprintf(stderr,"%i %i %i %i", iMin, iMax, jMin, jMax);
+			/* fprintf(stderr,"%i %i %i %i", iMin, iMax, jMin, jMax); */
 			twokD = (4.0 * PI) / dPhaseImage->par.lambda;						
 			/*   Compute approximate heading by sampling overlap region  - set iMax,jMax zero if no good solution */
 			computeSceneAlpha(outputImage, aPhaseImage, dPhaseImage, aCp, dCp, dem, &iMin, &iMax, &jMin, &jMax);
@@ -295,7 +297,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			  Compute scale array for feathering.
 			*/    
 		 	gettimeofday(&stop, NULL);
-			fprintf(stderr,"T  %lf\n", (double)(stop.tv_usec - start.tv_usec)/1e6 + (double)(stop.tv_sec - start.tv_sec));
+			/* fprintf(stderr,"T  %lf\n", (double)(stop.tv_usec - start.tv_usec)/1e6 + (double)(stop.tv_sec - start.tv_sec));*/
 			if(fl > 0 && (iMax > 0 && jMax > 0) )
 				computeScaleLS((float **)vxTmp,fScale, outputImage->ySize, outputImage->xSize,fl,(float)1.0,(double)(-LARGEINT),iMin,iMax,jMin,jMax);
 			/*

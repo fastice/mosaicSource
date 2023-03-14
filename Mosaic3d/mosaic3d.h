@@ -37,7 +37,7 @@ void  get3DInputFile(char *inputFile,char ***phaseFiles, char ***geodatFiles, ch
   Make mosaic of insar and other dems.
 */
 void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImages, vhParams *ascParams, vhParams *descParams,
-		  xyDEM *dem,  outputImageStructure *outputImage,float fl, int no3d);
+		  xyDEM *dem,  outputImageStructure *outputImage,float fl, int no3d, float timeThreshPhase);
 unsigned char refVelInterp(double x, double y,  referenceVelocity *refVel,float *vxPt,float *vyPt, float *exPt,float *eyPt);
 
 

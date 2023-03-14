@@ -35,6 +35,7 @@ typedef struct sceneStructureType {
 	int maskFlag;
 	int offsetFlag;
 	int toLLFlag;
+	int saveLLFlag; 
 	char *llInput;
 	double deltaBn;
 	double deltaBp;

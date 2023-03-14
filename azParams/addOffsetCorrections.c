@@ -5,7 +5,7 @@
 /*
   Compute motion correction.
 */
-void addOffsetCorrections(inputImageStructure *inputImage,tiePointsStructure *tiePoints)
+void addOffsetCorrections(inputImageStructure *inputImage, tiePointsStructure *tiePoints)
 {   
 	extern int HemiSphere;
 	int i,j;
@@ -34,7 +34,7 @@ void addOffsetCorrections(inputImageStructure *inputImage,tiePointsStructure *ti
 		/*
 		  Compute vyra by ccw rot from ps to ra
 		*/         
-		va= tiePoints->vx[i] * sin(rotAngle) +	tiePoints->vy[i] *cos(rotAngle);
+		va= tiePoints->vx[i] * sin(rotAngle) + tiePoints->vy[i] *cos(rotAngle);
 		/*
 		  Compute displacement
 		*/ 

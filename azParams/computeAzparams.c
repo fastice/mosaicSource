@@ -46,6 +46,7 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	int nParams;
 	int pIndex[5];
 	int nData, ma;
+	double svSol;
 
 	if(tiePoints->constOnlyFlag== TRUE) {
 		if(tiePoints->linFlag==FALSE) ma=1;
@@ -63,8 +64,8 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 	RNear = cP->RNear;
 	fprintf(stderr,"---------------------RNear %f %f \n",RNear,H);
 	getBaselineRates(&dbcds,&dbhds,baseFile,inputImage->par.prf,inputImage->par.slpA);
-
-	if(offsets->deltaB != DELTABNONE)  { dbcds=0.0; dbhds=0.0;}			
+	/* Fixed 12/1/22 to force zero for sv solutions */
+	if(tiePoints->deltaB != DELTABNONE)  { dbcds=0.0; dbhds=0.0;}			
 	/*
 	  Range comp params
 	*/
@@ -108,16 +109,20 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 				theta = thetaRReZReH(r0,(Re+z),ReH);
 				x[i1].r = r0;
 				x[i1].theta = theta;
-				x[i1].x = tiePoints->x[i]/(inputImage->azimuthSize *    inputImage->nAzimuthLooks * inputImage->par.slpA);
+				x[i1].x = tiePoints->x[i]/(inputImage->azimuthSize * inputImage->nAzimuthLooks * inputImage->par.slpA);
 				/* never solve for dbhds, so remove - will be zero for sv case */
-				y[i1] = tiePoints->phase[i] - (-r0*cos(theta) * dbhds);
+				y[i1] = tiePoints->phase[i] -  (-r0*cos(theta) * dbhds);
 				/* If solving as correction to sv model */
+				xtmp=result[1] + r0*sin(theta)*result[2] + result[4]*x[i1].x;				
 				if(tiePoints->deltaB != DELTABNONE) {
-					y[i1] -= svAzOffset(inputImage,offsets,tiePoints->r[i],tiePoints->a[i]) ;
+					svSol = svAzOffset(inputImage, offsets,tiePoints->r[i], tiePoints->a[i]) ;
+					y[i1] -= svSol;
 				}
-				xtmp=result[1] + r0*sin(theta)*result[2] + result[4]*x[i1].x;
 				/* Const only means don't solve for dbcds - const or linear along track ok */
-				if(tiePoints->constOnlyFlag==TRUE) { y[i1] -= r0*sin(theta)*dbcds;   xtmp-=r0*sin(theta)*dbcds;}
+				if(tiePoints->constOnlyFlag==TRUE) {
+					y[i1] -= r0*sin(theta)*dbcds;
+					xtmp -= r0*sin(theta)*dbcds;
+				} 
 				/* Compute mean and variance between model (xtmp) and corrected data (y) */
 				varP+=(y[i1]-xtmp)*(y[i1]-xtmp); meanP+=(y[i1]-xtmp);
 				/* Updated 12/17/21:
@@ -141,7 +146,6 @@ void computeAzParams( tiePointsStructure *tiePoints,   inputImageStructure *inpu
 		meanP=meanP/npts;
 		sigP=sqrt(varP-meanP*meanP);
 		fprintf(stderr,"mean sigma %lf %lf \n",meanP,sigP);
-		fprintf(stderr,"%i\n",tiePoints->constOnlyFlag);
 		if(tiePoints->constOnlyFlag == TRUE) {
 			if(tiePoints->linFlag==FALSE) {
 				constantOnlyFit( (void *)x,  y,  sig, npts,  a, ma,  u,v,  w,&chisq,  dbcds,dbhds,result,  pIndex ,azconst);
@@ -287,6 +291,6 @@ static void getBaselineRates(double *dbcds, double *dbhds,   char *baseFile,doub
 		error("%s  %i of %s",    "readOffsets -- Missing image parameters at line:",  lineCount,baseFile); 
 	*dbcds=x2/(prf*slPixSize);
 	*dbhds=x3/(prf*slPixSize);
-	fprintf(stderr,"dbcds,dbhds, %f %f\n", *dbcds,*dbhds);
+	fprintf(stderr,"dbcds,dbhds, %f %f %f %f\n", *dbcds,*dbhds, x2, x3);
 	fclose(fp);
 }
