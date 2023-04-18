@@ -1,2 +1,2 @@
 
-void coarseRegister(inputImageStructure *inputImage1,inputImageStructure *inputImage2);
+void coarseRegister(inputImageStructure *inputImage1, inputImageStructure *inputImage2);

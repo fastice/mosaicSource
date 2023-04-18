@@ -2,6 +2,7 @@ C =		gcc
 ROOTDIR =	/Users/ian
 PROGDIR =       $(ROOTDIR)/progs/GIT
 INCLUDEPATH =	$(ROOTDIR)/progs/GIT
+
 BINDIR =	$(IHOME)/bin/$(MACHTYPE)
 #
 CFLAGS =	'-O3 -m32 -I$(INCLUDEPATH) $(COMPILEFLAGS)'

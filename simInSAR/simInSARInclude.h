@@ -1,7 +1,6 @@
 
 /*#include "ers1/getLocC_p/parfile.h"*/
 
-
 #define DEFAULT_SIM_BN 100.0
 #define DEFAULT_SIM_BP 0.0
 #define LL 1
@@ -17,25 +16,26 @@
 #define SLANTRANGEDEM 3
 #define NORMALDEM 1
 
-
-typedef struct latLonPairType {
+typedef struct latLonPairType
+{
 	double lat;
 	double lon;
 } latLonPair;
 
-typedef struct xyPairType {
+typedef struct xyPairType
+{
 	double x;
 	double y;
 } xyPair;
 
-
-typedef struct sceneStructureType {
-	int flatFlag;
-	int heightFlag;
-	int maskFlag;
-	int offsetFlag;
-	int toLLFlag;
-	int saveLLFlag; 
+typedef struct sceneStructureType
+{
+	int32_t flatFlag;
+	int32_t heightFlag;
+	int32_t maskFlag;
+	int32_t offsetFlag;
+	int32_t toLLFlag;
+	int32_t saveLLFlag;
 	char *llInput;
 	double deltaBn;
 	double deltaBp;
@@ -48,8 +48,8 @@ typedef struct sceneStructureType {
 	double bpEnd;
 	double bpStep;
 	/* size info added 2/3/17 */
-	int aSize;
-	int rSize;
+	int32_t aSize;
+	int32_t rSize;
 	float aO;
 	float rO;
 	float dR;
@@ -61,53 +61,50 @@ typedef struct sceneStructureType {
 	float **image;
 	double **latImage;
 	double **lonImage;
-	int useVelocity;
+	int32_t useVelocity;
 } sceneStructure;
 
-
-typedef struct displacementStructureType {
-	int coordType;
-	int size1;
-	int size2;
+typedef struct displacementStructureType
+{
+	int32_t coordType;
+	int32_t size1;
+	int32_t size2;
 	double minC1;
 	double minC2;
 	double maxC1;
 	double maxC2;
 	double deltaC1;
 	double deltaC2;
-	double  **dR;
+	double **dR;
 } displacementStructure;
-
-
 
 /*
   parse scene input file for siminsar.
 */
 void parseSceneFile(char *sceneFile, sceneStructure *scene);
 
-
 /*
   Initialize conversion matrices and constants for groundRangeToll
 */
-void initGroundRangeToLLNew( inputImageStructure *inputImage);
+void initGroundRangeToLLNew(inputImageStructure *inputImage);
 /*
   Function to simulate InSAR image including both terrain and motion effects.
 */
 void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel);
 /*
-  Output simulated image. Writes two files one for image, and xxx.simdat 
+  Output simulated image. Writes two files one for image, and xxx.simdat
   with image header info
 */
-void outputSimulatedImage(sceneStructure scene,char *outputFile,   char *demFile, char *displacementFile);
+void outputSimulatedImage(sceneStructure scene, char *outputFile, char *demFile, char *displacementFile);
 /*
   Input displacement map
 */
-void getDisplacementMap(char *displacementFile,  displacementStructure *displacements, demStructure dem,sceneStructure scene);
+void getDisplacementMap(char *displacementFile, displacementStructure *displacements, demStructure dem, sceneStructure scene);
 /*
   Compute displacement for lat/lon from Displacement map.
 */
-double getDisplacement(double lat, double lon,   displacementStructure *displacements);
+double getDisplacement(double lat, double lon, displacementStructure *displacements);
 /*
   Input slant range dem.
-*/ 
-void getSlantRangeDEM(char *demFile, demStructure *dem,   sceneStructure scene );
+*/
+void getSlantRangeDEM(char *demFile, demStructure *dem, sceneStructure scene);
