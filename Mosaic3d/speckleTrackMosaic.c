@@ -42,7 +42,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 	ShelfMask *shelfMask; /* Mask with shelf and grounding zone */
 	unsigned char sMask;
 	float azSLPixSize, rSLPixSize;
-	uint32 noData;
+	uint32_t noData;
 	double scX, scY;
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp;
 	float **errorX, **errorY;
@@ -50,7 +50,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 	double vx, vy, vz, dzdtSubmergence;
 	double dzdx, dzdy;
 	double tCenter, tOffCenter, deltaOffCenter;
-	int32 i, j;
+	int32_t i, j;
 	int iMin, iMax, jMin, jMax;
 	int count, total; /* Current image counter - info only */
 	int validData;
@@ -348,7 +348,7 @@ static int clipVel(float x, float y, float vx, float vy, referenceVelocity *refV
 }
 
 #define NODATA -2000000000
-static int32 refBinlinear(float **X, int32 im, int32 jm, double t, double u, float *dx)
+static int32_t refBinlinear(float **X, int32_t im, int32_t jm, double t, double u, float *dx)
 {
 	double p1, p2, p3, p4;
 	p1 = X[im][jm];
@@ -364,7 +364,7 @@ static int32 refBinlinear(float **X, int32 im, int32 jm, double t, double u, flo
 
 unsigned char refVelInterp(double x, double y, referenceVelocity *refVel, float *vxPt, float *vyPt, float *exPt, float *eyPt)
 {
-	int32 im, jm;
+	int32_t im, jm;
 	double t, u, xi, yi;
 
 	if (refVel->velFile == NULL)
@@ -373,8 +373,8 @@ unsigned char refVelInterp(double x, double y, referenceVelocity *refVel, float 
 	xi = ((x * KMTOM - refVel->x0) / refVel->dx + 0.5);
 	yi = ((y * KMTOM - refVel->y0) / refVel->dy + 0.5);
 
-	jm = (int32)xi;
-	im = (int32)yi;
+	jm = (int32_t)xi;
+	im = (int32_t)yi;
 
 	if (jm < 0 || im < 0 || jm >= refVel->nx || im >= refVel->ny)
 		return (FALSE); /* outside of bounds -> no refVel */

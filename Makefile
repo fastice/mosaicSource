@@ -1,18 +1,75 @@
-C =		gcc
-ROOTDIR =	/Users/ian
-PROGDIR =       $(ROOTDIR)/progs/GIT
-INCLUDEPATH =	$(ROOTDIR)/progs/GIT
-
-BINDIR =	$(IHOME)/bin/$(MACHTYPE)
 #
-CFLAGS =	'-O3 -m32 -I$(INCLUDEPATH) $(COMPILEFLAGS)'
-CCFLAGS =  '-O3 -m32 -D$(MACHTYPE) $(COMPILEFLAGS) '
+# Modify this section to point to where stuff is.
+# Current names are for a specific file system.
+# ROOTDIR: root directory for code (e.g. /Users/username directory). Likely should change for linux
+# PROGDIR: location for top source code directory (default ROOTDIR/progs/GIT64)
+# BINHOME: root directory for binaries
+# BINNAME: archetecture dependent basename for bin dir
+# BINDIR: directory for binaries (default BINHOME/bin/BINNAME) (will create if doesn't exist)
+# INCLUDEPATH: include path (default PROGDIR anything else could cause a problem)
+# Various directors can be overridden with environment variable or from make command
+# make BINHOME=/a/path/to/binhome
+#
+# Base directory for code
+USER =	$(shell id -u -n)
+#
+# Default rootdir
+ifneq ($(ROOTDIR)),)
+	ROOTDIR =	/Users/$(USER)
+endif
+$(info ROOTDIR="$(ROOTDIR)")
+# Default root for source code
+ifneq ($(PROGDIR)),)
+	PROGDIR =       $(ROOTDIR)/progs/GIT64
+endif
+$(info PROGDIR ="$(PROGDIR)")
+#
+# Default location root for compiled programs
+ifneq ($(BINHOME)),)
+	BINHOME =		~$(USER)
+endif
+$(info BINHOME="$(BINHOME)")
+#
+# For historical reasons, can compile with 32-bit memory model using MEM=-m32
+# In almost all cases, should be compiled as 64bit.
+ifneq ($(MEM),-m32)
+	BINNAME=	$(MACHTYPE)
+	FFTDIR = $(MACHTYPE)-$(OSTYPE)
+else
+	BINNAME =	i386
+	FFTDIR = i386-$(OSTYPE)
+endif
+$(info BINNAME="$(BINNAME)")
+#
+# Default binary directory
+ifneq ($(BINDIR)),)
+	BINDIR =	$(BINHOME)/bin/$(BINNAME)
+endif
+$(info BINDIR="$(BINDIR)")
+#
+# Create bin dir if it doesn't exist
+$(shell mkdir -p $(BINDIR))
+#
+#
+# Default include path
+ifneq ($(INCLUDEPATH)),)
+	INCLUDEPATH =	$(PROGDIR)
+endif
+$(info INCLUDEPATH ="$(INCLUDEPATH)")
+#
+# Compiler stuff
+#
+C =		gcc
+#
+CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
+CCFLAGS =  '-O3 $(MEM) -D$(MACHTYPE) $(COMPILEFLAGS) '
 #-Wunused-variable'
-
-CCFLAGS1= -O3 -no-pie
+#
+CCFLAGS1= -O3 
+#-no-pie
 # uncomment to debug
-#CFLAGS =	'-g -m32 -I$(INCLUDEPATH) $(COMPILEFLAGS)'
-#CCFLAGS =  '-g -m32 -D$(MACHTYPE) $(COMPILEFLAGS)'
+#CFLAGS =	'-g $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
+#CCFLAGS =  '-g $(MEM) -D$(MACHTYPE) $(COMPILEFLAGS)'
 #CCFLAGS1= '-g'
 
 COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
@@ -98,7 +155,7 @@ MOSAIC3D1 =	Mosaic3d/$(MACHTYPE)-$(OSTYPE)/get3DInputFile.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/speckleTrackMosaic.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/writeTieFile.o
 
-MOSAIC3DDIRS =	Mosaic3d common  landsatMosaic $(PROGDIR)/clib
+MOSAIC3DDIRS =	Mosaic3d common  landsatMosaic $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 mosaic3d:	
 	@for i in ${MOSAIC3DDIRS}; do \
@@ -107,8 +164,8 @@ mosaic3d:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
-                $(MOSAIC3D1)   $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) \
+		gcc $(MEM) $(CCFLAGS1) \
+                $(MOSAIC3D1)   $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) \
                 -lm  -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
 
 
@@ -121,7 +178,7 @@ SIMINSAR =	simInSAR/$(MACHTYPE)-$(OSTYPE)/parseSceneFile.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getDisplacement.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getSlantRangeDEM.o
 
-SIMINSARDIRS =	simInSAR  common   $(PROGDIR)/clib
+SIMINSARDIRS =	simInSAR  common   $(PROGDIR)/clib $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 siminsar:	
 	@for i in ${SIMINSARDIRS}; do \
@@ -130,8 +187,8 @@ siminsar:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
-                simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) -lm  -o $(BINDIR)/siminsar
+		gcc $(MEM) $(CCFLAGS1) \
+                simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON)  $(TRIANGLE) $(STANDARD) $(RECIPES)  -lm  -o $(BINDIR)/siminsar
 
 
 #********************************************************************************
@@ -142,7 +199,7 @@ RPARAMS =       rParams/$(MACHTYPE)-$(OSTYPE)/getROffsets.o \
                 rParams/$(MACHTYPE)-$(OSTYPE)/getBaselineFile.o \
                 rParams/$(MACHTYPE)-$(OSTYPE)/addVelCorrections.o
 
-RPARAMSDIRS =	 rParams  $(PROGDIR)/cRecipes common
+RPARAMSDIRS =	 rParams  $(PROGDIR)/cRecipes common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 rparams:	
 	@for i in ${RPARAMSDIRS}; do \
@@ -151,7 +208,7 @@ rparams:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
+		gcc $(MEM) $(CCFLAGS1) \
                 rParams/$(MACHTYPE)-$(OSTYPE)/rparams.o $(RPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
                 -lm  -o $(BINDIR)/rparams
 
@@ -163,7 +220,7 @@ AZPARAMS =	azParams/$(MACHTYPE)-$(OSTYPE)/addOffsetCorrections.o \
                 azParams/$(MACHTYPE)-$(OSTYPE)/computeAzparams.o \
 		azParams/$(MACHTYPE)-$(OSTYPE)/getOffsets.o
 
-AZPARAMSDIRS =	 azParams common  $(PROGDIR)/cRecipes 
+AZPARAMSDIRS =	 azParams common  $(PROGDIR)/cRecipes $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 azparams:	
 	@for i in ${AZPARAMSDIRS}; do \
@@ -172,7 +229,7 @@ azparams:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
+		gcc $(MEM) $(CCFLAGS1) \
                 azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
                 -lm  -o $(BINDIR)/azparams
 
@@ -182,7 +239,7 @@ azparams:
 
 COARSEREG =  coarseReg/$(MACHTYPE)-$(OSTYPE)/coarseRegister.o
 
-COARSEREGDIRS =	coarseReg  $(PROGDIR)/cRecipes  common
+COARSEREGDIRS =	coarseReg  $(PROGDIR)/cRecipes  common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 coarsereg:	
 	@for i in ${COARSEREGDIRS}; do \
@@ -191,7 +248,7 @@ coarsereg:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
+		gcc $(MEM) $(CCFLAGS1) \
                 coarseReg/$(MACHTYPE)-$(OSTYPE)/coarsereg.o $(COARSEREG)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
                 -lm  -o $(BINDIR)/coarsereg
 
@@ -205,7 +262,7 @@ TIEPOINTS =	tiePoints/$(MACHTYPE)-$(OSTYPE)/getPhases.o \
                 tiePoints/$(MACHTYPE)-$(OSTYPE)/addMotionCorrections.o \
                 tiePoints/$(MACHTYPE)-$(OSTYPE)/computeBaseline.o
 
-TIEPOINTSDIRS =	 tiePoints  $(PROGDIR)/cRecipes common
+TIEPOINTSDIRS =	 tiePoints  $(PROGDIR)/cRecipes common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 tiepoints:	
 	@for i in ${TIEPOINTSDIRS}; do \
@@ -214,7 +271,7 @@ tiepoints:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
+		gcc $(MEM) $(CCFLAGS1) \
                 tiePoints/$(MACHTYPE)-$(OSTYPE)/tiepoints.o $(TIEPOINTS) $(STANDARD) $(TRIANGLE) $(RECIPES)  $(COMMON)  \
 		-lm  -o $(BINDIR)/tiepoints
 
@@ -222,7 +279,7 @@ tiepoints:
 #********************************** lltora *************************************
 #********************************************************************************
 
-LLTORADIRS =	LLtoRA tiePoints  $(PROGDIR)/cRecipes  common
+LLTORADIRS =	LLtoRA tiePoints  $(PROGDIR)/cRecipes  common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 lltora:	
 	@for i in ${LLTORADIRS}; do \
@@ -231,7 +288,7 @@ lltora:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH)  PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-	        gcc -m32 LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) \
+	        gcc $(MEM) LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) \
                       -lm  -o $(BINDIR)/lltora
 
 #********************************************************************************
@@ -241,7 +298,7 @@ lltora:
 GETLOCC =	getLocC/$(MACHTYPE)-$(OSTYPE)/centerLL.o getLocC/$(MACHTYPE)-$(OSTYPE)/correctTime.o \
 	getLocC/$(MACHTYPE)-$(OSTYPE)/glatlon.o
 
-GETLOCCDIRS =	getLocC common
+GETLOCCDIRS =	getLocC common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 getlocc:
 	@for i in ${GETLOCCDIRS}; do \
@@ -250,7 +307,7 @@ getlocc:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1) \
+		gcc $(MEM) $(CCFLAGS1) \
                 getLocC/$(MACHTYPE)-$(OSTYPE)/getlocc.o $(GETLOCC) $(COMMON) $(TRIANGLE) $(STANDARD) $(RECIPES) \
                  -lm -o  $(BINDIR)/getlocc
 
@@ -262,7 +319,7 @@ getlocc:
 GEOMOSAIC =	geoMosaic/$(MACHTYPE)-$(OSTYPE)/makeGeoMosaic.o \
                 geoMosaic/$(MACHTYPE)-$(OSTYPE)/processInputFileGeo.o
 
-GEOMOSAICDIRS =	geoMosaic common landsatMosaic
+GEOMOSAICDIRS =	geoMosaic common landsatMosaic $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 geomosaic:	
 	@for i in ${GEOMOSAICDIRS}; do \
@@ -271,7 +328,7 @@ geomosaic:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc -m32 $(CCFLAGS1)  \
+		gcc $(MEM) $(CCFLAGS1)  \
 		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) \
 		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o  \
                 -lm  -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o

@@ -6,8 +6,6 @@
 #include <time.h>
 #include <math.h>
 #include <stdlib.h>
-/*#include "geotiff/xtiffio.h"  for TIFF
-#include "geotiff/geotiffio.h"  for GeoTIFF */
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"
 #include "mosaicSource/landsatMosaic/landSatMosaic.h"
@@ -106,8 +104,8 @@ int main(int argc, char *argv[])
 	char *date1, *date2;				 /* Date range */
 	char *shelfMaskFile, *landSatFile;	 /* Shelf and landsat file names */
 	char *verticalCorrectionFile;
-	int32 i, j;								  /* LCV */
-	int32 northFlag, threeDOffFlag, haveData; /* Flags */
+	int32_t i, j;								  /* LCV */
+	int32_t northFlag, threeDOffFlag, haveData; /* Flags */
 	int32_t nAsc, nDesc, nFiles;			  /* Number of ascending/descending and all files */
 	int32_t offsetFlag = TRUE;				  /* Flag to indicate do both offset solution where needed, always true old option removed */
 	int32_t statsFlag, *crossFlags;
@@ -617,7 +615,7 @@ static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 	char *outFileEx, *outFileEy;
 	float **vx, **vy, **dT;
 	float maxdT;
-	int32 i, j;
+	int32_t i, j;
 	/* Output file names velocity */
 	outFileVx = (char *)malloc(LINEMAX);
 	outFileVx[0] = '\0';
@@ -745,7 +743,7 @@ static void processMosaicDate(outputImageStructure *outputImage, char *date1, ch
 	fprintf(stderr, "date1,date2 %f %f\n", outputImage->jd1, outputImage->jd2);
 }
 
-static int32 writeMetaFile(inputImageStructure *image, outputImageStructure *outputImage, vhParams *params, char *outFileBase, char *demFile, int32_t writeBlank)
+static int32_t writeMetaFile(inputImageStructure *image, outputImageStructure *outputImage, vhParams *params, char *outFileBase, char *demFile, int32_t writeBlank)
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
@@ -762,7 +760,7 @@ static int32 writeMetaFile(inputImageStructure *image, outputImageStructure *out
 	char *timeString;
 	int32_t hour, minute, second;
 	inputImageStructure *imageTmp;
-	int32 haveData;
+	int32_t haveData;
 	/*
 	  If single pair result, make a meta file with the date
 	*/
@@ -876,7 +874,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 	float tmp;
 	int32_t i, n;
 	int32_t noVhFlag, no3d, rOffsetFlag, vzFlag, noTide, timeOverlapFlag;
-	int32 deltaB;
+	int32_t deltaB;
 
 	if (argc < 4 || argc > 27)
 	{
@@ -1333,14 +1331,14 @@ static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructu
 	char *geodatFile, *vxFile, *vyFile, *exFile, *eyFile;
 	double maxX, maxY;
 	char line[1500];
-	uint32 lineCount = 0;
+	uint32_t lineCount = 0;
 	int32_t eod;
 	float *tmp, *tmp1;
 	float dum1, dum2;
-	uint32 nx, ny;
+	uint32_t nx, ny;
 	double x0, y0;
-	uint32 xoff, yoff, tail; /* offset into velocity file in samples */
-	uint32 i;
+	uint32_t xoff, yoff, tail; /* offset into velocity file in samples */
+	uint32_t i;
 	/*
 	  geodat file name
 	*/
@@ -1395,8 +1393,8 @@ static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructu
 	refVel->ny = (maxY - refVel->y0) / (refVel->dy) + 1;
 	fprintf(stderr, "%f %f  %i %i \n", refVel->x0, refVel->y0, refVel->nx, refVel->ny);
 	/* compute file offsets */
-	xoff = (uint32)((refVel->x0 - x0) / refVel->dx + 0.5);
-	yoff = (uint32)((refVel->y0 - y0) / refVel->dy + 0.5);
+	xoff = (uint32_t)((refVel->x0 - x0) / refVel->dx + 0.5);
+	yoff = (uint32_t)((refVel->y0 - y0) / refVel->dy + 0.5);
 	fprintf(stderr, "xoff,yoff %i %i\n", xoff, yoff);
 	/*
 	  Malloc array

@@ -8,9 +8,6 @@
   Estimate baseline parameters.
 */
 
-#include "geotiff/xtiffio.h"   /* for TIFF */
-#include "geotiff/geotiffio.h" /* for GeoTIFF */
-
 static void constOnlyCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 static void azCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 static void azCoeffsLinear(void *x, int32_t i, double *afunc, int32_t ma);

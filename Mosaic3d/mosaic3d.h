@@ -1,13 +1,13 @@
 #define HIGHJD 1.e7
 #define LOWJD 0.0
 
-#include "geotiff/xtiffio.h"   /* for TIFF */
-#include "geotiff/geotiffio.h" /* for GeoTIFF */
+/*#include "geotiff/xtiffio.h"    for TIFF */
+/*#include "geotiff/geotiffio.h"  for GeoTIFF */
 
 typedef struct
 {
-	uint32 nx;
-	uint32 ny;
+	uint32_t nx;
+	uint32_t ny;
 	double x0;
 	double y0;
 	double dx;
@@ -17,10 +17,10 @@ typedef struct
 	float **ex;
 	float **ey;
 	char *velFile;
-	uint32 clipFlag;		  /* Set true to clip outliers */
+	uint32_t clipFlag;		  /* Set true to clip outliers */
 	double clipThresh;		  /* Threshold used to clip outliers */
-	uint32 initMapFlag;		  /* Set flag to initialize with refVel map */
-	uint32 computeErrorsFlag; /* Set this flag to use velocity map to evaluate range/azimuth errors and write estimate to the .dat files */
+	uint32_t initMapFlag;		  /* Set flag to initialize with refVel map */
+	uint32_t computeErrorsFlag; /* Set this flag to use velocity map to evaluate range/azimuth errors and write estimate to the .dat files */
 } referenceVelocity;
 
 double julday3d(int32_t mm, int32_t id, int32_t iyyy);
@@ -59,8 +59,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 				   float fl, float timeThresh);
 
 /* in speckleTrackMosaic.c */
-void computeScaleLS(float **inImage, float **scale, int32 azimuthSize, int32 rangeSize, float fl, float weight,
-					double minVal, int32 iMin, int32 iMax, int32 jMin, int32 jMax);
+void computeScaleLS(float **inImage, float **scale, int32_t azimuthSize, int32_t rangeSize, float fl, float weight,
+					double minVal, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
 
 double interpXYDEM(double x, double y, xyDEM xydem);
 

@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include "string.h"
 #include <math.h>
-#include "mosaicSource/common/common.h"
+#include "common.h"
 /*
    Compute height for lat/lon from DEM.
    Modified 2/7/96 to add mode for converting from ellipsoidal to spherical

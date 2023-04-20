@@ -1,11 +1,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
-#include "geotiff/xtiffio.h"   /* for TIFF */
-#include "geotiff/geotiffio.h" /* for GeoTIFF */
 #include "mosaicSource/common/common.h"
-/*#include "mosaicSource/mosaic3D_p/mosaic3d.h"*/
-/*#include "landsat/clib/standard.h"*/
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"
 #include "mosaicSource/landsatMosaic/landSatMosaic.h"
@@ -20,7 +16,7 @@ landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1,
 {
 	extern char *lineBufLS, *keyBuf, *valueBuf; /* Input line buffer */
 	FILE *fp;
-	int32 notdone, lineCount, lineLength;
+	int32_t notdone, lineCount, lineLength;
 	landSatImage *tmpImage, *firstImage, *prevImage;
 	char *line, *lineSave;
 	char *matchFile, *fitFile, *maskFile;
@@ -47,7 +43,7 @@ landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1,
 	while (notdone == TRUE)
 	{ /* Loop to read lines */
 		line = lineSave;
-		lineLength = (int32)fgetline(fp, line, LINEMAX); /* Read line */
+		lineLength = (int32_t)fgetline(fp, line, LINEMAX); /* Read line */
 		lineCount++;
 		if (strchr(line, ENDDATA) != NULL || lineLength == 0)
 		{
@@ -146,8 +142,8 @@ landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1,
 
 static void parseFitFile(lsFit *fitDat)
 {
-	int32 notdone, i, j;						/* Loop flag */
-	int32 linelength, lineCount;				/* Input line length */
+	int32_t notdone, i, j;						/* Loop flag */
+	int32_t linelength, lineCount;				/* Input line length */
 	extern char *lineBufLS, *keyBuf, *valueBuf; /* Input line buffer */
 	char *line, *keyword, *value;
 	FILE *fp;

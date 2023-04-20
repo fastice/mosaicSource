@@ -4,8 +4,6 @@
 #include "mosaicSource/common/common.h"
 /*#include "tiePoints.h"*/
 #include "time.h"
-/*#include "geotiff/xtiffio.h"   for TIFF */
-/* #include "geotiff/geotiffio.h" for GeoTIFF */
 extern double Rotation;
 
 /*

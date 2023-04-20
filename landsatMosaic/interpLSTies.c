@@ -2,8 +2,6 @@
 #include "string.h"
 #include "math.h"
 #include <stdlib.h>
-/* #include "geotiff/xtiffio.h"  for TIFF */
-/* #include "geotiff/geotiffio.h"  for GeoTIFF */
 #include "clib/standard.h"
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"

@@ -174,7 +174,7 @@ static void *GMT_memory(void *prev_addr, size_t nelem, size_t size, char *progna
     {
         if ((tmp = realloc((void *)prev_addr, (size_t)(nelem * size))) == VNULL)
         {
-            fprintf(stderr, "GMT Fatal Error: %s could not reallocate more memory, n = %ld\n", progname, nelem);
+            fprintf(stderr, "GMT Fatal Error: %s could not reallocate more memory, n = %ld\n", progname, (long) nelem);
             exit(EXIT_FAILURE_1);
         }
     }
@@ -182,7 +182,7 @@ static void *GMT_memory(void *prev_addr, size_t nelem, size_t size, char *progna
     {
         if ((tmp = calloc((size_t)nelem, (unsigned)size)) == VNULL)
         {
-            fprintf(stderr, "GMT Fatal Error: %s could not allocate memory, n = %ld\n", progname, nelem);
+            fprintf(stderr, "GMT Fatal Error: %s could not allocate memory, n = %ld\n", progname, (long) nelem);
             exit(EXIT_FAILURE_1);
         }
     }

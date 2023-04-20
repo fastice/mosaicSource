@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include "clib/standard.h"
 #include "cRecipes/cRecipes.h"
 #include "geocode.h"

@@ -6,10 +6,8 @@
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
 #include "time.h"
-#include "geotiff/xtiffio.h"   /* for TIFF */
-#include "geotiff/geotiffio.h" /* for GeoTIFF */
 /* from lsmosaic, but only need this */
-double xyscale(double latctr, int32 proj);
+double xyscale(double latctr, int32_t proj);
 /*
 ************************ Geocode image InSAR DEM. **************************
 */

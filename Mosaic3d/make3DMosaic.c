@@ -2,8 +2,6 @@
 #include "string.h"
 #include <math.h>
 #include <stdlib.h>
-#include "geotiff/xtiffio.h"   /* for TIFF */
-#include "geotiff/geotiffio.h" /* for GeoTIFF */
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
