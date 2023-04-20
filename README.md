@@ -50,7 +50,15 @@ This mosaicking code requires code from the following repositories:
 
 [landsatSource64](https://github.com/fastice/landsatSource64/tree/master): Code for offset tracking in pairs of Landsat image with the same path row. Some of the code is required by the mosaicker.
 
-[triangle](https://github.com/fastice/triangle/blob/master/README.md): Ancient triangle code from the 1990s need to compile (maintains some rarely used functionality).
+[triangle](https://github.com/fastice/triangle/blob/master/README.md): Ancient triangle code from the 1990s needed to compile (maintains some rarely used functionality).
+
+[fft](https://github.com/fastice/fft/blob/master/README.md): Ancient fftw code from the 1990s needed to compile.
+
+[unwrapSource](https://github.com/fastice/fft/blob/utilsSource/README.md): Not strictly needed for mosaicing but contains a 30+ year old unwrapper used in early GrIMP products. 
+
+[utilsSource](https://github.com/fastice/fft/blob/utilsSource/README.md): Not strictly needed for mosaicing but contains a couple of utilities used in GrIMP processing. 
+
+## Install
 
 ## For Further Information
 
