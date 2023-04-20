@@ -54,7 +54,11 @@ This mosaicking code requires code from the following repositories:
 
 [fft](https://github.com/fastice/fft/blob/master/README.md): Ancient fftw code from the 1990s needed to compile.
 
-[untilsSource](https://github.com/fastice/fft/blob/unwrapSource/README.md): Not strictly needed for mosaicing but contains a couple of utilities used in GrIMP processing. 
+[unwrapSource](https://github.com/fastice/fft/blob/utilsSource/README.md): Not strictly needed for mosaicing but contains a 30+ year old unwrapper used in early GrIMP products. 
+
+[utilsSource](https://github.com/fastice/fft/blob/utilsSource/README.md): Not strictly needed for mosaicing but contains a couple of utilities used in GrIMP processing. 
+
+## Install
 
 ## For Further Information
 
