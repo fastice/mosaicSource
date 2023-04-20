@@ -32,7 +32,7 @@ make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
 #
 pushd speckleSource
-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
 #
 pushd unwrapSource
