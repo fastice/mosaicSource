@@ -24,11 +24,11 @@ popd
 pushd ..
 #
 pushd landsatSource64
-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
 #
 pushd mosaicSource
-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
 #
 pushd speckleSource
@@ -36,9 +36,9 @@ make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
 #
 pushd unwrapSource
-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
 #
 pushd utilsSource
-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
