@@ -1,22 +1,22 @@
-#  Makeall will build the entire set of routines.
+# csh Makeall will build the entire set of routines.
 # In most cases it can be configured with these 3 variables.
 #
 # Top level directory above code for binaries
-set ROOTDIR=~
+export ROOTDIR=~
 echo ROOTDIR =  $ROOTDIR
 #
 # Location for compiled binaries. Modify or make sure this name is your path variable
-set BINDIR=$ROOTDIR/bin/$MACHTYPE
+export BINDIR=$ROOTDIR/bin/$MACHTYPE
 echo BINDIR = $BINDIR
 #
 # Top level for GrIMP source code (should be the directory this script resides in)
-set PROGDIR=`dirname $PWD`
+export PROGDIR=`dirname $PWD`
 echo PROGDIR = $PROGDIR
 #
 #
 # Install fft
 pushd ../fft
-csh install
+bash install
 popd
 #
 # Run make 
@@ -42,3 +42,4 @@ popd
 pushd utilsSource
 make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
 popd
+
