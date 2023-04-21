@@ -1,4 +1,4 @@
-# csh Makeall will build the entire set of routines.
+#  Makeall will build the entire set of routines.
 # In most cases it can be configured with these 3 variables.
 #
 # Top level directory above code for binaries
