@@ -1,13 +1,14 @@
 #
 pushd ..
-set repos = `echo clib cRecipes fft landsatSource64 rdfSource speckleSource triangle unwrapSource utilsSource fft`
 #
-set gitSource=https://github.com/fastice
+export gitSource=https://github.com/fastice
 #
-echo $repos
-foreach repo ($repos)
-	if ! -e "$repo" then 
-	   echo clonging $repo
-	   git clone $gitSource/$repo
-	endif
-end
+for repo in $(echo clib cRecipes fft landsatSource64 rdfSource speckleSource triangle unwrapSource utilsSource fft)
+do
+        if ! -e $repo
+        then 
+           echo cloning $repo
+           git clone $gitSource/$repo
+        fi
+done
+
