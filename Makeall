@@ -1,4 +1,8 @@
-# csh Makeall will build the entire set of routines.
+# bash Makeall will build the entire set of routines.
+# This script is fabulouly inelegant and inefficient but it should compile everything in a few minutes.
+# It will building everything from scratch forcing recompiles for everything (often multiple times).
+# But in most cases it should work.
+#
 # In most cases it can be configured with these 3 variables.
 #
 # Top level directory above code for binaries
