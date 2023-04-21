@@ -60,6 +60,21 @@ This mosaicking code requires code from the following repositories:
 
 ## Install
 
+Select a directory for the source code and clone this repository.
+
+```
+clone https://github.com/fastice/mosaicSource.git
+```
+
+Change to the mosaicSource directory and run the scrips as shown below to clone the other repositories and to compile the code.
+
+```
+cd mosaicSource
+bash cloneAll
+bash Makeall
+```
+
+
 ## For Further Information
 
 Please address questions to ![](https://github.com/fastice/GrIMPTools/blob/main/Email.png).
