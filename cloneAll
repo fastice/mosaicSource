@@ -3,7 +3,7 @@ pushd ..
 #
 export gitSource=https://github.com/fastice
 #
-for repo in $(echo clib cRecipes fft landsatSource64 rdfSource speckleSource triangle unwrapSource utilsSource fft)
+for repo in $(clib cRecipes fft landsatSource64 rdfSource speckleSource triangle unwrapSource utilsSource)
 do
         if ! -e $repo
         then 
