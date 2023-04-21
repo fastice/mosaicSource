@@ -28,11 +28,11 @@ popd
 pushd ..
 # confirm fftw, geotiff, tifflibs on system before compiling
 #pushd landsatSource64
-#make --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+#make --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR  OSTYPE=$OSTYPE MACHTYPE=$MACHTYPE
 #popd
 #
 pushd mosaicSource
-make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR  OSTYPE=$OSTYPE MACHTYPE=$MACHTYPE
 popd
 #
 pushd speckleSource
@@ -40,10 +40,10 @@ make --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR OSTYPE=$
 popd
 #
 pushd unwrapSource
-make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR OSTYPE=$OSTYPE MACHTYPE=$MACHTYPE
 popd
 #
 pushd utilsSource
-make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR
+make  --always-make all ROOTDIR=$ROOTDIR PROGDIR=$PROGDIR BINDIR=$BINDIR  OSTYPE=$OSTYPE MACHTYPE=$MACHTYPE
 popd
 
