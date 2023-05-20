@@ -13,7 +13,7 @@ void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruc
 	double range, azimuth;
 	int32_t i, count;
 	/* Get offsets 	*/
-	readRangeOffsets(offsets);
+	readRangeOffsets(offsets, FALSE);
 	/*
 	  Interpolate offsets
 	*/

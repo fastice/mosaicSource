@@ -112,6 +112,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 	/* Constants for phase computation */
 	fprintf(stderr, "Re,thetaC,RNear,RFar, %f %f   %f %f %f %i \n ",
 			Re, thetaC, inputImage->cpAll.RNear, inputImage->cpAll.RFar, inputImage->rangePixelSize, inputImage->nRangeLooks);
+	fprintf(stderr, "R/A size %i, %i\n", scene->rSize, scene->aSize);
 	/* Corrections from ml pixels to sl pixels */
 	rOff = 0.5 * (inputImage->nRangeLooks - 1) * inputImage->par.slpR;
 	/* First part in slp so need to divide nlooks to get in mlp pixels */
@@ -185,18 +186,20 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 
 				if (scene->maskFlag == TRUE && scene->toLLFlag == FALSE)
 				{
+					// Save mask only
 					lltoxy1(lat, lon, &x1, &y1, xyDem->rot, xyDem->stdLat);
 					scene->image[iIndex][jLoop] = getShelfMask(scene->imageMask, x1, y1);
 				}
 				else if (scene->heightFlag == TRUE && scene->toLLFlag == FALSE)
-				{
+				{	// Save height only
 					scene->image[iIndex][jLoop] = (float)(hWGS);
 				}
 				else if (scene->toLLFlag == TRUE || scene->saveLLFlag == TRUE)
 				{
+					// Save lat/lon
 					scene->latImage[iIndex][jLoop] = lat;
 					scene->lonImage[iIndex][jLoop] = lon;
-					/*fprintf(stderr,"%f %f\n",lat,lon,hWGS); error("stop");*/
+					// Also save lat/lon
 					if (scene->maskFlag == TRUE)
 					{
 						lltoxy1(lat, lon, &x1, &y1, xyDem->rot, xyDem->stdLat);
@@ -204,7 +207,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					}
 				}
 				else
-				{
+				{ 	// Phase case
 					/* Use h on single spherical reference for phase
 					  even though locally spherical value was used for location */
 					hSp = getXYHeight(lat, lon, xyDem, Re, SPHERICAL);

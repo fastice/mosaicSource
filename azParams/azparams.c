@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include "math.h"
+#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   Estimate baseline using tiepoints.
 
@@ -23,6 +24,7 @@ int32_t llConserveMem = 999; /* NO mem conserve Kluge to maintain backwards comp
 void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
 void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
 int32_t sepAscDesc;
+
 /*
    Global variables definitions
 */
@@ -62,6 +64,7 @@ int main(int argc, char *argv[])
 	lBuf2 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
 	offBufSpace1 = (void *)malloc(MAXOFFBUF);
 	offBufSpace2 = (void *)malloc(MAXOFFBUF);
+	GDALAllRegister();
 	/*
 	   Read command line args and compute filenames
 	*/

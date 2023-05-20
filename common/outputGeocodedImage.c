@@ -4,9 +4,16 @@
 #include <stdlib.h>
 #include <float.h>
 #include "mosaicSource/common/common.h"
+
+size_t fwriteOptionalBS(void *ptr, size_t nitems, size_t size, FILE *fp, int32_t flags, int32_t byteOrder) {
+   if(byteOrder == LSB) return fwrite(ptr, nitems, size, fp);
+   else return fwriteBS(ptr, nitems, size, fp, flags);
+}
+
 /*
    Output geocode image. Writes two files one for image, and xxx.geodat
    with image header info
+
 */
 void outputGeocodedImage(outputImageStructure outputImage, char *outputFile)
 {

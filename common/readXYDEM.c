@@ -278,7 +278,9 @@ void readXYDEM(char *xyFile, xyDEM *xydem)
 	/*
 	  Read input file
 	*/
+
 	image = (float **)mallocImage(xydem->ySize, xydem->xSize);
+	
 	for (i = 0; i < xydem->ySize; i++)
 	{
 		freadBS(image[i], sizeof(float), xydem->xSize, fp, FLOAT32FLAG);

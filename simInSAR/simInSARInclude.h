@@ -7,6 +7,8 @@
 #define LR 2
 #define UL 3
 #define UR 4
+
+
 /*
   #define REMAJOR 6378.137
   #define REMINOR 6356.7523142
@@ -62,6 +64,7 @@ typedef struct sceneStructureType
 	double **latImage;
 	double **lonImage;
 	int32_t useVelocity;
+	int32_t byteOrder;
 } sceneStructure;
 
 typedef struct displacementStructureType

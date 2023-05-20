@@ -31,7 +31,7 @@ void centerLL(SARData *sarD, stateV *sv, int32_t nla, double *lat, double *lon, 
 	endofday = FALSE;
 	for (i = 1; i <= sv->nState; i++)
 	{
-		fprintf(stderr, "sv %f\n", sv->times[i]);
+		//fprintf(stderr, "sv %f\n", sv->times[i]);
 		if (sv->times[i] > 86400)
 			endofday = TRUE;
 	}

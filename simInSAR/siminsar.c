@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <math.h>
 #include <stdlib.h>
+#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   Program to simulate InSAR image including both terrain and motion effects.
 */
@@ -45,6 +46,7 @@ int main(int argc, char *argv[])
 	int32_t i, j, flatFlag;
 	ShelfMask *imageMask;
 	char *demFile, *displacementFile, *sceneFile, *outputFile;
+	GDALAllRegister();
 	/*
 	   Read command line args
 	*/
@@ -56,6 +58,7 @@ int main(int argc, char *argv[])
 	  Input scene parameters from sceneFile
 	*/
 	scene.I.stateFlag = TRUE;
+	fprintf(stderr, "Parsing scene file...\n");
 	parseSceneFile(sceneFile, &scene);
 	/*
 	  Init and input DEM
@@ -71,6 +74,7 @@ int main(int argc, char *argv[])
 		xyVel.xSize = 0;
 		xyVel.ySize = 0;
 	}
+	fprintf(stderr, "Loading DEM...\n");
 	readXYDEM(demFile, &xyDem);
 	dem = (void *)&xyDem;
 	if (scene.maskFlag == TRUE)
@@ -82,6 +86,7 @@ int main(int argc, char *argv[])
 	/*
 	  Simulate InSAR image
 	*/
+	fprintf(stderr, "Writing results....\n");
 	simInSARimage(&scene, dem, &xyVel);
 	/*
 	  Output image
@@ -125,6 +130,7 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	scene->llInput = NULL;
 	scene->toLLFlag = FALSE;   /* For offsets */
 	scene->saveLLFlag = FALSE; /* for phase/geodat */
+	scene->byteOrder = MSB;
 	for (i = 1; i <= n; i += 2)
 	{
 		argString = strchr(argv[i], '-');
@@ -240,6 +246,11 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 			i--;
 			fprintf(stderr, "xyDEM flag obsolete: all dems xy");
 		}
+		else if (strstr(argString, "LSB") != NULL)
+		{
+			i--;
+			scene->byteOrder = LSB;
+		}
 		else
 			usage();
 	}
@@ -292,13 +303,13 @@ static void usage()
 		"\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
 		"Simulate interferogram using a DEM",
 		"Usage:",
-		"siminsar -bn bn -dBn dBn -bp bp -dBp dBp ",
+		"siminsar -LSB -bn bn -dBn dBn -bp bp -dBp dBp ",
 		"         -bnStart bnStart -bnEnd -bpStart bpStart -bpEnd ",
 		"         -flat -height -rPix rPix -aPix deltA -velocity",
 		"         -slantRangeDEM -xyDEM -mask -saveLL -toLL file.dat",
 		"          demFile displacementFile sceneFile outPutImage",
 		"where",
-		"                   ow compute and use defaults",
+		"   LSB             Output results as LSB [MSB]",
 		"   mask            = output a mask using displaceMent file as mask",
 		"   toLL file.dat = use an offsets.dat to produce lat/lon for each pixel - write outputimage.lat,.lon",
 		"   saveLL  =  write outputimage.lat,.lo",

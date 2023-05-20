@@ -3,10 +3,29 @@
 #include <stdlib.h>
 #include "common.h"
 #include <libgen.h>
+#include <unistd.h>
+#include "gdalIO/gdalIO/grimpgdal.h"
+
+#define RANGEBUFF 20
+#define AZIMUTHBUFF 21
+#define RANGEERRORBUFF 22
+#define AZIMUTHERRORBUFF 23
+#define RANGEUSEAZIMUTHBUFF 24
+#define AZONLY 30
+#define RGANDAZ 31
+#define RGONLY 32
+#define AZFORRANGE 33
 
 static void readCov(FILE *fp, int32_t n, double C[7][7], double *sigmaResidual, char *line);
 static void readOffsetFile(float **data, int32_t nr, int32_t na, char *offsetFile);
+static void mapBuffer(int32_t nr, int32_t na, float **d, float **s,  float *buffSpaceD, float *buffSpaceS);
+static void initOffsetBuffers(Offsets *offsets, int32_t mode);
+static char *mergePath(char *file1, char *path);
+static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB);
+static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB);
 
+
+static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_t band, char *path);
 /*
    Read the offset data and paramter files
  */
@@ -18,6 +37,15 @@ void readOffsetDataAndParams(Offsets *offsets)
 	fprintf(stderr, "Offsets and paramters read\n");
 	if (offsets->deltaB != DELTABNONE && offsets->geo2 == NULL)
 		error("offsets deltaB set but no second geodat for %s\n", offsets->rFile);
+	fprintf(stderr,"\nDEBUG: geo1/2 %s %s\n", offsets->geo1, offsets->geo2);
+}
+
+static void mapBuffer(int32_t nr, int32_t na, float **d, float **s,  float *buffSpaceD, float *buffSpaceS){
+	int i;
+	for (i = 0; i < na; i++) {
+				d[i] = &(buffSpaceD[i * nr]);
+				s[i] = &(buffSpaceS[i * nr]);
+			}
 }
 
 static void initOffsetBuffers(Offsets *offsets, int32_t mode)
@@ -28,34 +56,38 @@ static void initOffsetBuffers(Offsets *offsets, int32_t mode)
 	int32_t i, nr, na;
 	nr = offsets->nr;
 	na = offsets->na;
-	if (mode != RGONLY)
-	{
-		offsets->da = (float **)lBuf1;
-		offsets->sa = (float **)lBuf2;
-		fBuf1 = (float *)offBufSpace1;
-		fBuf2 = (float *)offBufSpace2;
-	}
-	if (mode != AZONLY)
-	{
-		offsets->dr = (float **)lBuf3;
-		offsets->sr = (float **)lBuf4;
-		fBuf3 = (float *)offBufSpace3;
-		fBuf4 = (float *)offBufSpace4;
-	}
 	if (nr * na * 4 > MAXOFFBUF)
 		error("Offsets Buffer Size exceeds MAXOFFBUF of %i\n", MAXOFFBUF);
-	for (i = 0; i < na; i++)
-	{
-		if (mode != RGONLY)
-		{
-			offsets->da[i] = &(fBuf1[i * nr]);
-			offsets->sa[i] = &(fBuf2[i * nr]);
-		}
-		if (mode != AZONLY)
-		{
-			offsets->dr[i] = &(fBuf3[i * nr]);
-			offsets->sr[i] = &(fBuf4[i * nr]);
-		}
+
+	switch(mode) {
+		// If RANGANDAZ Fall through to both
+		case RGONLY: 
+			offsets->dr = (float **)lBuf3;
+			offsets->sr = (float **)lBuf4;
+			fBuf3 = (float *)offBufSpace3;
+			fBuf4 = (float *)offBufSpace4;
+			// fprintf(stderr, "RANGe BUFFERS\n");
+			mapBuffer(nr, na, offsets->dr, offsets->sr, fBuf3, fBuf4);
+		 	break;
+		case AZONLY:
+			offsets->da = (float **)lBuf1;
+			offsets->sa = (float **)lBuf2;
+			fBuf1 = (float *)offBufSpace1;
+			fBuf2 = (float *)offBufSpace2;
+			// fprintf(stderr, "AZIMUTH BUFFERS\n");
+			mapBuffer(nr, na, offsets->da, offsets->sa, fBuf1, fBuf2);
+		    break;
+		case AZFORRANGE:
+			offsets->dr = (float **)lBuf1;
+			offsets->sr = (float **)lBuf2;
+			fBuf3 = (float *)offBufSpace1;
+			fBuf4 = (float *)offBufSpace2;
+			// fprintf(stderr, "RANGE FLIP BUFFERS\n");
+			mapBuffer(nr, na, offsets->dr, offsets->sr, fBuf3, fBuf4);
+			break;
+		default:
+		error("initOffsets invalid buffer code %i", mode);
+			break;
 	}
 }
 
@@ -63,17 +95,20 @@ static char *mergePath(char *file1, char *path)
 {
 	char fileTmp[1024], *tmp, *merged;
 	fileTmp[0] = '\0';
-	tmp = strcat(fileTmp, path);
-	tmp = strcat(fileTmp, "/");
+	if (path != NULL)
+	{
+		tmp = strcat(fileTmp, path);
+		tmp = strcat(fileTmp, "/");
+	}
 	tmp = strcat(fileTmp, file1);
 	merged = (char *)malloc(strlen(fileTmp) + 1);
 	merged[0] = '\0';
 	return (strcat(merged, fileTmp));
 }
 /*
-  Read the params
+  Read the params, use merge=TRUE to update geodat paths, FALSE to leave unchanged.
 */
-static void readOffsetParams(char *datFile, Offsets *offsets)
+void readOffsetParams(char *datFile, Offsets *offsets, int32_t merge)
 {
 	FILE *fp;
 	int32_t rO, aO, nr, na;
@@ -83,6 +118,7 @@ static void readOffsetParams(char *datFile, Offsets *offsets)
 	char file1[512], file2[512], *path;
 	int32_t lineCount, eod;
 	int32_t nRead;
+	/* See if vrt exits */
 
 	/* Read params file */
 	fp = openInputFile(datFile);
@@ -109,7 +145,7 @@ static void readOffsetParams(char *datFile, Offsets *offsets)
 	fprintf(stderr, "SigmaStreaks/Range = %f %f %i\n", sigmaS, sigmaR, nRead);
 	offsets->nr = nr;
 	offsets->na = na;
-	fprintf(stderr, "nr na %i %i\n", nr, na);
+	// fprintf(stderr, "nr na %i %i\n", nr, na);
 	/*
 	   read geodat files if the exist
 	 */
@@ -119,10 +155,13 @@ static void readOffsetParams(char *datFile, Offsets *offsets)
 	if (tmp != NULL)
 	{
 		sscanf(line, "%s %s %s", file1, file2, datFile);
-		path = dirname(datFile);
+		if (merge == TRUE)
+			path = dirname(datFile);
+		else
+			path = NULL;
 		offsets->geo1 = mergePath(file1, path);
 		offsets->geo2 = mergePath(file2, path);
-		fprintf(stderr, "Reading geo1 & geo2. ");
+		fprintf(stderr, "Found geo1 & geo2. %s %s \n", offsets->geo1, offsets->geo2);
 	}
 	fclose(fp);
 }
@@ -140,44 +179,6 @@ static void readOffsetFile(float **data, int32_t nr, int32_t na, char *offsetFil
 		freadBS(data[i], sizeof(float), nr, fp, FLOAT32FLAG);
 	fclose(fp);
 	/* fprintf(stderr,"- done - \n");	*/
-}
-
-/*
-	read offsets and error files
-*/
-void readBothOffsets(Offsets *offsets)
-{
-	char *datFile, buf[1024], bufa[1024], bufd[1024];
-	char *eFileA, *eFileR;
-	char *file;
-	int32_t i;
-	/*
-	  Read inputfile
-	*/
-	file = offsets->file;
-	datFile = appendSuffix(file, ".dat", buf);
-	eFileA = appendSuffix(file, ".sa", bufa);
-	eFileR = appendSuffix(offsets->rFile, ".sr", bufd);
-	/*
-	 read offset param
-	*/
-	readOffsetParams(datFile, offsets);
-	/*
-	setup buffers
-	*/
-	initOffsetBuffers(offsets, RGANDAZ);
-	/*
-	  Read files
-	*/
-	fprintf(stderr, "Reading da");
-	readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
-	fprintf(stderr, ", dr");
-	readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
-	fprintf(stderr, ", sa");
-	readOffsetFile(offsets->sa, offsets->nr, offsets->na, eFileA);
-	fprintf(stderr, ", sr");
-	readOffsetFile(offsets->sr, offsets->nr, offsets->na, eFileR);
-	fprintf(stderr, ".\n");
 }
 
 static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB)
@@ -260,56 +261,6 @@ void getRParams(Offsets *offsets)
 	fclose(fp);
 }
 
-/*
-  This reads the range offsets, but uses the azimuth  offsets buffer for the asc and the range for the descending
-*/
-void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
-{
-	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
-	char *datFile, *file, buf[1024], bufd[1024];
-	char *eFileR;
-	float *fBufR, *fBufER;
-	int32_t i;
-	/*
-	  Read inputfile
-	*/
-	file = offsets->file;
-	datFile = appendSuffix(file, ".dat", buf);
-	readOffsetParams(datFile, offsets);
-	/*
-	   Set up for offsets type
-	*/
-	eFileR = offsets->rFile;
-	eFileR = appendSuffix(eFileR, ".sr", bufd);
-
-	if (orbitType == ASCENDING)
-	{
-		offsets->dr = (float **)lBuf1;
-		offsets->sr = (float **)lBuf2;
-		fBufR = (float *)offBufSpace1;
-		fBufER = (float *)offBufSpace2;
-	}
-	else
-	{
-		offsets->dr = (float **)lBuf3;
-		offsets->sr = (float **)lBuf4;
-		fBufR = (float *)offBufSpace3;
-		fBufER = (float *)offBufSpace4;
-	}
-	if (offsets->nr * offsets->na * 4 > MAXOFFBUF)
-		error("Offsets Buffer Size exceeds MAXOFFBUF of %i\n", MAXOFFBUF);
-	for (i = 0; i < offsets->na; i++)
-	{
-		offsets->dr[i] = &(fBufR[i * offsets->nr]);
-		offsets->sr[i] = &(fBufER[i * offsets->nr]);
-	}
-	/*
-	  Read files
-	*/
-	readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
-	readOffsetFile(offsets->sr, offsets->nr, offsets->na, eFileR);
-}
 
 static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB)
 {
@@ -360,6 +311,303 @@ void getAzParams(Offsets *offsets)
 	}
 	fclose(fp);
 }
+
+
+//char *checkForVrt(char *filename, char *vrtBuff)
+//{
+//	char *vrtFile;
+//	vrtFile = appendSuffix(filename, ".vrt", vrtBuff);
+//	if (access(vrtFile, F_OK) == 0)
+//	{
+//		return vrtFile;
+//	}
+//	return NULL;
+//}
+
+void initOffParams(Offsets *offsets){
+	offsets->nr = 0;
+	offsets->na = 0;
+	offsets->rO = 0;
+	offsets->aO = 0;
+	offsets->deltaR = 0;
+	offsets->deltaA =0;
+	offsets->sigmaStreaks = 0.0;
+	offsets->sigmaRange = 0.0;
+	offsets->geo1 = NULL;
+	offsets->geo2 = NULL;
+}
+
+static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_t band, char *path)
+{
+	dictNode *metaData = NULL;
+	GDALRasterBandH hBand;
+	float tmp;
+	// Get meta data
+	hBand = GDALGetRasterBand(hDS, band);
+	readDataSetMetaData(hDS, &metaData);
+	// Write to offsets
+	offsets->nr = GDALGetRasterBandXSize(hBand);
+	offsets->na = GDALGetRasterBandYSize(hBand);
+	// fprintf(stderr, "%s %s\n", get_value(metaData, "r0"), get_value(metaData, "a0"));
+	offsets->rO = atoi(get_value(metaData, "r0"));
+	offsets->aO = atoi(get_value(metaData, "a0"));
+	// fprintf(stderr, "R0,A)\n");
+	offsets->deltaR = atof(get_value(metaData, "deltaR"));
+	offsets->deltaA = atof(get_value(metaData, "deltaA"));
+	// Check sigmas not already set
+	if( (tmp=atof(get_value(metaData, "sigmaStreaks"))) > 0.0) offsets->sigmaStreaks = tmp;
+	if( (tmp=atof(get_value(metaData, "sigmaRange"))) > 0.0) offsets->sigmaRange = tmp;
+	offsets->geo1 = mergePath(get_value(metaData, "geo1"), path);
+	offsets->geo2 = mergePath(get_value(metaData, "geo2"), path);
+	// Get Band
+	return hBand;
+}
+
+
+void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
+{
+	int32_t status;
+	float *data;
+	char *path;
+	GDALRasterBandH hBand;
+	path = dirname(offsets->file);
+	switch (bufferMode)
+	{
+	case AZIMUTHBUFF:
+		// fprintf(stderr, "AZIMUTH BUFF\n");
+		hBand = getBandAndMeta(hDS, offsets, 1, path);
+		initOffsetBuffers(offsets, AZONLY);
+		data = offsets->da[0];
+		break;
+	case RANGEBUFF:
+		// fprintf(stderr, "RANGE BUFF\n");
+		hBand = getBandAndMeta(hDS, offsets, 1, path);
+		initOffsetBuffers(offsets, RGONLY);
+		data = offsets->dr[0];
+		break;
+	case RANGEUSEAZIMUTHBUFF:
+		// fprintf(stderr, "RANGE FLIP BUFF\n");
+		hBand = getBandAndMeta(hDS, offsets, 1, path);
+		initOffsetBuffers(offsets, AZFORRANGE);
+		data = offsets->dr[0];
+		break;
+	case AZIMUTHERRORBUFF:
+		// fprintf(stderr, "AZIMUTH ERROR BUFF\n");
+		hBand = GDALGetRasterBand(hDS, 2);
+		data = offsets->sa[0];
+		break;
+	case RANGEERRORBUFF:
+		// fprintf(stderr, "RANGE ERROR BUFF\n");
+		hBand = GDALGetRasterBand(hDS, 2);
+		data = offsets->sr[0];
+		break;
+	default:
+		error("Invalide code readGDALoffstes");
+	}
+	// fprintf(stderr, "RASTERO\n");
+	status = GDALRasterIO(hBand, GF_Read, 0, 0, offsets->nr, offsets->na, data,
+						  offsets->nr, offsets->na, GDT_Float32, 0, 0);
+	fprintf(stderr, "Raster IO Status %i\n", status);
+}
+
+/*
+ This combines funtionality of historical readOffsets and readAzimuthOffsets.
+*/
+void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
+{
+	char *datFile, buf[1024], bufa[2048], vrtBuffer[2048], *vrtFile;
+	char *eFileA, *file;
+	GDALDatasetH hDS;
+
+	fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
+	vrtFile = checkForVrt(offsets->file, vrtBuffer);
+	if (vrtFile != NULL)
+	{	// Zero params
+		initOffParams(offsets);
+		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		// Open data set
+		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+		// Read azimuthg offsets and errors
+		readGDALOffsets(hDS, offsets, AZIMUTHBUFF);
+		if(includeErrors == TRUE)
+			readGDALOffsets(hDS, offsets, AZIMUTHERRORBUFF);
+		GDALClose(hDS);
+	}
+	else
+	{
+		datFile = appendSuffix(offsets->file, ".dat", buf);
+		fprintf(stderr, "OPENING DAT %s\n", datFile);
+		// Read the data file
+		readOffsetParams(datFile, offsets, TRUE);
+		// Init memory
+		initOffsetBuffers(offsets, AZONLY);
+		// Read files
+		readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
+		if(includeErrors == TRUE) {
+			eFileA = appendSuffix(offsets->file, ".sa", bufa);
+			readOffsetFile(offsets->sa, offsets->nr, offsets->na, eFileA);
+		}
+	}
+}
+
+/*
+   Read azimuth offsets with errors
+ */
+void readOffsets(Offsets *offsets) {
+	readOffsetsOptionalErrors(offsets, TRUE);
+}
+
+/*
+   Read azimuth offsets only
+ */
+void readAzimuthOffsets(Offsets *offsets) {
+	readOffsetsOptionalErrors(offsets, FALSE);
+}
+/*
+   Read range  offsets (for now no sigma)
+ */
+void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
+{
+	char *datFile, buf[2048], bufd[2048], vrtBuffer[2048], *vrtFile;
+	char *eFileR, *file;
+	GDALDatasetH hDS;
+	/*
+	  Read inputfile
+	*/
+	vrtFile = checkForVrt(offsets->rFile, vrtBuffer);
+	if (vrtFile != NULL)
+	{	// Zero parameters
+		initOffParams(offsets);
+		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		// Open data set
+		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+		// Read data and close
+		readGDALOffsets(hDS, offsets, RANGEBUFF);
+		if(includeErrors == TRUE) 
+			readGDALOffsets(hDS, offsets, RANGEERRORBUFF);
+		GDALClose(hDS);
+	}
+	else
+	{
+		// Zero parameters
+		initOffParams(offsets);
+		// read offset param
+		datFile = appendSuffix(offsets->rFile, ".dat", buf);
+		fprintf(stderr, "OPENING DAT %s\n", datFile);
+		readOffsetParams(datFile, offsets, TRUE);
+		// setup buffers
+		initOffsetBuffers(offsets, RGONLY);
+		// Read files
+		readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
+		if(includeErrors == TRUE) {
+			eFileR = appendSuffix(offsets->rFile, ".sr", bufd);
+			readOffsetFile(offsets->sr, offsets->nr, offsets->na, eFileR);
+		}
+	}
+}
+
+/*
+	read offsets and error files
+*/
+void readBothOffsets(Offsets *offsets)
+{
+	char *datFile, buf[1024], bufa[1024], bufd[1024], bufvrt[2048];
+	char *eFileA, *eFileR;
+	char *file;
+	int32_t i;
+	/*
+	  Read azimuth offsets followed by range offsets
+	*/
+	readOffsetsOptionalErrors(offsets, TRUE);
+	readRangeOffsets(offsets, TRUE);
+	fprintf(stderr, "SIGMA FINAL %f %f", offsets->sigmaStreaks, offsets->sigmaRange);
+}
+
+/*
+  This reads the range offsets, but uses the azimuth  offsets buffer for the asc and the range for the descending
+*/
+void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
+{
+	char *datFile, buf[2048], bufd[2048], vrtBuffer[2048], *vrtFile;
+	char *eFileR, *file;
+	GDALDatasetH hDS;
+	int bufferMode;
+	//
+	if (offsets->nr * offsets->na * 4 > MAXOFFBUF)
+		error("Offsets Buffer Size exceeds MAXOFFBUF of %i\n", MAXOFFBUF);
+	// Zero parameters
+	initOffParams(offsets);
+	vrtFile = checkForVrt(offsets->rFile, vrtBuffer);
+	if (vrtFile != NULL)
+	{
+		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		// Open data set
+		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+		// Read data and close
+		if (orbitType == ASCENDING) readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF);
+		else readGDALOffsets(hDS, offsets, RANGEBUFF);
+		readGDALOffsets(hDS, offsets, RANGEERRORBUFF);
+		GDALClose(hDS);
+	}
+	else
+	{
+		// read offset param
+		datFile = appendSuffix(offsets->rFile, ".dat", buf);
+		fprintf(stderr, "OPENING DAT %s\n", datFile);
+		readOffsetParams(datFile, offsets, TRUE);
+		// setup buffers
+		if (orbitType == ASCENDING)
+			initOffsetBuffers(offsets, AZFORRANGE);
+		else
+			initOffsetBuffers(offsets, RGONLY);
+		// Read files
+		readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
+		eFileR = appendSuffix(offsets->rFile, ".sr", bufd);
+		readOffsetFile(offsets->sr, offsets->nr, offsets->na, eFileR);
+	}
+}
+
+/*
+  Input phase or power image for geocode
+*/
+void getMosaicInputImage(inputImageStructure *inputImage)
+{
+	FILE *fp;
+	float **fimage;
+	float *imageLine;
+	int32_t i, j;
+	/*
+	  Open image
+	*/
+	fprintf(stderr, "Reading %s --- ", inputImage->file);
+	fimage = (float **)inputImage->image;
+	if (strstr(inputImage->file, "nophase") == NULL)
+	{
+		fp = fopen(inputImage->file, "r");
+		if (fp == NULL)
+			error("*** getPhaseOrPowerImage: Error opening %s ***\n",
+				  inputImage->file);
+	}
+	else
+		fp = NULL;
+	imageLine = fimage[0];
+
+	if (fp != NULL)
+	{
+		freadBS(imageLine, sizeof(float), inputImage->rangeSize * inputImage->azimuthSize, fp, FLOAT32FLAG);
+	}
+	else
+	{ /* nophase case */
+		for (i = 0; i < inputImage->azimuthSize; i++)
+			for (j = 0; j < inputImage->rangeSize; j++)
+				fimage[i][j] = -2.0e9;
+	}
+	fprintf(stderr, "completed \n");
+	if (fp != NULL)
+		fclose(fp);
+	return;
+}
+
 
 /*
    Read 4x4 or 6x6 cov matrix for the az/rg params file format
@@ -464,126 +712,4 @@ static void readCov(FILE *fp, int32_t n, double C[7][7], double *sigmaResidual, 
 		if (count > 8)
 			error("Problem reading covariance matrix");
 	}
-}
-
-/*
-   Read azimuth offsets
- */
-void readOffsets(Offsets *offsets)
-{
-	char *datFile, buf[1024], bufa[1024];
-	char *eFileA, *file;
-	/*
-	  Read inputfile
-	*/
-	file = offsets->file;
-	datFile = appendSuffix(file, ".dat", buf);
-	eFileA = appendSuffix(file, ".sa", bufa);
-	/*
-	 read offset param
-	*/
-	readOffsetParams(datFile, offsets);
-	/*
-	setup buffers
-	*/
-	initOffsetBuffers(offsets, AZONLY);
-	/*
-	  Read files
-	*/
-	readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
-	readOffsetFile(offsets->sa, offsets->nr, offsets->na, eFileA);
-}
-
-/*
-   Read range  offsets (for now no sigma)
- */
-void readRangeOffsets(Offsets *offsets)
-{
-	char *datFile, buf[1024], bufa[1024];
-	char *eFileR, *file;
-	/*
-	  Read inputfile
-	*/
-	file = offsets->rFile;
-	datFile = appendSuffix(file, ".dat", buf);
-	/*
-	 read offset param
-	*/
-	readOffsetParams(datFile, offsets);
-	/*
-	setup buffers
-	*/
-	initOffsetBuffers(offsets, RGONLY);
-	/*
-	  Read files
-	*/
-	readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
-}
-
-/*
-   Read azimuth offsets
- */
-void readAzimuthOffsets(Offsets *offsets)
-{
-	char *datFile, buf[1024], bufa[1024];
-	char *eFileA, *file;
-	/*
-	  Read inputfile
-	*/
-	file = offsets->file;
-	datFile = appendSuffix(file, ".dat", buf);
-	/*
-	 read offset param
-	*/
-	readOffsetParams(datFile, offsets);
-	/*
-	setup buffers
-	*/
-	initOffsetBuffers(offsets, AZONLY);
-	/*
-	  Read files
-	*/
-	readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
-}
-
-/*
-  Input phase or power image for geocode
-*/
-void getMosaicInputImage(inputImageStructure *inputImage)
-{
-	FILE *fp;
-	float **fimage;
-	float *imageLine;
-	int32_t i, j;
-	/*
-	  Open image
-	*/
-	fprintf(stderr, "Reading %s --- ", inputImage->file);
-	fimage = (float **)inputImage->image;
-	if (strstr(inputImage->file, "nophase") == NULL)
-	{
-		fp = fopen(inputImage->file, "r");
-		if (fp == NULL)
-			error("*** getPhaseOrPowerImage: Error opening %s ***\n",
-				  inputImage->file);
-	}
-	else
-		fp = NULL;
-	imageLine = fimage[0];
-
-	if (fp != NULL)
-	{
-		freadBS(imageLine, sizeof(float), inputImage->rangeSize * inputImage->azimuthSize, fp, FLOAT32FLAG);
-	}
-	else
-	{ /* nophase case */
-		for (i = 0; i < inputImage->azimuthSize; i++)
-			for (j = 0; j < inputImage->rangeSize; j++)
-				fimage[i][j] = -2.0e9;
-	}
-
-	fprintf(stderr, "completed \n");
-	if (fp != NULL)
-		fclose(fp);
-	return;
 }

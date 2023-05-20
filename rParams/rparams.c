@@ -5,7 +5,7 @@
 #include "rparams.h"
 #include <sys/types.h>
 #include <sys/time.h>
-
+#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   Estimate range params using tiepoints.
 
@@ -62,6 +62,7 @@ int main(int argc, char *argv[])
 	Abuf2 = NULL;
 	Dbuf1 = NULL;
 	Dbuf2 = NULL;
+	GDALAllRegister();
 	/* Used for pointers rows to above buffer space */
 	lBuf3 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
 	lBuf4 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);

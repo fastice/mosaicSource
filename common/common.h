@@ -44,9 +44,8 @@
 #define VZVERTICAL 2
 #define VZLOS 3
 #define VZINC 4
-#define AZONLY 0
-#define RGANDAZ 1
-#define RGONLY 2
+
+#define NOINITBUFF 10
 /* default values - not really used */
 #define RANGESIZE 2048
 #define AZIMUTHSIZE 12800
@@ -281,7 +280,9 @@ void computeXYangleNoDem(double lat, double lon, double *xyAngle, double stdLat)
 void endScale(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY, float **scaleX,
 			  float **scaleY, float **scaleZ, int statsFlag);
 void readBothOffsets(Offsets *offsets);
-
+void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors);
+void readOffsetParams(char *datFile, Offsets *offsets, int32_t);
+//char *checkForVrt(char *filename, char *vrtBuff);
 void undoNormalization(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY,
 					   float **scaleX, float **scaleY, float **scaleZ, float **fScale, int statsFlag);
 void redoNormalization(float myWeight, outputImageStructure *outputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax,
@@ -303,7 +304,7 @@ void readOffsetDataAndParams(Offsets *offsets);
 void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType);
 void readOffsets(Offsets *offsets);
 void readAzimuthOffsets(Offsets *offsets);
-void readRangeOffsets(Offsets *offsets);
+void readRangeOffsets(Offsets *offsets, int32_t includeErrors);
 void readOldPar(char *parFile, SARData *sarD, stateV *sv);
 void geometryInfo(conversionDataStructure *cP, inputImageStructure *currentImage, double azimuth, double range, double z, double thetaC,
 				  double *ReH, double *Range, double *theta, double *thetaD, double *phi, double zSp);

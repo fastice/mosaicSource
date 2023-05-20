@@ -4,6 +4,9 @@
 #define MAXADBUF2 5000000
 #define MXST 75
 #define MNST 5
+
+#define LSB 0
+#define MSB 1
 /*
   This is the include file for using geocode routines with other programs.
 */
@@ -288,6 +291,8 @@ void initOutputImage(outputImageStructure *outputImage,
 void geoCodeImage(inputImageStructure inputImage,
 				  outputImageStructure outputImage,
 				  void *dem);
+// Write LSB or MSB data
+size_t fwriteOptionalBS(void *ptr, size_t nitems, size_t size, FILE *fp, int32_t flags, int32_t byteOrder);
 /*
   Output geocode image. Writes two files one for image, and xxx.geodat
   with image header info

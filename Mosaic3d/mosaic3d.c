@@ -9,6 +9,7 @@
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"
 #include "mosaicSource/landsatMosaic/landSatMosaic.h"
+#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   Mosaic several insar dems with altimetry dem.
 
@@ -110,6 +111,7 @@ int main(int argc, char *argv[])
 	int32_t offsetFlag = TRUE;				  /* Flag to indicate do both offset solution where needed, always true old option removed */
 	int32_t statsFlag, *crossFlags;
 	int32_t autoSize, writeBlank, count;
+	GDALAllRegister();
 	/*
 	   Read command line args and compute filenames
 	*/
@@ -145,7 +147,6 @@ int main(int argc, char *argv[])
 	*/
 	get3DProj(ascImages, descImages, nAsc, nDesc, northFlag, &outputImage);
 	outputImage.slat = dem.stdLat;
-
 	/* Process landsat images */
 	LSImages = NULL;
 	if (landSatFile != NULL)
@@ -193,6 +194,7 @@ int main(int argc, char *argv[])
 	/*
 	  Init output image memory
 	*/
+
 	malloc3DBuffers();
 	mallocOutputImage(&outputImage);
 	/* Consolodate lists */
@@ -213,7 +215,6 @@ int main(int argc, char *argv[])
 	*/
 	fprintf(outputImage.fpLog, ";\n; About to Read XYDEM %s\n", demFile);
 	readXYDEM(demFile, &dem);
-
 	for (tmpP = params; tmpP != NULL; tmpP = tmpP->next)
 		tmpP->xydem = dem;
 	fprintf(outputImage.fpLog, ";\n; Returned from readXYDEM\n");

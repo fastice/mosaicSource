@@ -72,6 +72,11 @@ CCFLAGS1= -O3
 #CCFLAGS =  '-g $(MEM) -D$(MACHTYPE) $(COMPILEFLAGS)'
 #CCFLAGS1= '-g'
 
+ifneq ($(OSTYPE),darwin)
+	NOPIE =	-no-pie
+endif
+$(info NOPIE ="$(NOPIE)")
+
 COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	                common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
@@ -138,11 +143,27 @@ LANDSATCODE =		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/readLSOffsets.o \
 					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o \
 					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/makeLandSatMosaic.o
 
+GDALIO = 	$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/gdalIO.o \
+			$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/dictionaryCode.o
 
 TARGETS = mosaic3d siminsar rparams azparams coarsereg tiepoints lltora getlocc geomosaic
 
 all: $(TARGETS)
 
+
+OFFSETVRT =	offsetVRT/$(MACHTYPE)-$(OSTYPE)/offsetVRT.o
+OFFSETVRTDIRS =	offsetVRT $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib  $(PROGDIR)/mosaicSource/common
+
+offsetvrt:	
+	@for i in ${OFFSETVRTDIRS}; do \
+		( 	echo "<<< Descending in directory: $$i >>>"; \
+	                cd $$i; \
+			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0; \
+			cd $(PROGDIR); \
+		); done
+		gcc $(MEM) $(CCFLAGS1) $(NOPIE) \
+                $(OFFSETVRT) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
+                -lm  -lgdal -o $(BINDIR)/offsetvrt  -L/usr/lib 	
 #********************************************************************************
 #********************************** mosaic3d ************************************
 #********************************************************************************
@@ -155,7 +176,7 @@ MOSAIC3D1 =	Mosaic3d/$(MACHTYPE)-$(OSTYPE)/get3DInputFile.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/speckleTrackMosaic.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/writeTieFile.o
 
-MOSAIC3DDIRS =	Mosaic3d common  landsatMosaic $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
+MOSAIC3DDIRS =	Mosaic3d common  $(PROGDIR)/gdalIO/gdalIO landsatMosaic $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 mosaic3d:	
 	@for i in ${MOSAIC3DDIRS}; do \
@@ -165,8 +186,8 @@ mosaic3d:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                $(MOSAIC3D1)   $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) \
-                -lm  -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
+                $(MOSAIC3D1)   $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) $(GDALIO) \
+                -lm -lgdal -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
 
 
 #********************************************************************************
@@ -178,7 +199,7 @@ SIMINSAR =	simInSAR/$(MACHTYPE)-$(OSTYPE)/parseSceneFile.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getDisplacement.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getSlantRangeDEM.o
 
-SIMINSARDIRS =	simInSAR  common   $(PROGDIR)/clib $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
+SIMINSARDIRS =	simInSAR  common  $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 siminsar:	
 	@for i in ${SIMINSARDIRS}; do \
@@ -188,7 +209,8 @@ siminsar:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON)  $(TRIANGLE) $(STANDARD) $(RECIPES)  -lm  -o $(BINDIR)/siminsar
+                simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON)  $(TRIANGLE) $(STANDARD) $(RECIPES) $(GDALIO) \
+				-lm -lgdal -o $(BINDIR)/siminsar
 
 
 #********************************************************************************
@@ -199,7 +221,7 @@ RPARAMS =       rParams/$(MACHTYPE)-$(OSTYPE)/getROffsets.o \
                 rParams/$(MACHTYPE)-$(OSTYPE)/getBaselineFile.o \
                 rParams/$(MACHTYPE)-$(OSTYPE)/addVelCorrections.o
 
-RPARAMSDIRS =	 rParams  $(PROGDIR)/cRecipes common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
+RPARAMSDIRS =	 rParams common $(PROGDIR)/gdalIO/gdalIO $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 rparams:	
 	@for i in ${RPARAMSDIRS}; do \
@@ -209,18 +231,18 @@ rparams:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                rParams/$(MACHTYPE)-$(OSTYPE)/rparams.o $(RPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
-                -lm  -o $(BINDIR)/rparams
+                rParams/$(MACHTYPE)-$(OSTYPE)/rparams.o $(RPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
+                -lm  -lgdal -o $(BINDIR)/rparams
 
 #********************************************************************************
 #********************************** azparams *************************************
 #********************************************************************************
 
 AZPARAMS =	azParams/$(MACHTYPE)-$(OSTYPE)/addOffsetCorrections.o \
-                azParams/$(MACHTYPE)-$(OSTYPE)/computeAzparams.o \
-		azParams/$(MACHTYPE)-$(OSTYPE)/getOffsets.o
+            azParams/$(MACHTYPE)-$(OSTYPE)/computeAzparams.o \
+			azParams/$(MACHTYPE)-$(OSTYPE)/getOffsets.o
 
-AZPARAMSDIRS =	 azParams common  $(PROGDIR)/cRecipes $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
+AZPARAMSDIRS =	 azParams common $(PROGDIR)/gdalIO/gdalIO $(PROGDIR)/cRecipes $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes  
 
 azparams:	
 	@for i in ${AZPARAMSDIRS}; do \
@@ -230,8 +252,8 @@ azparams:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
-                -lm  -o $(BINDIR)/azparams
+                azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO) \
+                -lm  -lgdal -o $(BINDIR)/azparams
 
 #********************************************************************************
 #********************************** coarsereg ************************************
@@ -249,8 +271,8 @@ coarsereg:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                coarseReg/$(MACHTYPE)-$(OSTYPE)/coarsereg.o $(COARSEREG)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE)  \
-                -lm  -o $(BINDIR)/coarsereg
+                coarseReg/$(MACHTYPE)-$(OSTYPE)/coarsereg.o $(COARSEREG)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
+                -lm -lgdal -o $(BINDIR)/coarsereg
 
 
 #********************************************************************************
@@ -272,8 +294,8 @@ tiepoints:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                tiePoints/$(MACHTYPE)-$(OSTYPE)/tiepoints.o $(TIEPOINTS) $(STANDARD) $(TRIANGLE) $(RECIPES)  $(COMMON)  \
-		-lm  -o $(BINDIR)/tiepoints
+                tiePoints/$(MACHTYPE)-$(OSTYPE)/tiepoints.o $(TIEPOINTS) $(STANDARD) $(TRIANGLE) $(RECIPES)  $(COMMON) $(GDALIO) \
+		-lm -lgdal -o $(BINDIR)/tiepoints
 
 #********************************************************************************
 #********************************** lltora *************************************
@@ -288,15 +310,17 @@ lltora:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH)  PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-	        gcc $(MEM) LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) \
-                      -lm  -o $(BINDIR)/lltora
+	        gcc $(MEM) LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) $(GDALIO) \
+                      -lm -lgdal -o $(BINDIR)/lltora
 
 #********************************************************************************
 #********************************** getlocc *************************************
 #********************************************************************************
 
-GETLOCC =	getLocC/$(MACHTYPE)-$(OSTYPE)/centerLL.o getLocC/$(MACHTYPE)-$(OSTYPE)/correctTime.o \
-	getLocC/$(MACHTYPE)-$(OSTYPE)/glatlon.o
+GETLOCC =	getLocC/$(MACHTYPE)-$(OSTYPE)/centerLL.o \
+			getLocC/$(MACHTYPE)-$(OSTYPE)/correctTime.o \
+			getLocC/$(MACHTYPE)-$(OSTYPE)/glatlon.o \
+			getLocC/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o
 
 GETLOCCDIRS =	getLocC common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
@@ -308,8 +332,8 @@ getlocc:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
-                getLocC/$(MACHTYPE)-$(OSTYPE)/getlocc.o $(GETLOCC) $(COMMON) $(TRIANGLE) $(STANDARD) $(RECIPES) \
-                 -lm -o  $(BINDIR)/getlocc
+                getLocC/$(MACHTYPE)-$(OSTYPE)/getlocc.o $(GETLOCC) $(COMMON) $(TRIANGLE) $(STANDARD) $(RECIPES) $(GDALIO) \
+                 -lm -lgdal -o  $(BINDIR)/getlocc
 
 
 #********************************************************************************
@@ -329,6 +353,6 @@ geomosaic:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 		gcc $(MEM) $(CCFLAGS1)  \
-		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) \
+		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) $(GDALIO) \
 		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o  \
-                -lm  -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o
+                -lm -lgdal -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o
