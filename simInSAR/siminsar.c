@@ -26,8 +26,6 @@ int32_t llConserveMem = 999; /* Kluge to maintain backwards compat 9/13/06 */
    Global variables definitions
 */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
-double RangePixelSize = RANGEPIXELSIZE;		/*  Range PixelSize */
-double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
@@ -204,9 +202,9 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 				error("readargs: bp incompatible bpStart/bpEnd\n");
 		}
 		else if (strstr(argString, "rPix") != NULL)
-			sscanf(argv[i + 1], "%lf", &RangePixelSize);
+			sscanf(argv[i + 1], "%lf", &(scene->I.rangePixelSize));
 		else if (strstr(argString, "aPix") != NULL)
-			sscanf(argv[i + 1], "%lf", &AzimuthPixelSize);
+			sscanf(argv[i + 1], "%lf", &(scene->I.azimuthPixelSize));
 		else if (strstr(argString, "center") != NULL)
 		{
 			i--;

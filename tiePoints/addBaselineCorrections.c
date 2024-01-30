@@ -193,11 +193,11 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
     c2 = 2.0 * (Re + H);
     thetaC = acos((pow(Rc, 2.0) + c1) / (c2 * Rc));
     tiePoints->thetaC = thetaC;
-    azLength = AzimuthPixelSize * inputImage.nAzimuthLooks * inputImage.azimuthSize;
+    azLength = inputImage.azimuthPixelSize * inputImage.azimuthSize;
     /*
         Range comp params
     */
-    dr = RangePixelSize * inputImage.nRangeLooks;
+    dr = inputImage.rangePixelSize;
     /*    if(inputImage.passType == DESCENDING) { */
     rOffset = 0.0;
     /*        rOffset = (inputImage.rangeSize  - 1) * dr;

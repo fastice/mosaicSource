@@ -271,6 +271,9 @@ typedef struct demType
   Parse input file for geocode.
 */
 void parseInputFile(char *inputFile, inputImageStructure *inputImage);
+void parseGeojson(char *inputFile, inputImageStructure *inputImage);
+// Debug routine
+void dumpParsedInput(inputImageStructure *inputImage, FILE *fp);
 /*
   Input phase or power image for geocode
 */

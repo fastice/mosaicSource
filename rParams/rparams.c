@@ -31,8 +31,6 @@ int32_t RangeSize = RANGESIZE;				/* Range size of complex image */
 int32_t AzimuthSize = AZIMUTHSIZE;			/* Azimuth size of complex image */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
-double RangePixelSize = RANGEPIXELSIZE;		/* Range PixelSize */
-double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
@@ -94,6 +92,8 @@ int main(int argc, char *argv[])
 	outputImage.noMem = TRUE;
 	outputImage.originX = LARGEINT;
 	outputImage.originY = LARGEINT;
+	outputImage.xSize = -1; 
+	outputImage.ySize = -1;
 	initOutputImage(&outputImage, inputImage);
 	/*
 	  Read shelf mask if needed
@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
 	*/
 	fprintf(stderr, "%s\n", offsets.rFile);
 	getROffsets(offsetFile, &tiePoints, inputImage, &offsets);
-	fprintf(stderr, "%s %s\n", offsets.geo1, offsets.geo2);
+	fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
 	if (offsets.geo1 != NULL && offsets.geo2 != NULL && tiePoints.deltaB != DELTABNONE)
 	{
 		parseInputFile(offsets.geo2, &inputImage2);

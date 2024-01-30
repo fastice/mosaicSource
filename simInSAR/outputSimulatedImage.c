@@ -33,7 +33,7 @@ static void outputLL(sceneStructure scene, char *outputFile)
 	char *suffixes[2] = {".lat", ".lon"};
 	char *bandNames[2] = {"lat", "lon"};
 	char *bandFiles[2] = {buf1, buf2};
-	int32_t dataTypes[2] = {GDT_Float64, GDT_Float64};
+	GDALDataType dataTypes[2] = {GDT_Float64, GDT_Float64};
 	int32_t i, k;
 
 	for(k=0; k < 2; k++) {
@@ -60,11 +60,17 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 	char *bandNames[1];
 	char *bandFiles[1];
 	char *byteSwapOption;
-	int32_t i, j, dataTypes[1];
+	int32_t i, j;
+	GDALDataType dataTypes[1];
 	FILE *imageFP;
 	// Setup file name
-	if(scene.maskFlag == TRUE && (scene.saveLLFlag == TRUE || scene.toLLFlag)) {
-		file = appendSuffix(outputFile, ".mask", buf1);
+	if(scene.maskFlag == TRUE) {
+		if(scene.saveLLFlag == TRUE || scene.toLLFlag)
+			file = appendSuffix(outputFile, ".mask", buf1);
+		else
+			file = appendSuffix(outputFile, "\0", buf1);
+		// Malloc buff for conversion to byte
+		buf = (char *)malloc(scene.rSize * sizeof(char));
 		bandNames[0] = "Mask";
 		dataTypes[0] = GDT_Byte;
 		byteSwapOption = NULL;
@@ -84,9 +90,7 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 		error("*** outputSimulatedImage: Error opening %s ***\n", outputFile);
 	/*
 		Output image data
-	*/
-	if (scene.maskFlag == TRUE)
-		buf = (char *)malloc(scene.rSize * sizeof(char));
+	*/		
 	for (i = 0; i < scene.aSize; i++)
 	{
 		if (scene.maskFlag == FALSE)
@@ -96,19 +100,17 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 		else // Mask
 		{
 			// Convert data to byte
-			dataTypes[0] = GDT_Byte;	
 			for (j = 0; j < scene.rSize; j++)
-				buf[j] = (char)scene.image[i][j];
+				buf[j] = (unsigned char)scene.image[i][j];
 			fwriteBS(buf, scene.rSize, sizeof(char), imageFP, BYTEFLAG);
 		}
 	}
-	/*  free(buf);*/
 	if (scene.maskFlag == TRUE) free(buf);
 	fclose(imageFP);
-	
+	// Now write VRT
 	fileVRT = appendSuffix(file, ".vrt", buf2);
-	fprintf(stderr, "VRT File: %s\n", fileVRT);
-	popuplateMeta(&metaData, scene);
+	if(scene.saveLLFlag == TRUE || scene.toLLFlag)
+		popuplateMeta(&metaData, scene);
 	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, 1);
 }
 

@@ -3,8 +3,8 @@
 #include "clib/standard.h"
 #undef MNST
 #include "math.h"
-#include "mosaicSource/getLocC/geojsonCode.h"
-
+//#include "mosaicSource/common/geojsonCode.h"
+#include "mosaicSource/common/common.h"
 /*
   Create geodat file from .par file from clw processor.
 */
@@ -39,8 +39,6 @@ int32_t RangeSize = RANGESIZE;				/* Range size of complex image */
 int32_t AzimuthSize = AZIMUTHSIZE;			/* Azimuth size of complex image */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
-double RangePixelSize = RANGEPIXELSIZE;		/* Range PixelSize */
-double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
@@ -48,6 +46,18 @@ void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
 void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
 char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 999; /* Kluge to maintain backwards compat 9/13/06 */
+
+// Hard code wkt to avoid proj lib path issues.
+const char *wkt = "GEOGCRS[\"WGS 84\", DATUM[\"World Geodetic System 1984\", \
+        ELLIPSOID[\"WGS 84\",6378137,298.257223563, \
+            LENGTHUNIT[\"metre\",1]]], PRIMEM[\"Greenwich\",0, \
+        ANGLEUNIT[\"degree\",0.0174532925199433]],\
+    CS[ellipsoidal,2], AXIS[\"geodetic latitude (Lat)\",north,\
+            ORDER[1], ANGLEUNIT[\"degree\",0.0174532925199433]],\
+        AXIS[\"geodetic longitude (Lon)\",east,\
+            ORDER[2],  ANGLEUNIT[\"degree\",0.0174532925199433]],\
+    USAGE[SCOPE[\"Horizontal component of 3D system.\"],AREA[\"World.\"],BBOX[-90,-180,90,180]],\
+    ID[\"EPSG\",4326]]";
 
 int main(int argc, char *argv[])
 {
@@ -79,7 +89,7 @@ int main(int argc, char *argv[])
 	geojsonFile['\0'];
 	strncpy(geojsonFile, geodatFile, strlen(geodatFile) - 3);
 	strcat(geojsonFile, ".geojson");
-	fprintf(stderr, "geosjsonFile %s\n", geojsonFile);
+	fprintf(stderr, "geosjsonFile: %s geodatFile: %s\n", geojsonFile, geodatFile);
 	sarD.lambda = lambda;
 	/* Read old style gamm cw par file - no keywords */
 	readOldPar(parFile, &sarD, &sv);
@@ -107,13 +117,14 @@ int main(int argc, char *argv[])
 		sarD.rc -= 54.0;
 		sarD.rf -= 54.0;
 	}
-	
 	/* Start writing geodat file */
-	OGRDataSourceH myDS = getGeojsonDataSet(geojsonFile, TRUE);
+	GDALAllRegister();
+	OGRDataSourceH myDS = getGeojsonDataSet(geojsonFile);
 	OGRFeatureDefnH geoTemplate = createFeatureDef(sv.nState);
 	OGRFeatureH myFeature = OGR_F_Create(geoTemplate);
-	OGRSpatialReferenceH mySRS = OSRNewSpatialReference("");
-	OGRErr srsErr = OSRImportFromEPSG(mySRS, 4326);
+	OGRSpatialReferenceH mySRS = OSRNewSpatialReference(wkt);
+	// Replaced this with hard code
+	//OGRErr srsErr = OSRImportFromEPSG(mySRS, 4326);
 	OGRLayerH myLayer = OGR_DS_CreateLayer(myDS, "", mySRS, wkbPolygon, NULL);
 	// Write the basic data that appears near the front of the old format
 	echoSarDgeojson(myFeature, &sarD, &sv, nlr, nla);
@@ -121,16 +132,15 @@ int main(int argc, char *argv[])
 	fp = fopen(geodatFile, "w");
 	// Write the SAR data
 	echoSarD(fp, &sarD, &sv, nlr, nla);
-	
 	/*
 	  Correct starting time for squint and offset
 	*/
 	writeTimeOffsets(myFeature, &sarD, noffset, squintTime, squint, passType, fp);
-	 // Range/azimuth sizes
+	// Range/azimuth sizes
 	fprintf(fp, ";\n; rangesize,azimuthsize,nrangelooks,nazimuthlooks\n;\n");
 	fprintf(fp, "%i  %i  %i  %i\n", nMLR, nMLA, nlr, nla);
 	OGR_F_SetFieldInteger(myFeature, OGR_F_GetFieldIndex(myFeature, "MLRangeSize"), nMLR);
-	OGR_F_SetFieldInteger(myFeature, OGR_F_GetFieldIndex(myFeature, "MLAzimuthSize"),nMLA);
+	OGR_F_SetFieldInteger(myFeature, OGR_F_GetFieldIndex(myFeature, "MLAzimuthSize"), nMLA);
 	// Compute center ll and SAR geometry
 	centerLL(&sarD, &sv, nla, &latc, &lonc, 0.0);
 	computeSARLookGeom(myFeature, &sarD, latc, fp);
@@ -145,6 +155,8 @@ int main(int argc, char *argv[])
 	// Write single look resolutions to old format, geojson handled by echo
 	fprintf(fp, ";\n; Range/azimuth single look pixel sizes \n;\n");
 	fprintf(fp, "%f  %f\n", sarD.slpR, sarD.slpA);
+	// Byte order - fix MSB for now
+	OGR_F_SetFieldString(myFeature, OGR_F_GetFieldIndex(myFeature, "ByteOrder"), "MSB");
 	// Write pass type and lookdir
 	writePassType(myFeature, lookDir, passType, fp);
 	// Time and wavelength
@@ -159,7 +171,7 @@ int main(int argc, char *argv[])
 }
 
 static void readArgs(int argc, char *argv[], int32_t *nlr, int32_t *nla, int32_t *noffset, double *squint, char **parFile,
-					 char **geodatFile, int32_t *passType, double *lookDir, int32_t *squintTime, int32_t *ersFix, 
+					 char **geodatFile, int32_t *passType, double *lookDir, int32_t *squintTime, int32_t *ersFix,
 					 int32_t *surveyFlag, double *lambda)
 {
 	int32_t i;
@@ -191,7 +203,7 @@ static void readArgs(int argc, char *argv[], int32_t *nlr, int32_t *nla, int32_t
 	sscanf(argv[argc - 8], "%i", nlr);
 	sscanf(argv[argc - 7], "%i", nla);
 	sscanf(argv[argc - 6], "%i", noffset);
-	fprintf(stderr, "%i %i %i\n", *nlr, *nla, *noffset);
+	// fprintf(stderr, "%i %i %i\n", *nlr, *nla, *noffset);
 	sscanf(argv[argc - 5], "%lf", squint);
 	*parFile = argv[argc - 4];
 	*geodatFile = argv[argc - 3];
@@ -271,12 +283,16 @@ static void writeStateVectors(OGRFeatureH myFeature, stateV *sv, FILE *fp)
 
 static void writeTimeAndWavelength(OGRFeatureH myFeature, SARData *sarD, FILE *fp)
 {
+	char *timeString;
 	fprintf(fp, ";\n; Flag to indicate state vectors and associated data\n;\n");
 	fprintf(fp, "state\n");
-	fprintf(fp, "; time after squint and skew corrections\n %i %i %f\n", sarD->hr, sarD->min, sarD->sec);
+	fprintf(fp, "; time after squint and skew corrections\n %i %i %11.7lf\n", sarD->hr, sarD->min, sarD->sec);
 	fprintf(fp, "; prf \n%f\n", sarD->prf);
 	fprintf(fp, "; wavelength\n%f\n", sarD->lambda);
-	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "SpaceCraftAltitude"), sarD->H);
+	timeString = calloc(sizeof(char), 40);
+	sprintf(timeString, "%02d %02d %011.8lf", sarD->hr, sarD->min, sarD->sec);
+	OGR_F_SetFieldString(myFeature, OGR_F_GetFieldIndex(myFeature, "CorrectedTime"), timeString);
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "Wavelength"), sarD->lambda);
 }
 
 static void computeSARLookGeom(OGRFeatureH myFeature, SARData *sarD, double latc, FILE *fp)
@@ -291,13 +307,13 @@ static void computeSARLookGeom(OGRFeatureH myFeature, SARData *sarD, double latc
 	phic = asin(phic) * RTOD;
 	/* Ouput info */
 	fprintf(fp, ";\n; ReMajor, ReMinor, Rc, phic, h\n;\n");
-	fprintf(fp, "%12.6f %12.6f %13.7f %8.4f %13.7f\n", EMAJOR, EMINOR, sarD->rc * MTOKM, phic, sarD->H * MTOKM);
+	fprintf(fp, "%12.6f %12.6f %15.10f %8.4f %13.7f\n", EMAJOR, EMINOR, sarD->rc * MTOKM, phic, sarD->H * MTOKM);
 
-	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "EarthRadiusMajor"), EMAJOR);
-	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "EarthRadiusMinor"), EMINOR);
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "EarthRadiusMajor"), EMAJOR * KMTOM);
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "EarthRadiusMinor"), EMINOR * KMTOM);
 	// OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "MLRangeCenter"), sarD->rc * MTOKM);
 	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "MLIncidenceCenter"), phic);
-	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "SpaceCraftAltitude"), sarD->H * MTOKM);
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "SpaceCraftAltitude"), sarD->H);
 }
 
 static void writeTimeOffsets(OGRFeatureH myFeature, SARData *sarD,
@@ -309,7 +325,6 @@ static void writeTimeOffsets(OGRFeatureH myFeature, SARData *sarD,
 	// Old format stuf
 	correctTime(sarD, &squint, (double)noffset, &tskew, &toffset, squintTime);
 	fprintf(fp, "; Offset of first recordin complex image (s) : %f\n", toffset);
-	fprintf(stderr, "; Skew offset (s), squint (deg) : %f  %lf\n", tskew, squint);
 	fprintf(fp, "; Skew offset (s), squint (deg) : %f  %lf\n", tskew, squint);
 	/* Indicate pass type - asc/desc */
 	if (passType == DESCENDING)
@@ -349,7 +364,7 @@ static void writePassType(OGRFeatureH myFeature, int32_t lookDir, int32_t passTy
 	else
 	{
 		fprintf(fp, "right\n");
-		lookDirString = "Left";
+		lookDirString = "Right";
 	}
 	// Save geojson fields
 	OGR_F_SetFieldString(myFeature, OGR_F_GetFieldIndex(myFeature, "PassType"), passTypeString);
@@ -368,23 +383,27 @@ static void writeCoordinates(OGRFeatureH myFeature,
 	{
 	case DESCENDING:
 	{
-		fprintf(fp, "%13.8f %13.8f\n", lat[2][2], lon[2][2]);
-		fprintf(fp, "%13.8f %13.8f\n", lat[2][0], lon[2][0]);
-		fprintf(fp, "%13.8f %13.8f\n", lat[0][2], lon[0][2]);
-		fprintf(fp, "%13.8f %13.8f\n", lat[0][0], lon[0][0]);
-		double lat1[4] = {lat[2][2], lat[2][0], lat[0][0], lat[0][2]};
-		double lon1[4] = {lon[2][2], lon[2][0], lon[0][0], lon[0][2]};
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[2][2], lon[2][2]);
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[2][0], lon[2][0]);
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[0][2], lon[0][2]);
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[0][0], lon[0][0]);
+		// ll, ul, ur, lr
+		double lat1[4] = {lat[2][2], lat[0][2], lat[0][0], lat[2][0]};
+		double lon1[4] = {lon[2][2], lon[0][2], lon[0][0], lon[2][0]};
 		myGeometry = createGeometry(lat1, lon1);
 		break;
 	}
 	case ASCENDING:
 	{
-		fprintf(fp, "%13.8f %13.8f\n", lat[0][0], lon[0][0]);
-		fprintf(fp, "%13.8f %13.8f\n", lat[0][2], lon[0][2]);
-		fprintf(fp, "%13.8f %13.8f\n", lat[2][0], lon[2][0]);
-		fprintf(fp, "%13.8f %13.8f\n", lat[2][2], lon[2][2]);
-		double lat1[4] = {lat[0][0], lat[0][2], lat[2][2], lat[2][0]};
-		double lon1[4] = {lon[0][0], lon[0][2], lon[2][2], lon[2][0]};
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[0][0], lon[0][0]);
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[0][2], lon[0][2]);
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[2][0], lon[2][0]);
+		fprintf(fp, "%15.10lf %15.10lf\n", lat[2][2], lon[2][2]);
+		// ll, ul, ur, lr
+		double lat1[4] = {lat[0][0], lat[2][0], lat[2][2], lat[0][2]};
+		double lon1[4] = {lon[0][0], lon[2][0], lon[2][2], lon[0][2]};
+		// double lat1[4] = {lat[0][2], lat[0][0], lat[2][0], lat[2][2]};
+		//  double lon1[4] = {lon[0][2], lon[0][0], lon[2][0], lon[2][2]};
 		myGeometry = createGeometry(lat1, lon1);
 		break;
 	}
@@ -392,7 +411,7 @@ static void writeCoordinates(OGRFeatureH myFeature,
 		error("*** INVALID PASS TYPE ***\n");
 	}
 	double ll[2] = {latc, lonc};
-	fprintf(fp, "%13.8f %13.8f\n", latc, lonc);
+	fprintf(fp, "%15.10lf %15.10lf\n", latc, lonc);
 	OGR_F_SetGeometryDirectly(myFeature, myGeometry);
 	OGR_F_SetFieldDoubleList(myFeature, OGR_F_GetFieldIndex(myFeature, "CenterLatLon"), 2, ll);
 }
@@ -482,16 +501,18 @@ static void echoSarDgeojson(OGRFeatureH myFeature, SARData *sarD, stateV *sv, in
 {
 	OGR_F_SetFieldString(myFeature, OGR_F_GetFieldIndex(myFeature, "ImageName"), sarD->label);
 	OGR_F_SetFieldDateTimeEx(myFeature, OGR_F_GetFieldIndex(myFeature, "Date"), sarD->year, sarD->month, sarD->day, 0, 0, 0., 0);
-	OGR_F_SetFieldDateTimeEx(myFeature, OGR_F_GetFieldIndex(myFeature, "NominalTime"), 0, 0, 0, sarD->hr, sarD->min, sarD->sec, 0);
-	
+	float sec = (float)sarD->sec;
+	OGR_F_SetFieldDateTimeEx(myFeature, OGR_F_GetFieldIndex(myFeature, "NominalTime"), 0, 0, 0, sarD->hr, sarD->min, sec, 0);
 	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "PRF"), sarD->prf);
 	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "MLNearRange"), sarD->rn);
 	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "MLCenterRange"), sarD->rc);
 	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "MLFarRange"), sarD->rf);
-	
+	// Keep for future need
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "RangeErrorCorrection"), 0.);
+
 	OGR_F_SetFieldInteger(myFeature, OGR_F_GetFieldIndex(myFeature, "NumberRangeLooks"), nlr);
 	OGR_F_SetFieldInteger(myFeature, OGR_F_GetFieldIndex(myFeature, "NumberAzimuthLooks"), nla);
 
-	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "RangeSLCPixelSize"), sarD->slpR);
-	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "AzimuthSLCPixelSize"), sarD->slpA);
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "SLCRangePixelSize"), sarD->slpR);
+	OGR_F_SetFieldDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "SLCAzimuthPixelSize"), sarD->slpA);
 }

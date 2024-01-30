@@ -1,7 +1,7 @@
 CC =		gcc
 CFLAGS  =	 $(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
 
-OBJS=  addIrregData.o  bilinearInterp.o  computeHeading.o computePhiZ.o  computeScale.o computeTiePoints.o computeXYangle.o earthRadiusFunctions.o  \
+OBJS=  addIrregData.o  bilinearInterp.o  computeHeading.o computePhiZ.o  computeScale.o computeTiePoints.o computeXYangle.o earthRadiusFunctions.o   geojsonCode.o \
 	getBaseline.o  getDataStringSpecial.o getHeight.o  getIrregData.o getMVhInputFile.o  getRegion.o getShelfMask.o getXYHeight.o groundRangeToLLNew.o julianDay.o  \
 	initMatrix.o  initRoutines.o  interpOffsets.o  interpPhaseImage.o  interpTideDiff.o interpVCorrect.o interpXYDEM.o \
 	llToImageNew.o lltoxy.o lltoxy1.o outputGeocodedImage.o parseInputFile.o  parseIrregFile.o polintVec.o \

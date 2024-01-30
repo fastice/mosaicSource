@@ -3,6 +3,11 @@
 #include "clib/standard.h"
 #include "cRecipes/cRecipes.h"
 #include "geocode.h"
+#include <ogr_core.h>
+#include <ogr_srs_api.h>
+#include <cpl_conv.h>
+#include <gdal.h>
+
 #define MAXOFFBUF 72000000
 #define MAXOFFLENGTH 30000
 
@@ -375,3 +380,8 @@ double groundRangeToLLNew(double groundRange, double azimuth, double *lat, doubl
 void llToECEF(double lat, double lon, double h, double *x, double *y, double *z);
 void getState(double myTime, inputImageStructure *inputImage, double *xs, double *ys, double *zs, double *vsx, double *vsy, double *vsz);
 double interpVCorrect(double x, double y, xyDEM *vCorrect);
+// Gdal 
+OGRDataSourceH getGeojsonDataSet(char *geojsonFile);
+OGRGeometryH createGeometry(double *lat, double *lon);
+OGRFeatureDefnH createFeatureDef(int32_t nState);
+const char *svTag(int32_t i, char *svType);

@@ -128,8 +128,8 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 				azimuth = inputImage->azimuthSize - lon;
 				tiePoints->a[i] = lon;
 			}
-			azOrigin = -0.5 * AzimuthPixelSize * inputImage->azimuthSize * inputImage->nAzimuthLooks;
-			tiePoints->x[i] = azOrigin + inputImage->nAzimuthLooks * AzimuthPixelSize * azimuth;
+			azOrigin = -0.5 * inputImage->azimuthPixelSize * inputImage->azimuthSize; // inputImage->nAzimuthLooks;
+			tiePoints->x[i] = azOrigin + inputImage->azimuthPixelSize * azimuth;
 		}
 		else
 		{

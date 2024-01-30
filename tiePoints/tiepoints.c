@@ -33,8 +33,6 @@ int32_t RangeSize = RANGESIZE;				/* Range size of complex image */
 int32_t AzimuthSize = AZIMUTHSIZE;			/* Azimuth size of complex image */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
-double RangePixelSize = RANGEPIXELSIZE;		/* Range PixelSize */
-double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 char *shelfMaskFile;
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
@@ -62,7 +60,7 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
-	fprintf(stderr, "1\n");
+	GDALAllRegister();
 	readArgs(argc, argv, &imageFlag, &passType, &noDEM, &noRamp, &demFile,
 			 &inputFile, &tiePointFile, &phaseFile, &baselineFile,
 			 &dBpFlag, &imageCoords, &motionFlag, &timeReverseFlag, &nDays, &quadB,
@@ -295,16 +293,6 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 			sscanf(argv[i + 1], "%lf", stdLat);
 			i++;
 		}
-		else if (strstr(argString, "rPix") != NULL)
-		{
-			sscanf(argv[i + 1], "%lf", &RangePixelSize);
-			i++;
-		}
-		else if (strstr(argString, "aPix") != NULL)
-		{
-			sscanf(argv[i + 1], "%lf", &AzimuthPixelSize);
-			i++;
-		}
 		else if (i != n)
 			usage();
 	}
@@ -341,7 +329,7 @@ static void usage()
 		"Output is to stdout",
 		"Usage:",
 		" tiepoints  -vr -imageCoords -motion  -dBp -passType -noRamp -noDEM \\",
-		"            -shelfMask shelfMask -timeReverse -nDays nDays -quadB -rPix rPix -aPix aPix \\",
+		"            -shelfMask shelfMask -timeReverse -nDays nDays -quadB  \\",
 		"            dem geoInput tiepointsFile uwPhase baselineFile",
 		"where",
 		"  bpOnly      estimate only bp",
@@ -357,7 +345,6 @@ static void usage()
 		"  timeReverse  = flag to reverse time when order of orbits switched",
 		"  nDays        = temporals basline in days (default=3)",
 		"  quadB        = flag for quadratic fit",
-		"  rPix, aPix   = Range/Azimuth single look pixel size",
 		"  dem          = (OMIT if dem not used) dem file for tiepoint elevations",
 		"  motion       = moving tiepoints, tiepoint file lat,lon,z,vx,vy,vz (m/yr)",
 		"  vr           = moving tiepoints, tiepoint file lat,lon,z,vr,vz (m/yr)",

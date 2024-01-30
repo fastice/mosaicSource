@@ -97,7 +97,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 	/*
 	  Range comp params
 	*/
-	dr = RangePixelSize * inputImage.nRangeLooks;
+	dr = inputImage.rangePixelSize;
 	rOffset = 0.0;
 	/*
 	  Init arrays for least squares fit.
@@ -177,7 +177,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				ReH = getReH(cP, &inputImage, azimuth);
 				theta = thetaRReZReH(r0, (Re + zSp), ReH);
 				thetaD = theta - thetaC;
-				x[i1].x = tiePoints->x[i] / (inputImage.azimuthSize * inputImage.nAzimuthLooks * AzimuthPixelSize);
+				x[i1].x = tiePoints->x[i] / (inputImage.azimuthSize * inputImage.azimuthPixelSize);
 				x[i1].thetaD = thetaD;
 				/* Baseline line or SV */
 				if (tiePoints->deltaB == DELTABNONE)

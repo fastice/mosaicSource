@@ -6,7 +6,7 @@
 #include <string.h>
 #include "mosaicSource/common/common.h"
 
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+//#define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 static void getLabel(FILE *fpPar, SARData *sarD, int32_t quiet)
 {
@@ -44,7 +44,7 @@ static void getParTime(FILE *fpPar, SARData *sarD, int32_t quiet)
 	if (fgets(buffer, 24, fpPar) == NULL)
 		error("error reading date");
 	buffer[strlen(buffer) - 1] = '\0';
-	fprintf(stderr, "%s\n", buffer);
+	// fprintf(stderr, "%s\n", buffer);
 	if (sscanf(buffer, "%i%i%lf", &(sarD->hr), &(sarD->min), &(sarD->sec)) != 3)
 		error("parsing date");
 	if (quiet == FALSE)
@@ -57,7 +57,6 @@ static void getSatH(FILE *fpPar, SARData *sarD, int32_t quiet)
 	if (fgets(buffer, 24, fpPar) == NULL)
 		error("error reading date");
 	buffer[strlen(buffer) - 1] = '\0';
-	fprintf(stderr, "%s\n", buffer);
 	if (sscanf(buffer, "%lf", &(sarD->H)) != 1)
 		error("parsing sat height");
 	if (quiet == FALSE)
@@ -192,7 +191,7 @@ void readOldPar(char *parFile, SARData *sarD, stateV *sv)
 	FILE *fpPar;
 
 	quiet = TRUE; /* Set to FALSE for debugging */
-	fprintf(stderr, "-- %s\n", parFile);
+	// fprintf(stderr, "-- %s\n", parFile);
 	fpPar = openInputFile(parFile);
 	/* Label */
 	getLabel(fpPar, sarD, quiet);

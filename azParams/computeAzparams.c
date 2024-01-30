@@ -78,7 +78,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	/*
 	  Range comp params
 	*/
-	dr = RangePixelSize * inputImage->nRangeLooks;
+	dr = inputImage->rangePixelSize;
 	/*
 	  Init arrays for least squares fit.
 	*/
@@ -354,7 +354,7 @@ static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, doubl
 	double x1, x2, x3;
 	FILE *fp;
 
-	fprintf(stderr, "prf,nSingleLook %f %f\n", prf, slPixSize);
+	fprintf(stderr, "prf,nSingleLook %f %f %s\n", prf, slPixSize, baseFile);
 	fp = openInputFile(baseFile);
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	lineCount = getDataString(fp, lineCount, line, &eod);

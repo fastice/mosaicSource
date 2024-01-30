@@ -32,8 +32,6 @@ int32_t RangeSize = RANGESIZE;				/* Range size of complex image */
 int32_t AzimuthSize = AZIMUTHSIZE;			/* Azimuth size of complex image */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
-double RangePixelSize = RANGEPIXELSIZE;		/* Range PixelSize */
-double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
@@ -109,7 +107,7 @@ int main(int argc, char *argv[])
 	  Extract phases from phase file.
 	*/
 	getOffsets(offsetFile, &tiePoints, inputImage, &offsets);
-	fprintf(stderr, "%s %s %i\n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
+	fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
 	if (offsets.geo1 != NULL && offsets.geo2 != NULL && tiePoints.deltaB != DELTABNONE)
 	{
 		svInitAzParams(&inputImage, &offsets);

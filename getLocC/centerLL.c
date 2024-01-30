@@ -41,7 +41,7 @@ void centerLL(SARData *sarD, stateV *sv, int32_t nla, double *lat, double *lon, 
 	sTime = sarD->hr * 3600. + sarD->min * 60.0 + sarD->sec + deltaT;
 	da = ((double)(nMLA)-1.0) * 0.5;
 	pTime = sTime + (double)(da * nla) / sarD->prf; /* Center Time */
-	fprintf(stderr, "s %f m %f --- %f %i  %f %f\n", sTime, pTime, da, nla, sarD->prf, (double)(da * nla) / sarD->prf);
+	//fprintf(stderr, "s %f m %f --- %f %i  %f %f\n", sTime, pTime, da, nla, sarD->prf, (double)(da * nla) / sarD->prf);
 	/* Wrap time into next  day if near end of sv->times and time straddles day boundary */
 	if (endofday == TRUE && sTime < 70000)
 		pTime += 86400;

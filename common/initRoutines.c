@@ -799,8 +799,8 @@ char *appendSuffix(char *file, char *suffix, char *buf)
 	char *datFile;
 	datFile = &(buf[0]);
 	buf[0] = '\0';
-	datFile = strcat(datFile, file);
-	datFile = strcat(datFile, suffix);
+	strcpy(datFile, file);
+	strcat(datFile, suffix);
 	return datFile;
 }
 
@@ -873,12 +873,12 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 	/*
 	  Determine pixels Size
 	*/
-	pixelSize = AzimuthPixelSize * inputImage.nAzimuthLooks;
+	pixelSize = inputImage.par.slpA * inputImage.nAzimuthLooks;
 	if (outputImage->deltaX > 0.0)
 		pixelSize = outputImage->deltaX;
 	outputImage->deltaX = pixelSize;
 	outputImage->deltaY = pixelSize;
-	fprintf(stderr, "pixelSize = %f\n", pixelSize);
+	fprintf(stderr, "pixelSize = %f %f %i\n", pixelSize, inputImage.par.slpA, inputImage.nAzimuthLooks);
 	fprintf(stderr, "--x0,y0 %lf %lf\n\n", outputImage->originX, outputImage->originY);
 	/*
 	  Determin lower left and upper right corner of image

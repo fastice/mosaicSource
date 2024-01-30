@@ -79,7 +79,7 @@ void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *ti
 		zWGS = sphericalToWGSElev(z, lat, Re);
 		llToImageNew(lat, lon, zWGS, &range1, &azimuth1, &inputImage);
 		ReH = getReH(cP, &inputImage, azimuth1);
-		r1 = RNear + inputImage.nRangeLooks * RangePixelSize * range1;
+		r1 = RNear + inputImage.rangePixelSize * range1;
 		theta = thetaRReZReH(r1, (Re + z), ReH);
 		psi = psiRReZReH(r1, (Re + z), ReH);
 		/*

@@ -62,7 +62,7 @@ void addVelCorrections(inputImageStructure *inputImage, tiePointsStructure *tieP
 				error("geometryInfo : ReH[] not defined");
 			if (azimuth1 < cP->azSize && azimuth1 >= 0)
 				ReH = cP->ReH[(int)azimuth1];
-			r1 = RNear + inputImage->nRangeLooks * RangePixelSize * range1;
+			r1 = RNear + inputImage->rangePixelSize * range1;
 			psi = psiRReZReH(r1, (Re + zSp), ReH);
 			/*
 			  Compute phase correction for motion

@@ -68,20 +68,19 @@ void addOffsetCorrections(inputImageStructure inputImage,
         /*
             Compute azimuth displacement for latitude displacement
         */
-        da = (azimuth2 - azimuth1) * inputImage.nAzimuthLooks *
-             AzimuthPixelSize;
+        da = (azimuth2 - azimuth1) * inputImage.azimuthPixelSize;
         if (inputImage.passType == DESCENDING)
             da *= -1.0;
         /*
             Compute ground range  displacement for latitude displacement
         */
-        r1 = RNear + inputImage.nRangeLooks * RangePixelSize * range1;
+        r1 = RNear + inputImage.rangePixelSize * range1;
         num = 2.0 * Re * (Re + H + z) + pow(H, 2.0) + pow(z, 2.0) - pow(r1, 2.0);
         den = 2.0 * Re * (Re + H + z) + 2.0 * z * H;
         rho1 = acos(num / den);
         gRange1 = Re * rho1;
 
-        r2 = RNear + inputImage.nRangeLooks * RangePixelSize * range2;
+        r2 = RNear +  inputImage.rangePixelSize * range2;
         num = 2.0 * Re * (Re + H + z) + pow(H, 2.0) + pow(z, 2.0) - pow(r2, 2.0);
         den = 2.0 * Re * (Re + H + z) + 2.0 * z * H;
         rho2 = acos(num / den);

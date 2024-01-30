@@ -70,7 +70,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	/*
 	  Range comp params
 	*/
-	dr = RangePixelSize * inputImage.nRangeLooks;
+	dr = inputImage.rangePixelSize;
 	rOffset = 0.0;
 	/*
 	  Init arrays for least squares fit.
@@ -126,7 +126,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 				ReH = getReH(cP, &inputImage, azimuth);
 				theta = acos((r0 * r0 + (ReH) * (ReH)-pow(Re + z, 2.0)) / (2.0 * (ReH)*r0));
 				thetaD = theta - thetaC;
-				x[i1].x = tiePoints->x[i] / (inputImage.azimuthSize * inputImage.nAzimuthLooks * AzimuthPixelSize);
+				x[i1].x = tiePoints->x[i] / (inputImage.azimuthSize * inputImage.azimuthPixelSize);
 				x[i1].thetaD = thetaD;
 
 				bn = Bn + dBn * x[i1].x + dBnQ * x[i1].x * x[i1].x;

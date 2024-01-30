@@ -388,7 +388,7 @@ void svTest(inputImageStructure *inputImage, Offsets *offsets)
 	else
 		error("missing reH in svInitBnBp");
 	thetaC = thetaRReZReH(inputImage->cpAll.RCenter, (Re + 0), ReH);
-	fprintf(stderr, "%f\n", thetaC * RTOD);
+	//fprintf(stderr, "%f\n", thetaC * RTOD);
 	/* Parse the second input image */
 	parseInputFile(offsets->geo2, &inputImage2);
 	inputImage2.cpAll.ReH = &(ReHBuffer[0]); /* temp storage so init works ok */

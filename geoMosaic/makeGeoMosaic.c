@@ -395,8 +395,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 		fprintf(stderr, "%s\n", imageFiles[i]);
 		for (i1 = iMin; i1 < iMax; i1++)
 		{
-			if ((i1 % 100) == 0)
-				fprintf(stderr, "-- %i\n", i1);
+			if ((i1 % 100) == 0) fprintf(stderr, "-- %i\n", i1);
 			for (j1 = jMin; j1 < jMax; j1++)
 			{
 				recycle = FALSE;
@@ -416,6 +415,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 				*/
 				h = getXYHeight(lat, lon, dem, inputImage[i].cpAll.Re, SPHERICAL);
 				hWGS = sphericalToWGSElev(h, lat, inputImage[i].cpAll.Re);
+				
 				/*
 				  Convert lat/lon to image coordinates
 				*/

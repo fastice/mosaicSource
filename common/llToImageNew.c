@@ -67,9 +67,12 @@ static int32_t checkLL(double lat, double lon, inputImageStructure *inputImage)
 {
 	if (lon > 180.)
 		lon -= 360.;
+	
 	if (lat > (inputImage->maxLat + 0.5) || lat < (inputImage->minLat - 0.5) ||
-		lon > (inputImage->maxLon + 0.5) || lon < (inputImage->minLon - 0.5))
+		lon > (inputImage->maxLon + 0.5) || lon < (inputImage->minLon - 0.5)) {
+		//fprintf(stderr, "%f %f %f %f %f %f\n", lat, lon,inputImage->minLat, inputImage->maxLat,inputImage->minLon, inputImage->maxLon );
 		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -139,8 +142,9 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 	{
 		*range = -9999.0;
 		*azimuth = -9999.0;
-	}
-	/*fprintf(stderr,"%d %f %f %f %f %f %f %f\n", i, myTime, inputImage->lastTime, *range, *azimuth, lat, lon, fabs(df/C1));*/
+	} else {
+	//fprintf(stderr,"%d %f %f %f %f %f %f %f\n", i, myTime, inputImage->lastTime, *range, *azimuth, lat, lon, fabs(df/C1));
+}
 	inputImage->lastTime = myTime;
 }
 

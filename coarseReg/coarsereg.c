@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <math.h>
-
+//#include "mosaicSource/common/geojsonCode.h"
 /*
   This program performs registration using corner point locations
   in geodat files.
@@ -32,8 +32,6 @@ int32_t RangeSize = RANGESIZE;				/* Range size of complex image */
 int32_t AzimuthSize = AZIMUTHSIZE;			/* Azimuth size of complex image */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
-double RangePixelSize = RANGEPIXELSIZE;		/* Range PixelSize */
-double AzimuthPixelSize = AZIMUTHPIXELSIZE; /* Azimuth PixelSize */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
@@ -53,6 +51,7 @@ int main(int argc, char *argv[])
 	inputImageStructure inputImage1, inputImage2;
 	int32_t passType;
 	int32_t i, j; /* LCV */
+	GDALAllRegister();
 	/*
 	   Read command line args and compute filenames
 	*/

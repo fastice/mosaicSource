@@ -118,8 +118,9 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 		da = 0.0;
 		for (i = iMin; i < iMax; i++)
 		{
-			if ((i % 100) == 0)
-				fprintf(stderr, "-- %i  %f %f\n", i, currentImage->weight, hAngle * 57.29);
+			if ((i % 100) == 0) {
+				fprintf(stderr, "-- %i  %f \n", i, currentImage->weight);
+			}
 			y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
 			for (j = jMin; j < jMax; j++)
 			{
@@ -156,6 +157,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						da = -LARGEINT;
 						dr = -LARGEINT;
 					};
+		
 					/*
 					  Process only good  points
 					*/

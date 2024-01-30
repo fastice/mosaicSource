@@ -78,52 +78,53 @@ endif
 $(info NOPIE ="$(NOPIE)")
 
 COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
-			common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/computePhiZ.o \
-			common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
-			common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
-			common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
-			common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
-			common/$(MACHTYPE)-$(OSTYPE)/getHeight.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/getIrregData.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/getMVhInputFile.o \
-			common/$(MACHTYPE)-$(OSTYPE)/getRegion.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/getShelfMask.o \
-			common/$(MACHTYPE)-$(OSTYPE)/getXYHeight.o \
-			common/$(MACHTYPE)-$(OSTYPE)/groundRangeToLLNew.o \
-			common/$(MACHTYPE)-$(OSTYPE)/initMatrix.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/initRoutines.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/interpOffsets.o \
-			common/$(MACHTYPE)-$(OSTYPE)/interpPhaseImage.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/interpVCorrect.o \
-			common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
-			common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/lltoxy.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/lltoxy1.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/outputGeocodedImage.o \
-			common/$(MACHTYPE)-$(OSTYPE)/parseInputFile.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
-			common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
-			common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
-			common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
-			common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/readXYDEM.o \
-			common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToRA.o \
-			common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToXY.o \
-	                common/$(MACHTYPE)-$(OSTYPE)/scalingFunctions.o \
-			common/$(MACHTYPE)-$(OSTYPE)/smlocateZD.o \
-			common/$(MACHTYPE)-$(OSTYPE)/svBase.o \
-			common/$(MACHTYPE)-$(OSTYPE)/vectorFunc.o \
-			common/$(MACHTYPE)-$(OSTYPE)/xyGetZandSlope.o \
-			common/$(MACHTYPE)-$(OSTYPE)/xytoll1.o \
-			common/$(MACHTYPE)-$(OSTYPE)/xytoll.o
+	    common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
+		common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/computePhiZ.o \
+		common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
+		common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
+		common/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o \
+		common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
+		common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
+		common/$(MACHTYPE)-$(OSTYPE)/getHeight.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/getIrregData.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/getMVhInputFile.o \
+		common/$(MACHTYPE)-$(OSTYPE)/getRegion.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/getShelfMask.o \
+		common/$(MACHTYPE)-$(OSTYPE)/getXYHeight.o \
+		common/$(MACHTYPE)-$(OSTYPE)/groundRangeToLLNew.o \
+		common/$(MACHTYPE)-$(OSTYPE)/initMatrix.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/initRoutines.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/interpOffsets.o \
+		common/$(MACHTYPE)-$(OSTYPE)/interpPhaseImage.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/interpVCorrect.o \
+		common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
+		common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/lltoxy.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/lltoxy1.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/outputGeocodedImage.o \
+		common/$(MACHTYPE)-$(OSTYPE)/parseInputFile.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
+		common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
+		common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
+		common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
+		common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/readXYDEM.o \
+		common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToRA.o \
+		common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToXY.o \
+	    common/$(MACHTYPE)-$(OSTYPE)/scalingFunctions.o \
+		common/$(MACHTYPE)-$(OSTYPE)/smlocateZD.o \
+		common/$(MACHTYPE)-$(OSTYPE)/svBase.o \
+		common/$(MACHTYPE)-$(OSTYPE)/vectorFunc.o \
+		common/$(MACHTYPE)-$(OSTYPE)/xyGetZandSlope.o \
+		common/$(MACHTYPE)-$(OSTYPE)/xytoll1.o \
+		common/$(MACHTYPE)-$(OSTYPE)/xytoll.o
 
 STANDARD =	$(PROGDIR)/clib/$(MACHTYPE)-$(OSTYPE)/standard.o
 
@@ -150,6 +151,19 @@ TARGETS = mosaic3d siminsar rparams azparams coarsereg tiepoints lltora getlocc 
 
 all: $(TARGETS)
 
+TESTGEO =	testGeo/$(MACHTYPE)-$(OSTYPE)/testgeo.o
+TESTGEODIRS =	testGeo $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib  $(PROGDIR)/mosaicSource/common
+
+testgeo:	
+	@for i in ${TESTGEODIRS}; do \
+		( 	echo "<<< Descending in directory: $$i >>>"; \
+	                cd $$i; \
+			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0; \
+			cd $(PROGDIR); \
+		); done
+		gcc $(MEM) $(CCFLAGS1) $(NOPIE) \
+                $(TESTGEO) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
+				-lm  -lgdal -o $(BINDIR)/testgeo  -L/usr/lib 	
 
 OFFSETVRT =	offsetVRT/$(MACHTYPE)-$(OSTYPE)/offsetVRT.o
 OFFSETVRTDIRS =	offsetVRT $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib  $(PROGDIR)/mosaicSource/common
@@ -320,7 +334,6 @@ lltora:
 GETLOCC =	getLocC/$(MACHTYPE)-$(OSTYPE)/centerLL.o \
 			getLocC/$(MACHTYPE)-$(OSTYPE)/correctTime.o \
 			getLocC/$(MACHTYPE)-$(OSTYPE)/glatlon.o \
-			getLocC/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o
 
 GETLOCCDIRS =	getLocC common $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 

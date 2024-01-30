@@ -24,6 +24,20 @@ static char *mergePath(char *file1, char *path);
 static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB);
 static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB);
 
+static char *checkForOffsetsVrt(char *filename, char *vrtBuff) 
+{
+	char noExtensionName[2048], *vrtFile; 
+	int32_t noExtensionNameLength; 
+	vrtFile = checkForVrt(filename, vrtBuff);
+	// This will return the vrt if found (e.g., range.offsets.vrt)
+	if(vrtFile != NULL) return vrtFile;
+	// Else see if for xxx.yyy.da (.dr, .sa, .sx) there is an xxx.yyy.vrt
+	noExtensionName[0] = '\0';
+	noExtensionNameLength = strlen(filename)-3;
+	strncpy(noExtensionName, filename, noExtensionNameLength);
+	noExtensionName[noExtensionNameLength] = '\0';
+	return checkForVrt(noExtensionName, vrtBuff);
+}
 
 static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_t band, char *path);
 /*
@@ -34,18 +48,20 @@ void readOffsetDataAndParams(Offsets *offsets)
 	readBothOffsets(offsets);
 	getAzParams(offsets);
 	getRParams(offsets);
-	fprintf(stderr, "Offsets and paramters read\n");
+	fprintf(stderr, "Offsets and parameters read\n");
 	if (offsets->deltaB != DELTABNONE && offsets->geo2 == NULL)
 		error("offsets deltaB set but no second geodat for %s\n", offsets->rFile);
-	fprintf(stderr,"\nDEBUG: geo1/2 %s %s\n", offsets->geo1, offsets->geo2);
+	//fprintf(stderr,"\nDEBUG: geo1/2 %s %s\n", offsets->geo1, offsets->geo2);
 }
 
-static void mapBuffer(int32_t nr, int32_t na, float **d, float **s,  float *buffSpaceD, float *buffSpaceS){
+static void mapBuffer(int32_t nr, int32_t na, float **d, float **s, float *buffSpaceD, float *buffSpaceS)
+{
 	int i;
-	for (i = 0; i < na; i++) {
-				d[i] = &(buffSpaceD[i * nr]);
-				s[i] = &(buffSpaceS[i * nr]);
-			}
+	for (i = 0; i < na; i++)
+	{
+		d[i] = &(buffSpaceD[i * nr]);
+		s[i] = &(buffSpaceS[i * nr]);
+	}
 }
 
 static void initOffsetBuffers(Offsets *offsets, int32_t mode)
@@ -57,7 +73,7 @@ static void initOffsetBuffers(Offsets *offsets, int32_t mode)
 	nr = offsets->nr;
 	na = offsets->na;
 	if (nr * na * 4 > MAXOFFBUF)
-		error("Offsets Buffer Size exceeds MAXOFFBUF of %i\n", MAXOFFBUF);
+		error("Offsets Buffer Size exceeds MAXOFFBUF of %i; nr %i na %i mode %i\n %s\n", MAXOFFBUF, nr, na, offsets->file);
 
 	switch(mode) {
 		// If RANGANDAZ Fall through to both
@@ -101,7 +117,7 @@ static char *mergePath(char *file1, char *path)
 		tmp = strcat(fileTmp, "/");
 	}
 	tmp = strcat(fileTmp, file1);
-	merged = (char *)malloc(strlen(fileTmp) + 1);
+	merged = (char *)calloc(strlen(fileTmp) + 1, sizeof(char));
 	merged[0] = '\0';
 	return (strcat(merged, fileTmp));
 }
@@ -115,11 +131,11 @@ void readOffsetParams(char *datFile, Offsets *offsets, int32_t merge)
 	float deltaA, deltaR;
 	double sigmaS, sigmaR;
 	char line[1024], *tmp;
-	char file1[512], file2[512], *path;
+	char file1[512], file2[512], *path, buf[2048];
 	int32_t lineCount, eod;
 	int32_t nRead;
 	/* See if vrt exits */
-
+	buf[0] = '\0';
 	/* Read params file */
 	fp = openInputFile(datFile);
 	lineCount = getDataString(fp, lineCount, line, &eod);
@@ -156,7 +172,7 @@ void readOffsetParams(char *datFile, Offsets *offsets, int32_t merge)
 	{
 		sscanf(line, "%s %s %s", file1, file2, datFile);
 		if (merge == TRUE)
-			path = dirname(datFile);
+			path = dirname(strcpy(buf, datFile));
 		else
 			path = NULL;
 		offsets->geo1 = mergePath(file1, path);
@@ -251,6 +267,7 @@ void getRParams(Offsets *offsets)
 	offsets->dBn = dBn;
 	offsets->dBp = dBp;
 	/* This parameter will get calculated in the SV basline init routine if its used, so only set for computed baseline */
+	//offsets->rConst = 0.; this was overwriting earlier values
 	if (offsets->deltaB == DELTABNONE)
 		offsets->rConst = rConst;
 	offsets->dBnQ = dBnQ;
@@ -357,48 +374,84 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	// Check sigmas not already set
 	if( (tmp=atof(get_value(metaData, "sigmaStreaks"))) > 0.0) offsets->sigmaStreaks = tmp;
 	if( (tmp=atof(get_value(metaData, "sigmaRange"))) > 0.0) offsets->sigmaRange = tmp;
+	// fprintf(stderr,"PATH %s\n", path);
 	offsets->geo1 = mergePath(get_value(metaData, "geo1"), path);
 	offsets->geo2 = mergePath(get_value(metaData, "geo2"), path);
+	// fprintf(stderr, "GEO2 %s\n", offsets->geo2);
 	// Get Band
 	return hBand;
 }
 
+static void mapBandDescriptionsToBandNumbers(GDALDatasetH hDS, int32_t bandNumbers[5])
+{	
+	/* 
+	return band numbers for in bandnumbers as 
+	bandNumbers[1] band number for azimuth offsets
+	bandNumbers[2] band number for range offsets
+	bandNumbers[3] band number for azimuth errors
+	bandNumbers[4] band number for range errors
+	*/
+	const char *description;
+	GDALRasterBandH hBand;
+	for(int i=1; i <= 4; i++) bandNumbers[i] = 0;
+	int32_t nBands = GDALGetRasterCount(hDS);
+	if(nBands > 4) error("mapBandDescriptionsToBandNumbers: to many (%i) bands for offset file\n", nBands);
+	for(int i=1; i <= nBands; i++) {
+		hBand = GDALGetRasterBand(hDS, i);
+		description = GDALGetMetadataItem(hBand, "Description", NULL);
+		// fprintf(stderr, "Description %s %i\n", description, i);
+		if(strstr(description, "AzimuthOffsets") != NULL) bandNumbers[1] = i;
+		else if(strstr(description, "AzimuthSigma")  != NULL) bandNumbers[3] = i;
+		else if(strstr(description, "RangeOffsets") != NULL) bandNumbers[2] = i;
+		else if(strstr(description, "RangeSigma") != NULL) bandNumbers[4] = i;
+		else error("mapBandDescriptionsToBandNumbers: invalid band name (%s) for offset file %s\n", description);
+		//fprintf(stderr, "%i, %i %i %i %i\n", i, bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
+	}
+	// fprintf(stderr, "%i %i %i %i\n", bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
+}
 
 void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 {
 	int32_t status;
 	float *data;
-	char *path;
+	char *path, buf[2048];
+	int32_t bandNumbers[5];
 	GDALRasterBandH hBand;
-	path = dirname(offsets->file);
+
+	mapBandDescriptionsToBandNumbers(hDS, bandNumbers);
+	// Handle various buffer cases
+	buf[0] = '\0';
 	switch (bufferMode)
 	{
 	case AZIMUTHBUFF:
 		// fprintf(stderr, "AZIMUTH BUFF\n");
-		hBand = getBandAndMeta(hDS, offsets, 1, path);
+		path = dirname(strcpy(buf, offsets->file));
+		hBand = getBandAndMeta(hDS, offsets, bandNumbers[1], path);
 		initOffsetBuffers(offsets, AZONLY);
 		data = offsets->da[0];
 		break;
 	case RANGEBUFF:
-		// fprintf(stderr, "RANGE BUFF\n");
-		hBand = getBandAndMeta(hDS, offsets, 1, path);
+		fprintf(stderr, "RANGE BUFF  %s\n", offsets->rFile);
+		path = dirname(strcpy(buf, offsets->rFile));
+		hBand = getBandAndMeta(hDS, offsets, bandNumbers[2], path);
 		initOffsetBuffers(offsets, RGONLY);
 		data = offsets->dr[0];
 		break;
 	case RANGEUSEAZIMUTHBUFF:
-		// fprintf(stderr, "RANGE FLIP BUFF\n");
-		hBand = getBandAndMeta(hDS, offsets, 1, path);
+		fprintf(stderr, "RANGE FLIP BUFF %s\n", offsets->rFile);
+		path = dirname(strcpy(buf, offsets->rFile));
+		hBand = getBandAndMeta(hDS, offsets, bandNumbers[2], path);
 		initOffsetBuffers(offsets, AZFORRANGE);
 		data = offsets->dr[0];
 		break;
 	case AZIMUTHERRORBUFF:
 		// fprintf(stderr, "AZIMUTH ERROR BUFF\n");
-		hBand = GDALGetRasterBand(hDS, 2);
+		hBand = GDALGetRasterBand(hDS, bandNumbers[3]);
 		data = offsets->sa[0];
 		break;
 	case RANGEERRORBUFF:
 		// fprintf(stderr, "RANGE ERROR BUFF\n");
-		hBand = GDALGetRasterBand(hDS, 2);
+		hBand = GDALGetRasterBand(hDS, bandNumbers[4]);
 		data = offsets->sr[0];
 		break;
 	default:
@@ -407,7 +460,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 	// fprintf(stderr, "RASTERO\n");
 	status = GDALRasterIO(hBand, GF_Read, 0, 0, offsets->nr, offsets->na, data,
 						  offsets->nr, offsets->na, GDT_Float32, 0, 0);
-	fprintf(stderr, "Raster IO Status %i\n", status);
+	//fprintf(stderr, "Raster IO Status %i\n", status);
 }
 
 /*
@@ -420,7 +473,7 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
 	GDALDatasetH hDS;
 
 	fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
-	vrtFile = checkForVrt(offsets->file, vrtBuffer);
+	vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
 	if (vrtFile != NULL)
 	{	// Zero params
 		initOffParams(offsets);
@@ -473,8 +526,8 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 	GDALDatasetH hDS;
 	/*
 	  Read inputfile
-	*/
-	vrtFile = checkForVrt(offsets->rFile, vrtBuffer);
+	*/ 
+	vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
 	if (vrtFile != NULL)
 	{	// Zero parameters
 		initOffParams(offsets);
@@ -532,12 +585,9 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
 	char *eFileR, *file;
 	GDALDatasetH hDS;
 	int bufferMode;
-	//
-	if (offsets->nr * offsets->na * 4 > MAXOFFBUF)
-		error("Offsets Buffer Size exceeds MAXOFFBUF of %i\n", MAXOFFBUF);
 	// Zero parameters
 	initOffParams(offsets);
-	vrtFile = checkForVrt(offsets->rFile, vrtBuffer);
+	vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer); 
 	if (vrtFile != NULL)
 	{
 		fprintf(stderr, "OPENING VRT %s\n", vrtFile);

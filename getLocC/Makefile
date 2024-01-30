@@ -1,7 +1,7 @@
 CC =		gcc
 CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
 
-OBJS=  centerLL.o correctTime.o  getlocc.o  glatlon.o geojsonCode.o
+OBJS=  centerLL.o correctTime.o  getlocc.o  glatlon.o
 
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 
