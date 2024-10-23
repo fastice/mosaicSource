@@ -5,7 +5,65 @@
 #include <stdlib.h>
 #include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
+#include "gdalIO/gdalIO/grimpgdal.h"
 
+static GDALRasterBandH getVRTOffsetMeta(char *datFile, int32_t *rO, int32_t *aO, int32_t *nr, int32_t *na, float *deltaR, float *deltaA)
+{
+	dictNode *metaData = NULL;
+	// GDALRasterBandH hBand;
+	GDALDatasetH hDS;
+	float tmp;
+	// Get meta data
+	//hBand = GDALGetRasterBand(hDS, 0);
+	hDS = GDALOpen(datFile, GDAL_OF_READONLY);
+	*nr = GDALGetRasterXSize(hDS);
+	*na = GDALGetRasterYSize(hDS);
+	readDataSetMetaData(hDS, &metaData);
+	*rO = atoi(get_value(metaData, "r0"));
+	*aO = atoi(get_value(metaData, "a0"));
+	*deltaR = atof(get_value(metaData, "deltaR"));
+	*deltaA = atof(get_value(metaData, "deltaA"));
+	GDALClose(hDS);
+}
+
+/*
+ Determine if offset .dat or .vrt given, and read the results
+*/
+static void parseOffsetParamFile(char *datFile, int32_t *rO, int32_t *aO, int32_t *nr, int32_t *na, float *deltaR, float *deltaA)
+{
+	int32_t nChar, isVRT = TRUE, isDAT = TRUE;
+	char *datTemplate = "dat", *vrtTemplate = "vrt";
+	int32_t lineCount, eod, nRead;
+	char line[1024];
+	GDALDatasetH hDS;
+	FILE *fp;
+	/*
+	Check for dat or vrt suffix.
+	*/
+	nChar = strlen(datFile) - 3;
+	for (int i = 0; i < 3; i++)
+	{
+		if (datFile[nChar + i] != vrtTemplate[i])
+			isVRT = FALSE;
+		if (datFile[nChar + i] != datTemplate[i])
+			isDAT = FALSE;
+	}
+	if (isVRT == TRUE)
+	{
+		fprintf(stderr, "Found VRT\n");
+		getVRTOffsetMeta(datFile, rO, aO, nr, na, deltaR, deltaA);
+	}
+	else if (isDAT == TRUE)
+	{
+		fprintf(stderr, "Found DAT\n");
+		fp = openInputFile(datFile);
+		lineCount = getDataString(fp, lineCount, line, &eod);
+		nRead = sscanf(line, "%i%i%i%i%f%f", rO, aO, nr, na, deltaR, deltaA);
+		fclose(fp);
+	}
+	else
+		error("%s has neither a .dat or .vrt suffix", datFile);
+}
 /*
   parse scene input file for siminsar.
 */
@@ -28,19 +86,16 @@ void parseSceneFile(char *sceneFile, sceneStructure *scene)
 	if (scene->toLLFlag == TRUE)
 	{
 		/*
-		  Read inputfile
+		  Read inputfile with description of offset geometry
 		*/
 		datFile = scene->llInput;
-		fp = openInputFile(datFile);
-		lineCount = getDataString(fp, lineCount, line, &eod);
-		nRead = sscanf(line, "%i%i%i%i%f%f", &rO, &aO, &nr, &na, &deltaR, &deltaA);
-		if (nRead < 6)
-			error("%s  %i of %s", "readOffsets -- Missing image parameters at line:", lineCount, datFile);
+		parseOffsetParamFile(datFile, &rO, &aO, &nr, &na, &deltaR, &deltaA);
+		fprintf(stderr, "offset params %i %i %i %i %f %f\n", rO, aO, nr, na, deltaR, deltaA);
+		
 		scene->aSize = na;
 		scene->rSize = nr;
 		scene->aO = aO / scene->I.nAzimuthLooks;
 		scene->rO = rO / scene->I.nRangeLooks;
-
 		scene->dR = deltaR / scene->I.nRangeLooks;
 		scene->dA = deltaA / scene->I.nAzimuthLooks;
 		scene->latImage = (double **)malloc(scene->aSize * sizeof(double *));
@@ -51,7 +106,7 @@ void parseSceneFile(char *sceneFile, sceneStructure *scene)
 			scene->lonImage[i] = (double *)malloc(scene->rSize * sizeof(double));
 			scene->latImage[i] = (double *)malloc(scene->rSize * sizeof(double));
 		}
-		if (scene->maskFlag == TRUE)
+		if (scene->maskFlag == TRUE || scene->heightFlag == TRUE)
 		{
 			scene->image = (float **)malloc(scene->aSize * sizeof(float *));
 			for (i = 0; i < scene->aSize; i++)

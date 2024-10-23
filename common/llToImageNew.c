@@ -114,10 +114,10 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 		myTime = sv->times[sv->nState / 2];
 	llToECEF(lat, lon, h, &xt, &yt, &zt);
 	C2 = 0.0; /* Not used for zero dop */
+	n = (int32_t)((myTime - sv->times[1]) / (sv->deltaT) + .5);
+	n = min(max(0, n - NUSESTATE/2), sv->nState - NUSESTATE);
 	for (i = 0; i < 35; i++)
 	{
-		n = (int32_t)((myTime - sv->times[1]) / (sv->deltaT) + .5);
-		n = min(max(0, n - 2), sv->nState - NUSESTATE);
 		/* Interpolate postion and velocity */
 		polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]), &(sv->z[n]), &(sv->vx[n]), &(sv->vy[n]), &(sv->vz[n]),
 				  myTime, &xs, &ys, &zs, &vsx, &vsy, &vsz);
@@ -133,6 +133,7 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 		if (fabs(df / C1) < inputImage->tolerance)
 			break;
 	}
+	// Final call 
 	polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]), &(sv->z[n]), &(sv->vx[n]), &(sv->vy[n]), &(sv->vz[n]),
 			  myTime, &xs, &ys, &zs, &vsx, &vsy, &vsz);
 	*range = (sqrt(dot(drx, dry, drz, drx, dry, drz)) - cp->RNear) * cp->toRangePixel;
@@ -143,7 +144,7 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 		*range = -9999.0;
 		*azimuth = -9999.0;
 	} else {
-	//fprintf(stderr,"%d %f %f %f %f %f %f %f\n", i, myTime, inputImage->lastTime, *range, *azimuth, lat, lon, fabs(df/C1));
+	//fprintf(stderr,"%d %f %f %f %f %f %f %e\n", i, myTime, inputImage->lastTime, *range, *azimuth, lat, lon, fabs(df/C1));
 }
 	inputImage->lastTime = myTime;
 }

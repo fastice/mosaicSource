@@ -50,13 +50,14 @@ int main(int argc, char *argv[])
 	*/
 	readArgs(argc, argv, &scene, &demFile, &displacementFile, &sceneFile, &outputFile);
 	/* Added August 2021 to force projections to match dem */
+	fprintf(stderr, "outFile %s\n", outputFile);
 	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
 	imageMask = malloc(sizeof(ShelfMask));
 	/*
 	  Input scene parameters from sceneFile
 	*/
 	scene.I.stateFlag = TRUE;
-	fprintf(stderr, "Parsing scene file...\n");
+	fprintf(stderr, "Parsing scene file (%s)...\n", sceneFile);
 	parseSceneFile(sceneFile, &scene);
 	/*
 	  Init and input DEM
@@ -84,13 +85,14 @@ int main(int argc, char *argv[])
 	/*
 	  Simulate InSAR image
 	*/
-	fprintf(stderr, "Writing results....\n");
+	fprintf(stderr, "Running simulation....\n");
 	simInSARimage(&scene, dem, &xyVel);
 	/*
 	  Output image
 	*/
 	if (scene.heightFlag == TRUE)
 		fprintf(stderr, "Outputing DEM\n");
+	fprintf(stderr, "Writing results....\n");
 	outputSimulatedImage(scene, outputFile, demFile, displacementFile);
 }
 
@@ -103,6 +105,7 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	double bnStart, bnEnd;
 	double bpStart, bpEnd;
 	double bnMid, dBn, bpMid, dBp;
+	double dT;
 	int32_t velocityFlag;
 
 	int32_t bnFlag = FALSE, bnStartFlag = FALSE, toLLFlag = FALSE;
@@ -125,6 +128,7 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	bpStart = bp;
 	bpEnd = bp;
 	velocityFlag = FALSE;
+	dT = 12.0;
 	scene->llInput = NULL;
 	scene->toLLFlag = FALSE;   /* For offsets */
 	scene->saveLLFlag = FALSE; /* for phase/geodat */
@@ -184,6 +188,10 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 			bpStartFlag = TRUE;
 			if (bpFlag == TRUE)
 				error("readargs: bpStart/bpEnd incompatible bp\n");
+		}
+		else if (strstr(argString, "dT") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &dT);
 		}
 		else if (strstr(argString, "bp") != NULL)
 		{
@@ -262,6 +270,8 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	*outputFile = argv[argc - 1];
 	scene->bn = bn;
 	scene->bp = bp;
+	scene->dT = dT;
+	fprintf(stderr, "dT = %f", dT);
 	scene->flatFlag = flatFlag;
 	scene->heightFlag = heightFlag;
 	scene->maskFlag = maskFlag;
@@ -298,7 +308,7 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 static void usage()
 {
 	error(
-		"\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
+		"\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
 		"Simulate interferogram using a DEM",
 		"Usage:",
 		"siminsar -LSB -bn bn -dBn dBn -bp bp -dBp dBp ",
@@ -308,15 +318,16 @@ static void usage()
 		"          demFile displacementFile sceneFile outPutImage",
 		"where",
 		"   LSB             Output results as LSB [MSB]",
-		"   mask            = output a mask using displaceMent file as mask",
-		"   toLL file.dat = use an offsets.dat to produce lat/lon for each pixel - write outputimage.lat,.lon",
-		"   saveLL  =  write outputimage.lat,.lo",
+		"   mask          = output a mask using displaceMent file as mask",
+		"   toLL file.dat = save LL on offset defined grid write outputimage.lat,.lon (can output mask or height with this option)",
+		"   saveLL  	  =  save LL on the geodat defined grid and write outputimage.lat and .lon",
 		"   bn            = normal component of baseline",
 		"   dBn           = change in bn over scene (use instead of bnStart/end",
 		"   bnStart/bnEnd = bn at start and end of scene",
 		"   bp            = parallel component of baseline",
 		"   dBn           = change in bp over scene (use instead of bpStart/end",
 		"   bpStart/bpEnd = bn at start and end of scene",
+		"   dT			  = time interval for simulation displacement",
 		"   flat          = flattened image",
 		"   height        = output height values instead of phase",
 		"   rPix          = range single look pixel size",

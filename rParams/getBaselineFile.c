@@ -6,6 +6,25 @@
 /*
     Add baseline corrections that were removed in the unwrapped image to   tiepoint32_t phases.
 */
+
+static void writeOriginalBaselines(tiePointsStructure *tiePoints,
+                                   double Bn1, double Bp1, double dBn1, double dBp1,
+                                   double Bn2, double Bp2, double dBn2, double dBp2)
+{
+ /*
+    Ouput baseline parms
+*/
+    if (tiePoints->dBpFlag == TRUE)
+        fprintf(stderr, "; dBp flag set\n");
+    if (tiePoints->noRamp == TRUE)
+        fprintf(stderr, "; noRamp flag set\n");
+    fprintf(stdout, ";\n; Number of lines of baseline data\n;\n 3\n");
+    fprintf(stdout, ";\n; First flattening baseline\n;\n");
+    fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, dBp1);
+    fprintf(stdout, ";\n; Second flattening baseline\n;\n");
+    fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn2, Bp2, dBn2, dBp2);
+}
+
 void getBaselineFile(char *baselineFile, tiePointsStructure *tiePoints, inputImageStructure inputImage)
 {
     FILE *fp;
@@ -45,7 +64,15 @@ void getBaselineFile(char *baselineFile, tiePointsStructure *tiePoints, inputIma
     /*
        Input baseline info
     */
-    fp = openInputFile(baselineFile);
+    fp = fopen(baselineFile, "r");
+
+    if (fp == NULL)
+    {
+        tiePoints->initWithSV = TRUE;
+        writeOriginalBaselines(tiePoints, 0, 0, 0, 0, 0, 0, 0, 0);
+        return;
+    }
+    tiePoints->initWithSV = FALSE;
     lineCount = getDataString(fp, lineCount, line, &eod);
     /*
        READ FIRST BASELINE
@@ -63,18 +90,7 @@ void getBaselineFile(char *baselineFile, tiePointsStructure *tiePoints, inputIma
     if (sscanf(line, "%lf%lf%lf%lf", &Bn2, &Bp2, &dBn2, &dBp2) != 4)
         error("%s  %i", "addBaselineCorrections -- Missing baseline params at line:", lineCount);
 
-    /*
-        Ouput baseline parms
-    */
-    if (tiePoints->dBpFlag == TRUE)
-        fprintf(stderr, "; dBp flag set\n");
-    if (tiePoints->noRamp == TRUE)
-        fprintf(stderr, "; noRamp flag set\n");
-    fprintf(stdout, ";\n; Number of lines of baseline data\n;\n 3\n");
-    fprintf(stdout, ";\n; First flattening baseline\n;\n");
-    fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, dBp1);
-    fprintf(stdout, ";\n; Second flattening baseline\n;\n");
-    fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn2, Bp2, dBn2, dBp2);
+    writeOriginalBaselines(tiePoints, Bn1, Bp1, dBn1, dBp1, Bn2, Bp2, dBn2, dBp2);
 
     /*
        Virtual baseline

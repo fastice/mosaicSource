@@ -200,6 +200,7 @@ typedef struct tiePointsType
 	double *weight;
 	double cnstA; /* const dead reckoned az offset */
 	double cnstR; /* const dead reckoned rg offset */
+	int initWithSV;
 	/*
 	  Parameters below are used exclusively for azParams.
 	*/

@@ -361,11 +361,12 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	float tmp;
 	// Get meta data
 	hBand = GDALGetRasterBand(hDS, band);
+	
 	readDataSetMetaData(hDS, &metaData);
+	fprintf(stderr, "Meta Data Read\n");
 	// Write to offsets
 	offsets->nr = GDALGetRasterBandXSize(hBand);
 	offsets->na = GDALGetRasterBandYSize(hBand);
-	// fprintf(stderr, "%s %s\n", get_value(metaData, "r0"), get_value(metaData, "a0"));
 	offsets->rO = atoi(get_value(metaData, "r0"));
 	offsets->aO = atoi(get_value(metaData, "a0"));
 	// fprintf(stderr, "R0,A)\n");
@@ -377,7 +378,7 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	// fprintf(stderr,"PATH %s\n", path);
 	offsets->geo1 = mergePath(get_value(metaData, "geo1"), path);
 	offsets->geo2 = mergePath(get_value(metaData, "geo2"), path);
-	// fprintf(stderr, "GEO2 %s\n", offsets->geo2);
+	fprintf(stderr, "GEO2 %s\n", offsets->geo2);
 	// Get Band
 	return hBand;
 }
@@ -457,7 +458,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 	default:
 		error("Invalide code readGDALoffstes");
 	}
-	// fprintf(stderr, "RASTERO\n");
+	//fprintf(stderr, "RASTERO\n");
 	status = GDALRasterIO(hBand, GF_Read, 0, 0, offsets->nr, offsets->na, data,
 						  offsets->nr, offsets->na, GDT_Float32, 0, 0);
 	//fprintf(stderr, "Raster IO Status %i\n", status);

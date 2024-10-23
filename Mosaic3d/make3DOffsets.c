@@ -139,6 +139,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			  Get region of  possible intersection - pass if not interect
 			*/
 			getIntersect(dOffImage, aOffImage, &iMin, &iMax, &jMin, &jMax, outputImage);
+			// No intersect, then skip rest of this this loop iteration.
 			if (iMax == 0 && jMax == 0)
 				continue;
 			/*

@@ -108,12 +108,14 @@ int main(int argc, char *argv[])
 	*/
 	getOffsets(offsetFile, &tiePoints, inputImage, &offsets);
 	fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
-	if (offsets.geo1 != NULL && offsets.geo2 != NULL && tiePoints.deltaB != DELTABNONE)
+	tiePoints.initWithSV = FALSE;
+	if (offsets.geo1 != NULL && offsets.geo2 != NULL)
 	{
+		tiePoints.initWithSV = TRUE;
 		svInitAzParams(&inputImage, &offsets);
 		fprintf(stderr, "sv fit %f %f %f %f\n", offsets.azFit[0], offsets.azFit[1], offsets.azFit[2], offsets.azFit[3]);
 	}
-	else
+	if(tiePoints.deltaB == DELTABNONE)
 	{
 		tiePoints.cnstA = 0.0;
 		tiePoints.cnstR = 0.0;

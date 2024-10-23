@@ -1,7 +1,7 @@
 
 /*#include "ers1/getLocC_p/parfile.h"*/
 
-#define DEFAULT_SIM_BN 100.0
+#define DEFAULT_SIM_BN 0.0
 #define DEFAULT_SIM_BP 0.0
 #define LL 1
 #define LR 2
@@ -49,6 +49,7 @@ typedef struct sceneStructureType
 	double bpStart;
 	double bpEnd;
 	double bpStep;
+	double dT;
 	/* size info added 2/3/17 */
 	int32_t aSize;
 	int32_t rSize;

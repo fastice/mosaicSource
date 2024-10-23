@@ -75,6 +75,7 @@ static void parseTime(inputImageStructure *inputImage, char *line, int32_t eod, 
 		error("Invalid image start time \n %s\n", line);
 	if (eod == TRUE)
 		error("missing data after time");
+
 }
 
 static void parsePRF(inputImageStructure *inputImage, char *line, int32_t eod)
@@ -349,6 +350,7 @@ static void parseControlPointsGeoJson(OGRFeatureH myFeature, inputImageStructure
 	{
 		inputImage->latControlPoints[i] = lat[index[i]];
 		inputImage->lonControlPoints[i] = lon[index[i]];
+		fprintf(stderr, "%f %f\n",lat[index[i]],lon[index[i]]);
 	}
 	double const *ll = OGR_F_GetFieldAsDoubleList(myFeature, OGR_F_GetFieldIndex(myFeature, "CenterLatLon"), &nItems);
 	inputImage->latControlPoints[0] = ll[0];
@@ -511,6 +513,7 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	/* Get corrected time */
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	parseTime(inputImage, line, eod, "%i %i %lf");
+	fprintf(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);	
 	/* PRF */
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	parsePRF(inputImage, line, eod);
@@ -592,6 +595,8 @@ void parseGeojson(char *inputFile, inputImageStructure *inputImage)
 	//  Get corrected time
 	const char* timeString = OGR_F_GetFieldAsString(myFeature, OGR_F_GetFieldIndex(myFeature, "CorrectedTime"));
 	parseTime(inputImage, (char *) timeString, FALSE, "%2u %2u %lf");
+	fprintf(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);
+	error("STOP");
 	// PRF
 	inputImage->par.prf = OGR_F_GetFieldAsDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "PRF"));
 	// Wavelength

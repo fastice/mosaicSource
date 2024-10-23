@@ -90,6 +90,7 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 				if (sMask == SHELF)
 				{
 					deltaZ = interpTideDiff(xx, yy, inputImage->tideDiff);
+					
 					if (deltaZ > MINELEVATION)
 					{
 						vz1 = deltaZ / ((double)tiePoints->nDays) * 365.25;
@@ -108,6 +109,8 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 				RElip = earthRadius(lat * DTOR, EMINOR, EMAJOR) * KMTOM + tiePoints->z[i];
 				/*  Elevation referenced to a sphere */
 				zSp = RElip - Re;
+				//if((i +11) % 818 == 0) fprintf(stderr, "lat,lon, z  %lf %lf %lf %lf %lf %lf\n", tiePoints->lat[i], tiePoints->lon[i], tiePoints->z[i], range, azimuth, zWGS);
+				//if(azimuth > 690) error("stop");
 			}
 			else
 			{
@@ -138,6 +141,9 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 		}
 	}
 	lastTime = clock();
-	fprintf(stderr, "initTime %f convertTime %f totalTime %f\n", (double)(initTime - startTime) / CLOCKS_PER_SEC, (double)(lastTime - initTime) / CLOCKS_PER_SEC, (double)(lastTime - startTime) / CLOCKS_PER_SEC);
+	fprintf(stderr, "initTime %f convertTime %f totalTime %f\n", 
+		(double)(initTime - startTime) / CLOCKS_PER_SEC, 
+		(double)(lastTime - initTime) / CLOCKS_PER_SEC, 
+		(double)(lastTime - startTime) / CLOCKS_PER_SEC);
 	return;
 }

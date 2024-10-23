@@ -26,11 +26,30 @@ static void azParamsConstFit(void *x, double y[], double sig[], int32_t npts, do
 static void azParamsLinearFit(void *x, double y[], double sig[], int32_t npts, double a[], int32_t ma, double **u, double **v, double w[],
 							  double *chisq, double dbhds, double result[], int32_t pIndex[], double azconst[]);
 
+static void computeBaselineRates(inputImageStructure *inputImage, Offsets *offsets, double thetaC, double *dbc, double *dbh)
+{
+	double bTCNLate[3], bTCNEarly[3];
+	conversionDataStructure *cP;
+	double azTime1, azTime2;
+	double bn1, bn2, bp1, bp2;
+	cP = &(inputImage->cpAll);
+	// Compute baseline at start and end for image
+	azTime1 = cP->sTime + 0 * inputImage->nAzimuthLooks / inputImage->par.prf;
+	azTime2 = cP->sTime + inputImage->azimuthSize * inputImage->nAzimuthLooks / inputImage->par.prf;
+	svBaseTCN(azTime1, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCNEarly);
+	svBaseTCN(azTime2, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCNLate);
+	// m (prf * slPixSize)
+	*dbc = (bTCNLate[1] - bTCNEarly[1]) / (inputImage->azimuthSize * inputImage->nAzimuthLooks * inputImage->par.slpA);
+	*dbh = (bTCNLate[2] - bTCNEarly[2]) / (inputImage->azimuthSize * inputImage->nAzimuthLooks * inputImage->par.slpA);
+	fprintf(stderr, "--- %e %e \n", *dbc, *dbh);
+}
+
 void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets)
 {
 	double Re, H, RNear, dr;
 	double *a; /* Solution for params */
 	double theta, theta1, z, r0;
+	double thetaC, bn, bp, dbn, dbp;
 	double **v, **u, chisq;
 	double *y, *sig, *w, *chsq, *sigB, **Cp;
 	double azimuth, ReH, Cij;
@@ -68,8 +87,18 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	ReH = getReH(cP, inputImage, azimuth);
 	RNear = cP->RNear;
 	fprintf(stderr, "---------------------RNear %f %f \n", RNear, H);
-	getBaselineRates(&dbcds, &dbhds, baseFile, inputImage->par.prf, inputImage->par.slpA);
+
 	/* Fixed 12/1/22 to force zero for sv solutions */
+	thetaC = thetaRReZReH(cP->RCenter, (Re + 0), (ReH));
+	if (tiePoints->initWithSV == TRUE)
+	{
+		computeBaselineRates(inputImage, offsets, thetaC, &dbcds, &dbhds);
+	}
+	else
+	{
+		getBaselineRates(&dbcds, &dbhds, baseFile, inputImage->par.prf, inputImage->par.slpA);
+	}
+	fprintf(stderr, "+++ %e %e\n", dbcds, dbhds);
 	if (tiePoints->deltaB != DELTABNONE)
 	{
 		dbcds = 0.0;
@@ -160,7 +189,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 				/* sig[i1] = sigP; */
 				j++;
 			} /* End if */
-		}	  /* End for i */
+		} /* End for i */
 		if (i1 < ma)
 			error("aparams: Insufficient Number (%i)  of Valid tie points \n", i1);
 		/*

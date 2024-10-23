@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
+//#include "mosaicSource/common/common.h"
 /*
   Estimate range params using tiepoints.
 
@@ -100,7 +101,10 @@ int main(int argc, char *argv[])
 	*/
 	outputImage.fpLog = stderr;
 	if (shelfMaskFile != NULL)
+	{
+		fprintf(stderr, "shelfMask %s\n", shelfMaskFile);
 		readShelf(&outputImage, shelfMaskFile);
+	}
 	else
 		outputImage.shelfMask = NULL;
 	/*
@@ -108,12 +112,18 @@ int main(int argc, char *argv[])
 	*/
 	computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, outputImage.shelfMask, FALSE);
 	/*
+	  Get baseline info
+	*/
+	getBaselineFile(baselineFile, &tiePoints, inputImage);
+	/*
 	  Extract offsets from phase file.
 	*/
-	fprintf(stderr, "%s\n", offsets.rFile);
+	fprintf(stderr, "------- %s\n", offsets.rFile);
 	getROffsets(offsetFile, &tiePoints, inputImage, &offsets);
+	fprintf(stderr, "OFFSETS READ\n\n");
 	fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
-	if (offsets.geo1 != NULL && offsets.geo2 != NULL && tiePoints.deltaB != DELTABNONE)
+	if (offsets.geo1 != NULL && offsets.geo2 != NULL && 
+		( (tiePoints.deltaB != DELTABNONE) || (tiePoints.initWithSV == TRUE)))
 	{
 		parseInputFile(offsets.geo2, &inputImage2);
 		initllToImageNew(&inputImage2);
@@ -121,20 +131,17 @@ int main(int argc, char *argv[])
 		offsets.dt1t2 = inputImage.cpAll.sTime - inputImage2.cpAll.sTime;
 		fprintf(stderr, "times %f %f %f\n", inputImage.cpAll.sTime, inputImage2.cpAll.sTime, offsets.dt1t2);
 		svOffsets(&inputImage, &inputImage2, &offsets, &(tiePoints.cnstR), &(tiePoints.cnstA));
-	}
-	else if (tiePoints.deltaB == DELTABNONE)
+	} else if(tiePoints.deltaB != DELTABNONE)
+		error("SV baselines but geodats not specified in .dat file ");
+	if (tiePoints.deltaB == DELTABNONE)
 	{
 		tiePoints.cnstA = 0.0;
 		tiePoints.cnstR = 0.0;
 	}
-	else
-		error("SV baselines but geodats not specified in .dat file ");
+	
 
 	fprintf(stderr, "Rg/Az offsets %10.5f %10.5f\n", tiePoints.cnstR, tiePoints.cnstA);
-	/*
-	  Get baseline info
-	*/
-	getBaselineFile(baselineFile, &tiePoints, inputImage);
+	
 	/*
 	 remove velocity components
 	*/
@@ -176,7 +183,7 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 	bpdBpFlag = FALSE;
 	constOnlyFlag = FALSE;
 	deltaB = DELTABNONE;
-	shelfMaskFile = NULL;
+	*shelfMaskFile = NULL;
 	tiePoints->quiet = FALSE;
 	for (i = 1; i <= n; i++)
 	{

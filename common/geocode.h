@@ -180,7 +180,7 @@ typedef struct inputImageType
 	int32_t isInit;
 	float noData;
 	double lastTime; /* Last time used for geocoding */
-	float tolerance; /* Tolerange for geocoding. Set to 1e-6 in initLLtoImage */
+	double tolerance; /* Tolerange for geocoding. Set to 1e-6 in initLLtoImage */
 	struct inputImageType *next;
 } inputImageStructure;
 

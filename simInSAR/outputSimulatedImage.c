@@ -35,7 +35,6 @@ static void outputLL(sceneStructure scene, char *outputFile)
 	char *bandFiles[2] = {buf1, buf2};
 	GDALDataType dataTypes[2] = {GDT_Float64, GDT_Float64};
 	int32_t i, k;
-
 	for(k=0; k < 2; k++) {
 		file = appendSuffix(outputFile, suffixes[k], bandFiles[k]);
 		fprintf(stderr, "writing %s\n", buf1);
@@ -49,7 +48,7 @@ static void outputLL(sceneStructure scene, char *outputFile)
 	file = appendSuffix(outputFile, ".ll.vrt", bufvrt);
 	if(scene.byteOrder == MSB) byteSwapOption = "ByteOrder=MSB"; else byteSwapOption = "ByteOrder=LSB";
 	popuplateMeta(&metaData, scene);
-	writeSingleVRT(scene.rSize, scene.aSize, metaData, file, bandFiles, bandNames, dataTypes, byteSwapOption, 2);
+	writeSingleVRT(scene.rSize, scene.aSize, metaData, file, bandFiles, bandNames, dataTypes, byteSwapOption, -2.0e9, 2);
 }
 
 static void outputSimImage(sceneStructure scene, char *outputFile)
@@ -111,7 +110,7 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 	fileVRT = appendSuffix(file, ".vrt", buf2);
 	if(scene.saveLLFlag == TRUE || scene.toLLFlag)
 		popuplateMeta(&metaData, scene);
-	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, 1);
+	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, -2.e9, 1);
 }
 
 /*
@@ -128,9 +127,23 @@ void outputSimulatedImage(sceneStructure scene, char *outputFile, char *demFile,
 	/*
 	  Open image outputfile
 	*/
-	if( (scene.saveLLFlag == FALSE && scene.toLLFlag) || scene.maskFlag == TRUE)
+	//fprintf(stderr, "%i %i %i\n", scene.saveLLFlag, scene.toLLFlag, scene.maskFlag );
+	//if( (scene.saveLLFlag == FALSE && scene.toLLFlag) )
+	// If either saveLL (geodat grid) or toLLFlag (offset grid)
+	if(scene.saveLLFlag == TRUE || scene.toLLFlag == TRUE) 
+	{
+		outputLL(scene, outputFile);
+		// If either mask or height flag set, output these variables
+		fprintf(stderr, "%i %i\n", scene.maskFlag, scene.heightFlag);
+	   	if(scene.maskFlag == TRUE || scene.heightFlag == TRUE)
+		{
+			fprintf(stderr, "Output height or mask...\n");
+			outputSimImage(scene, outputFile);
+	   	}	
+	} else {
+		fprintf(stderr, "Output...");
 		outputSimImage(scene, outputFile);
-	if(scene.saveLLFlag == TRUE || scene.toLLFlag == TRUE) outputLL(scene, outputFile);
+	}
 	//
 	//  Form header filename by adding .simdat suffix to outputFile
 	//

@@ -268,6 +268,22 @@ azparams:
 		gcc $(MEM) $(CCFLAGS1) \
                 azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO) \
                 -lm  -lgdal -o $(BINDIR)/azparams
+#********************************************************************************
+#********************************** computeBaseline *************************************
+#********************************************************************************
+
+BASELINEDIRS =	 computeBaseline common $(PROGDIR)/gdalIO/gdalIO $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
+
+computebaseline:	
+	@for i in ${BASELINEDIRS}; do \
+		( 	echo "<<< Descending in directory: $$i >>>"; \
+	                cd $$i; \
+			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
+			cd $(PROGDIR)/mosaicSource; \
+		); done
+		gcc $(MEM) $(CCFLAGS1) \
+                computeBaseline/$(MACHTYPE)-$(OSTYPE)/computebaseline.o   $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
+                -lm  -lgdal -o $(BINDIR)/computebaseline
 
 #********************************************************************************
 #********************************** coarsereg ************************************

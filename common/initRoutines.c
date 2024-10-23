@@ -487,10 +487,11 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 	/*
 	 Compute xy coords of rectangles, with CCW order. Tack center point on the end.
 	*/
-	lltoxy1(aPhaseImage->latControlPoints[1], aPhaseImage->lonControlPoints[1], xaP, yaP, Rotation, outputImage->slat);
-	lltoxy1(aPhaseImage->latControlPoints[2], aPhaseImage->lonControlPoints[2], xaP + 1, yaP + 1, Rotation, outputImage->slat);
-	lltoxy1(aPhaseImage->latControlPoints[4], aPhaseImage->lonControlPoints[4], xaP + 2, yaP + 2, Rotation, outputImage->slat);
-	lltoxy1(aPhaseImage->latControlPoints[3], aPhaseImage->lonControlPoints[3], xaP + 3, yaP + 3, Rotation, outputImage->slat);
+
+	lltoxy1(aPhaseImage->latControlPoints[1], aPhaseImage->lonControlPoints[1], xaP, yaP, Rotation, outputImage->slat);  // ll
+	lltoxy1(aPhaseImage->latControlPoints[2], aPhaseImage->lonControlPoints[2], xaP + 1, yaP + 1, Rotation, outputImage->slat);  //lr
+	lltoxy1(aPhaseImage->latControlPoints[4], aPhaseImage->lonControlPoints[4], xaP + 2, yaP + 2, Rotation, outputImage->slat); // ur
+	lltoxy1(aPhaseImage->latControlPoints[3], aPhaseImage->lonControlPoints[3], xaP + 3, yaP + 3, Rotation, outputImage->slat); // ul
 	lltoxy1(aPhaseImage->latControlPoints[0], aPhaseImage->lonControlPoints[0], xaP + 5, yaP + 5, Rotation, outputImage->slat);
 	xaP[4] = xaP[0];
 	yaP[4] = yaP[0]; /* Complete polygon */
@@ -507,24 +508,23 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 	minY = 1e20;
 	maxX = -1e20;
 	maxY = -1e20;
+	/*
 	for (i = 0; i < 6; i++)
-	{ /* This checks corners and centers */
+	{ // This checks corners and centers 
 		inA = inRect(xdP[i], ydP[i], xaP, yaP);
 		inD = inRect(xaP[i], yaP[i], xdP, ydP);
-		/*fprintf(stderr, "%i %i %f %f %f %f %f\n", inA, inD, xdP[i],ydP[i], xaP[i],yaP[i], dPhaseImage->latControlPoints[i]);*/
+		fprintf(stderr, "%i %i %f %f %f %f %f\n", inA, inD, xdP[i],ydP[i], xaP[i],yaP[i], dPhaseImage->latControlPoints[i]);
 		if (inA == TRUE || inD == TRUE)
 		{
 			intersect = TRUE;
 		}
-	}
+	}*/
 	/* Compute xy bounds */
 	xyMinMax(xdP, ydP, &minXd, &minYd, &maxXd, &maxYd);
 	xyMinMax(xaP, yaP, &minXa, &minYa, &maxXa, &maxYa);
-	minX = max(minXa, minXd); /* Take inner bounds to restrict to just overlap */
-	maxX = min(maxXa, maxXd);
-	minY = max(minYa, minYd);
-	maxY = min(maxYa, maxYd);
-	/* Compute image bounds */
+	// Check if intersects
+    intersect = !(minXa > maxXd || minXd > maxXa || minYa > maxYd || minYd > maxYa);
+	// Return if not intersection
 	if (intersect == FALSE)
 	{
 		*iMin = 0;
@@ -533,6 +533,13 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 		*jMax = 0;
 		return;
 	}
+	// Compute bounding box and indices
+	minX = max(minXa, minXd); /* Take inner bounds to restrict to just overlap */
+	maxX = min(maxXa, maxXd);
+	minY = max(minYa, minYd);
+	maxY = min(maxYa, maxYd);
+	/* Compute image bounds */
+	
 	pad = 15000.;
 	*iMin = (int32_t)((minY * KMTOM - outputImage->originY - pad) / outputImage->deltaY);
 	*jMin = (int32_t)((minX * KMTOM - outputImage->originX - pad) / outputImage->deltaX);

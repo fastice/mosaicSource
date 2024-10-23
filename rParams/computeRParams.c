@@ -40,6 +40,28 @@ static double bpQZero(tiePointsStructure *tiePoints, double x)
 	return bPoly(0.0, tiePoints->dBporig, tiePoints->dBpQorig, x);
 }
 
+static void computeLinearBaseline(inputImageStructure *inputImage, Offsets *offsets, double thetaC, double *bn, double *bp, double *dbn, double *dbp) 
+{
+	double bTCN[3];
+	conversionDataStructure *cP;
+	double azTime1, azTime2;
+	double bn1, bn2, bp1, bp2;
+	cP = &(inputImage->cpAll);
+	// Compute baseline at start and end for image
+	azTime1 = cP->sTime + 0 * inputImage->nAzimuthLooks / inputImage->par.prf;
+	azTime2 = cP->sTime + inputImage->azimuthSize * inputImage->nAzimuthLooks / inputImage->par.prf;
+	svBaseTCN(azTime1, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);
+	svBnBp(azTime1, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bn1, &bp1);
+	svBaseTCN(azTime2, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);	
+	svBnBp(azTime2, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bn2, &bp2);
+	
+	fprintf(stderr, "--- %f %f %f %f\n",bn1, bp1, bn2, bp2);
+	*bn = (bn1 + bn2) * 0.5;
+	*bp = (bp1 + bp2) * 0.5;
+	*dbn = bn2 - bn1;
+	*dbp = bp2 - bp1;
+}
+
 void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets)
 {
 	double Re, H, RNear, thetaC, dr, rOffset, ReH;
@@ -63,7 +85,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 	double bTCN[3];
 	double bnFix, bpFix;
 	int32_t pIndex[7];
-	double weightSum, tmp;
+	double weightSum;
 	double t;
 	nParams = 4.;
 	/* Determine number of parameters in the fit */
@@ -135,6 +157,11 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 		{
 			if (tiePoints->deltaB == DELTABNONE)
 			{
+				if(tiePoints->initWithSV == TRUE) {
+					computeLinearBaseline(&inputImage, offsets, thetaC, &(tiePoints->BnCorig), &(tiePoints->BpCorig), &(tiePoints->dBnorig), &(tiePoints->dBpQorig));
+					tiePoints->dBnQorig = 0.;
+					tiePoints->dBpQorig = 0.;
+				}
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
 				dBn = tiePoints->dBnorig;
@@ -218,7 +245,6 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				/* Sum mean and variance */
 				varP += (y[i1] - xtmp) * (y[i1] - xtmp);
 				meanP += (y[i1] - xtmp);
-				/*	if(fabs((y[i1]-xtmp)) > 1300) fprintf(stderr,"%i %f %f %f %f %f %f %f\n",i1,y[i1],xtmp,deltaO,bn,bp,r0,cnst   );*/
 				/*
 				  Subtract known terms for bpFlag
 				*/
@@ -275,12 +301,8 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				dBp = a[2];
 				dBnQ = 0., dBpQ = 0.;
 				cnst = a[3];
-				pIndex[1] = 1;
-				pIndex[2] = 0;
-				pIndex[3] = 2;
-				pIndex[4] = 0;
-				pIndex[5] = 0;
-				pIndex[6] = 3;
+				int32_t tmp[7] = {0, 1, 0, 2, 0, 0, 3};
+				for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 			}
 			else if (tiePoints->bpdBpFlag == TRUE)
 			{ /*	  Solve for bp and dBp only 			*/
@@ -293,12 +315,8 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				dBp = a[1];
 				dBnQ = 0., dBpQ = 0.;
 				cnst = a[2];
-				pIndex[1] = 0;
-				pIndex[2] = 0;
-				pIndex[3] = 1;
-				pIndex[4] = 0;
-				pIndex[5] = 0;
-				pIndex[6] = 2;
+				int32_t tmp[7] = {0, 0, 0, 1, 0, 0, 2};
+				for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 			}
 			else if (tiePoints->constOnlyFlag == TRUE)
 			{
@@ -311,12 +329,8 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				dBp = tiePoints->dBporig;
 				dBnQ = 0., dBpQ = 0.;
 				cnst = a[1];
-				pIndex[1] = 0;
-				pIndex[2] = 0;
-				pIndex[3] = 0;
-				pIndex[4] = 0;
-				pIndex[5] = 0;
-				pIndex[6] = 1;
+				int32_t tmp[7] = {0, 0, 0, 0, 0, 0, 1};
+				for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 			}
 			else if (tiePoints->quadB == TRUE)
 			{
@@ -329,12 +343,8 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				dBp = a[2];
 				dBnQ = a[6], dBpQ = a[5];
 				cnst = a[4];
-				pIndex[1] = 1;
-				pIndex[2] = 3;
-				pIndex[3] = 2;
-				pIndex[4] = 6;
-				pIndex[5] = 5;
-				pIndex[6] = 4;
+				int32_t tmp[7] = {0, 1, 3, 2, 6, 5, 4};
+				for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 			}
 			else
 			{ /* 	 SOLVE FOR ALL PARAMETERS */
@@ -347,12 +357,8 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				dBp = a[2];
 				dBnQ = 0.0, dBpQ = 0.0;
 				cnst = a[4];
-				pIndex[1] = 1;
-				pIndex[2] = 3;
-				pIndex[3] = 2;
-				pIndex[4] = 0;
-				pIndex[5] = 0;
-				pIndex[6] = 4;
+				int32_t tmp[7] = {0, 1, 3, 2, 0, 0, 4};
+				for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 				fprintf(stderr, " --- %f %f %f %f %f %f %f\n", Bn, Bp, dBn, dBp, dBnQ, dBpQ, cnst);
 			}
 		}
@@ -367,12 +373,8 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 			dBp = 0.0;
 			dBnQ = 0., dBpQ = 0.;
 			cnst = tiePoints->cnstR;
-			pIndex[1] = 0;
-			pIndex[2] = 0;
-			pIndex[3] = 0;
-			pIndex[4] = 0;
-			pIndex[5] = 0;
-			pIndex[6] = 1;
+			int32_t tmp[7] = {0, 0, 0, 0, 0, 0, 1};
+			for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 			fprintf(stderr, "fit 1 %f %i\n", a[1], ma);
 		}
 		else if (tiePoints->deltaB == DELTABQUAD)
@@ -385,13 +387,10 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 			Bp = a[4];
 			dBn = a[3];
 			dBp = a[2];
-			dBnQ = a[6], dBpQ = a[5];
-			pIndex[1] = 1;
-			pIndex[2] = 3;
-			pIndex[3] = 2;
-			pIndex[4] = 6;
-			pIndex[5] = 5;
-			pIndex[6] = 4;
+			dBnQ = a[6];
+			dBpQ = a[5];
+			int32_t tmp[7] = {0, 1, 3, 2, 6, 5, 4};
+			for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 		}
 		else
 			error("computeRParams: invalid deltaB flag ", tiePoints->deltaB);

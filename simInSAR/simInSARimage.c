@@ -190,7 +190,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					lltoxy1(lat, lon, &x1, &y1, xyDem->rot, xyDem->stdLat);
 					scene->image[iIndex][jLoop] = getShelfMask(scene->imageMask, x1, y1);
 				}
-				else if (scene->heightFlag == TRUE && scene->toLLFlag == FALSE)
+				else if (scene->heightFlag == TRUE ) //&& scene->toLLFlag == FALSE
 				{	// Save height only
 					scene->image[iIndex][jLoop] = (float)(hWGS);
 				}
@@ -254,7 +254,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 						/* Compute rotation angles */
 						computeXYangle(lat, lon, &xyAngle, *xyDem);
 						hAngle = computeHeading(lat, lon, 0., inputImage, cp);
-						fprintf(stderr, "%f\n", hAngle * 57.29);
+						//fprintf(stderr, "%f\n", hAngle * 57.29);
 						/* Rotate to ground range */
 						vr = vx * cos(hAngle - xyAngle) - vy * sin(hAngle - xyAngle);
 						/* Get slopes */
@@ -268,8 +268,14 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					/*
 					  Convert range diff to phase diff.
 					*/
-					scene->image[iIndex][jLoop] = (float)(delta * deltaToPhase);
-					scene->image[iIndex][jLoop] = vr * 6. / 365. * deltaToPhase;
+					if(vx > -1.99e9 && vy > -1.99e9) 
+					{
+						scene->image[iIndex][jLoop] = (float)(delta * deltaToPhase);
+						scene->image[iIndex][jLoop] += vr * scene->dT / 365. * deltaToPhase;
+					} else
+					{
+						scene->image[iIndex][jLoop] = -LARGEINT;
+					}
 
 				} /* End else */
 				range += inputImage->rangePixelSize * scene->dR;
@@ -277,8 +283,8 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 			else
 			{
 				/* No data cases because outsize az range */
-				if (jLoop == 10)
-					fprintf(stderr, "%i %f %i", iLoop, iFloat, i);
+				//if (jLoop == 10)
+				//	fprintf(stderr, "%i %f %i", iLoop, iFloat, i);
 				if (scene->maskFlag == TRUE && scene->toLLFlag == FALSE)
 				{
 					scene->image[iIndex][jLoop] = 0;

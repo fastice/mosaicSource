@@ -245,6 +245,7 @@ int main(int argc, char *argv[])
 	if ((nAsc + nDesc) > 0 && threeDOffFlag == TRUE)
 	{
 		make3DOffsets(images, params, &dem, &outputImage, fl, timeThresh);
+		fprintf(stderr, "End of 3d offsets %i\n", threeDOffFlag);
 	}
 	/*	  Setup dem stuff	*/
 

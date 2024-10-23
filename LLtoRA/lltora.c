@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
 	float dr, da;
 	ShelfMask *shelfMask = NULL;
 	uint32_t size[2];
-	float dum[3];
+	double dum[3];
 	/*
 	   Read command line args and compute filenames
 	*/
@@ -76,7 +76,8 @@ int main(int argc, char *argv[])
 		readTiePoints(tiePointFp, &tiePoints, TRUE);
 	}
 	else
-	{
+	{	
+		fprintf(stderr, "DEM %s", DemFile);
 		readLLinput(tiePointFp, &tiePoints, DemFile);
 	}
 	if (tiePoints.lat[0] < 0)
@@ -130,7 +131,7 @@ int main(int argc, char *argv[])
 				dum[0] = -9999;
 				dum[1] = -9999;
 			}
-			fwriteBS((void *)dum, sizeof(float), 3, fpOut, FLOAT32FLAG);
+			fwriteBS((void *)dum, sizeof(double), 3, fpOut, FLOAT64FLAG);
 		}
 	}
 }
@@ -196,7 +197,7 @@ void readLLinput(FILE *fp, tiePointsStructure *tiePoints, char *DEM)
 	xyDEM dem;
 
 	freadBS((void *)size, sizeof(size[0]), 2, fp, INT32FLAG);
-	fprintf(stderr, "Size %i %i \n", size[0], size[1]);
+	fprintf(stderr, "\nSize %i %i \n", size[0], size[1]);
 	if (size[1] != 2 && size[1] != 3)
 		error("Invalid size in first line");
 	/* Modified 4/02/07 to fix crash with declared in structure */
