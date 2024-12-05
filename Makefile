@@ -35,6 +35,7 @@ $(info BINHOME="$(BINHOME)")
 #
 # For historical reasons, can compile with 32-bit memory model using MEM=-m32
 # In almost all cases, should be compiled as 64bit.
+export $MACHTYPE
 ifneq ($(MEM),-m32)
 	BINNAME=	$(MACHTYPE)
 	FFTDIR = $(MACHTYPE)-$(OSTYPE)
