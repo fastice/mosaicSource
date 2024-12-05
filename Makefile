@@ -70,7 +70,7 @@ C =		gcc
 #
 CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) '
-GDAL = -lgdal -lcurl -lssh2 -lsqlite3 -llzma -lpoppler -llcms2 -lopenjp2
+GDAL = -lgdal -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2
 #-Wunused-variable'
 #
 CCFLAGS1= -O3 
@@ -207,7 +207,7 @@ mosaic3d:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		gcc $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) \
                 $(MOSAIC3D1)   $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) $(GDALIO) \
                 -lm $(GDAL) -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
 
