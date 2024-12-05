@@ -42,6 +42,7 @@ else
 	BINNAME =	i386
 	FFTDIR = i386-$(OSTYPE)
 endif
+$(info "Machtype $(MACHTYPE)")
 $(info BINNAME="$(BINNAME)")
 #
 # Default binary directory
