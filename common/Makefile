@@ -8,6 +8,9 @@ OBJS=  addIrregData.o  bilinearInterp.o  computeHeading.o computePhiZ.o  compute
 	rangeAzimuthToLL.o readOffsets.o readOldPar.o readShelf.o   readTiePoints.o  readXYDEM.o rotateFlowDirectionToRA.o rotateFlowDirectionToXY.o \
 	scalingFunctions.o smlocateZD.o svBase.o vectorFunc.o xyGetZandSlope.o  xytoll1.o  xytoll.o
 
+MACHTYPE = $(shell uname -m)
+OSTYPE = $(shelf uname -s)
+
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 
 .KEEP_STATE:
