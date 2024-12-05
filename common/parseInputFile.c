@@ -596,7 +596,6 @@ void parseGeojson(char *inputFile, inputImageStructure *inputImage)
 	const char* timeString = OGR_F_GetFieldAsString(myFeature, OGR_F_GetFieldIndex(myFeature, "CorrectedTime"));
 	parseTime(inputImage, (char *) timeString, FALSE, "%2u %2u %lf");
 	fprintf(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);
-	error("STOP");
 	// PRF
 	inputImage->par.prf = OGR_F_GetFieldAsDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "PRF"));
 	// Wavelength

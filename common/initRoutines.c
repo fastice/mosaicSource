@@ -538,8 +538,8 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 	maxX = min(maxXa, maxXd);
 	minY = max(minYa, minYd);
 	maxY = min(maxYa, maxYd);
+	// fprintf(stderr, "%f %f %f %f  %f %f\n", minX, maxX, minY,maxY, outputImage->originX, outputImage->originY);
 	/* Compute image bounds */
-	
 	pad = 15000.;
 	*iMin = (int32_t)((minY * KMTOM - outputImage->originY - pad) / outputImage->deltaY);
 	*jMin = (int32_t)((minX * KMTOM - outputImage->originX - pad) / outputImage->deltaX);

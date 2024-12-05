@@ -17,6 +17,9 @@ USER =	$(shell id -u -n)
 ifneq ($(ROOTDIR)),)
 	ROOTDIR =	/Users/$(USER)
 endif
+
+$(info  "USER is $(USER)")
+
 $(info ROOTDIR="$(ROOTDIR)")
 # Default root for source code
 ifneq ($(PROGDIR)),)

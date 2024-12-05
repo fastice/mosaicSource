@@ -137,5 +137,4 @@ fprintf(stderr,"accross track velocity ---    %f\n",vyra);
 fprintf(stderr,"psi --- %f  %f\n",psi*RTOD,theta);
 fprintf(stderr,"nDays -- %f\n",tiePoints->nDays);
 fprintf(stderr,"\nphiDisplacement --  %f\n",phiDisplacement);
-if(i > 3) error("Stop");
 */
