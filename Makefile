@@ -70,7 +70,7 @@ C =		gcc
 #
 CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) '
-GDAL = -lgdal -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2
+GDAL = -lgdal -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2 -lssh2 -llcms2
 #-Wunused-variable'
 #
 CCFLAGS1= -O3 
