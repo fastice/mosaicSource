@@ -171,7 +171,7 @@ testgeo:
 		); done
 		g++ $(MEM) $(CCFLAGS1) $(NOPIE) \
                 $(TESTGEO) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
-				-lm  -lgdal -o $(BINDIR)/testgeo  -L/usr/lib 	
+				-lm  $(GDAL) -o $(BINDIR)/testgeo  -L/usr/lib 	
 
 OFFSETVRT =	offsetVRT/$(MACHTYPE)-$(OSTYPE)/offsetVRT.o
 OFFSETVRTDIRS =	offsetVRT $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib  $(PROGDIR)/mosaicSource/common
@@ -185,7 +185,7 @@ offsetvrt:
 		); done
 		g++ $(MEM) $(CCFLAGS1) $(NOPIE) \
                 $(OFFSETVRT) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
-                -lm  -lgdal -o $(BINDIR)/offsetvrt  -L/usr/lib 	
+                -lm  $(GDAL) -o $(BINDIR)/offsetvrt  -L/usr/lib 	
 #********************************************************************************
 #********************************** mosaic3d ************************************
 #********************************************************************************
@@ -232,7 +232,7 @@ siminsar:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON)  $(TRIANGLE) $(STANDARD) $(RECIPES) $(GDALIO) \
-				-lm -lgdal -o $(BINDIR)/siminsar
+				-lm $(GDAL) -o $(BINDIR)/siminsar
 
 
 #********************************************************************************
@@ -254,7 +254,7 @@ rparams:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 rParams/$(MACHTYPE)-$(OSTYPE)/rparams.o $(RPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
-                -lm  -lgdal -o $(BINDIR)/rparams
+                -lm  $(GDAL) -o $(BINDIR)/rparams
 
 #********************************************************************************
 #********************************** azparams *************************************
@@ -275,7 +275,7 @@ azparams:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO) \
-                -lm  -lgdal -o $(BINDIR)/azparams
+                -lm  $(GDAL) -o $(BINDIR)/azparams
 #********************************************************************************
 #********************************** computeBaseline *************************************
 #********************************************************************************
@@ -291,7 +291,7 @@ computebaseline:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 computeBaseline/$(MACHTYPE)-$(OSTYPE)/computebaseline.o   $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
-                -lm  -lgdal -o $(BINDIR)/computebaseline
+                -lm  $(GDAL) -o $(BINDIR)/computebaseline
 
 #********************************************************************************
 #********************************** coarsereg ************************************
@@ -310,7 +310,7 @@ coarsereg:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 coarseReg/$(MACHTYPE)-$(OSTYPE)/coarsereg.o $(COARSEREG)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
-                -lm -lgdal -o $(BINDIR)/coarsereg
+                -lm $(GDAL) -o $(BINDIR)/coarsereg
 
 
 #********************************************************************************
@@ -333,7 +333,7 @@ tiepoints:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 tiePoints/$(MACHTYPE)-$(OSTYPE)/tiepoints.o $(TIEPOINTS) $(STANDARD) $(TRIANGLE) $(RECIPES)  $(COMMON) $(GDALIO) \
-		-lm -lgdal -o $(BINDIR)/tiepoints
+		-lm $(GDAL) -o $(BINDIR)/tiepoints
 
 #********************************************************************************
 #********************************** lltora *************************************
@@ -349,7 +349,7 @@ lltora:
 			cd $(PROGDIR)/mosaicSource; \
 		); done
 	        g++ $(MEM) LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) $(GDALIO) \
-                      -lm -lgdal -o $(BINDIR)/lltora
+                      -lm $(GDAL) -o $(BINDIR)/lltora
 
 #********************************************************************************
 #********************************** getlocc *************************************
@@ -370,7 +370,7 @@ getlocc:
 		); done
 		g++ $(MEM) $(CCFLAGS1) \
                 getLocC/$(MACHTYPE)-$(OSTYPE)/getlocc.o $(GETLOCC) $(COMMON) $(TRIANGLE) $(STANDARD) $(RECIPES) $(GDALIO) \
-                 -lm -lgdal -o  $(BINDIR)/getlocc
+                 -lm $(GDAL) -o  $(BINDIR)/getlocc
 
 
 #********************************************************************************
@@ -392,4 +392,4 @@ geomosaic:
 		g++ $(MEM) $(CCFLAGS1)  \
 		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) $(GDALIO) \
 		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o  \
-                -lm -lgdal -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o
+                -lm $(GDAL) -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o
