@@ -12,10 +12,12 @@
 #
 # Base directory for code
 USER =	$(shell id -u -n)
+MACHTYPE = $(shell uname -m)
+OSTYPE = $(shelf uname -s)
 #
 # Default rootdir
 ifneq ($(ROOTDIR)),)
-	ROOTDIR =	/Users/$(USER)
+	ROOTDIR =	$(dir $(CURDIR))
 endif
 
 $(info  "USER is $(USER)")
@@ -23,7 +25,8 @@ $(info  "USER is $(USER)")
 $(info ROOTDIR="$(ROOTDIR)")
 # Default root for source code
 ifneq ($(PROGDIR)),)
-	PROGDIR =       $(ROOTDIR)/progs/GIT64
+#	PROGDIR =       $(ROOTDIR)/progs/GIT64
+	PROGDIR =       $(dir $(CURDIR))
 endif
 $(info PROGDIR ="$(PROGDIR)")
 #
@@ -35,7 +38,6 @@ $(info BINHOME="$(BINHOME)")
 #
 # For historical reasons, can compile with 32-bit memory model using MEM=-m32
 # In almost all cases, should be compiled as 64bit.
-export $MACHTYPE
 ifneq ($(MEM),-m32)
 	BINNAME=	$(MACHTYPE)
 	FFTDIR = $(MACHTYPE)-$(OSTYPE)
@@ -44,13 +46,13 @@ else
 	FFTDIR = i386-$(OSTYPE)
 endif
 $(info "Machtype $(MACHTYPE)")
-$(info BINNAME="$(BINNAME)")
+$(info "BINNAME = $(BINNAME)")
 #
 # Default binary directory
 ifneq ($(BINDIR)),)
 	BINDIR =	$(BINHOME)/bin/$(BINNAME)
 endif
-$(info BINDIR="$(BINDIR)")
+$(info "BINDIR = $(BINDIR)")
 #
 # Create bin dir if it doesn't exist
 $(shell mkdir -p $(BINDIR))
@@ -68,6 +70,7 @@ C =		gcc
 #
 CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) '
+GDAL = -lgdal -lcurl -lssh2 -lsqlite3 -llzma -lpoppler -llcms2 -lopenjp2
 #-Wunused-variable'
 #
 CCFLAGS1= -O3 
@@ -206,7 +209,7 @@ mosaic3d:
 		); done
 		gcc $(MEM) $(CCFLAGS1) \
                 $(MOSAIC3D1)   $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) $(GDALIO) \
-                -lm -lgdal -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
+                -lm $(GDAL) -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
 
 
 #********************************************************************************
