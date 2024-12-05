@@ -62,8 +62,6 @@ $(info INCLUDEPATH ="$(INCLUDEPATH)")
 #
 C =		gcc
 #
-
-
 #
 CCFLAGS1= -O3 
 #-no-pie
