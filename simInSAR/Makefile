@@ -6,7 +6,7 @@ OBJS= siminsar.o parseSceneFile.o  simInSARimage.o   outputSimulatedImage.o getD
 
 
 MACHTYPE = $(shell uname -m)
-OSTYPE = $(shelf uname -s)
+OSTYPE = $(shell uname -s)
 
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 

@@ -4,7 +4,7 @@ CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
 OBJS=  centerLL.o correctTime.o  getlocc.o  glatlon.o
 
 MACHTYPE = $(shell uname -m)
-OSTYPE = $(shelf uname -s)
+OSTYPE = $(shell uname -s)
 
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 

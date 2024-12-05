@@ -5,7 +5,7 @@ OBJS= addBaselineCorrections.o addMotionCorrections.o computeBaseline.o \
 	getPhases.o tiepoints.o  
 
 MACHTYPE = $(shell uname -m)
-OSTYPE = $(shelf uname -s)
+OSTYPE = $(shell uname -s)
 
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 

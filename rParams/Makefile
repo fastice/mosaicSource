@@ -5,7 +5,7 @@ OBJS= rparams.o getROffsets.o computeRParams.o getBaselineFile.o \
       addVelCorrections.o
 
 MACHTYPE = $(shell uname -m)
-OSTYPE = $(shelf uname -s)
+OSTYPE = $(shell uname -s)
 
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 

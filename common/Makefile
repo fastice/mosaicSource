@@ -9,7 +9,7 @@ OBJS=  addIrregData.o  bilinearInterp.o  computeHeading.o computePhiZ.o  compute
 	scalingFunctions.o smlocateZD.o svBase.o vectorFunc.o xyGetZandSlope.o  xytoll1.o  xytoll.o
 
 MACHTYPE = $(shell uname -m)
-OSTYPE = $(shelf uname -s)
+OSTYPE = $(shell uname -s)
 
 $(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
 

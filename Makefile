@@ -1,7 +1,7 @@
 #
 # Modify this section to point to where stuff is.
 # Current names are for a specific file system.
-# ROOTDIR: root directory for code (e.g. /Users/username directory). Likely should change for linux
+# ROOTDIR: root directory for code (e.g. /home/username directory).
 # PROGDIR: location for top source code directory (default ROOTDIR/progs/GIT64)
 # BINHOME: root directory for binaries
 # BINNAME: archetecture dependent basename for bin dir
@@ -12,20 +12,19 @@
 #
 # Base directory for code
 USER =	$(shell id -u -n)
+$(info  "USER is $(USER)")
 MACHTYPE = $(shell uname -m)
-OSTYPE = $(shelf uname -s)
+OSTYPE = $(shell uname -s)
+$(info "MACHTYPE/OSTYPE $(MACHTYPE) $(OSTYPE)")
 #
 # Default rootdir
 ifneq ($(ROOTDIR)),)
 	ROOTDIR =	$(dir $(CURDIR))
 endif
-
-$(info  "USER is $(USER)")
-
 $(info ROOTDIR="$(ROOTDIR)")
+#
 # Default root for source code
 ifneq ($(PROGDIR)),)
-#	PROGDIR =       $(ROOTDIR)/progs/GIT64
 	PROGDIR =       $(dir $(CURDIR))
 endif
 $(info PROGDIR ="$(PROGDIR)")
@@ -34,19 +33,15 @@ $(info PROGDIR ="$(PROGDIR)")
 ifneq ($(BINHOME)),)
 	BINHOME =		~$(USER)
 endif
-$(info BINHOME="$(BINHOME)")
-#
 # For historical reasons, can compile with 32-bit memory model using MEM=-m32
 # In almost all cases, should be compiled as 64bit.
-ifneq ($(MEM),-m32)
+ifneq ($(MEM), -m32)
 	BINNAME=	$(MACHTYPE)
 	FFTDIR = $(MACHTYPE)-$(OSTYPE)
 else
 	BINNAME =	i386
 	FFTDIR = i386-$(OSTYPE)
 endif
-$(info "Machtype $(MACHTYPE)")
-$(info "BINNAME = $(BINNAME)")
 #
 # Default binary directory
 ifneq ($(BINDIR)),)
@@ -56,7 +51,6 @@ $(info "BINDIR = $(BINDIR)")
 #
 # Create bin dir if it doesn't exist
 $(shell mkdir -p $(BINDIR))
-#
 #
 # Default include path
 ifneq ($(INCLUDEPATH)),)
@@ -71,7 +65,6 @@ C =		gcc
 CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) '
 GDAL = -lgdal -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2 -lssh2 -llcms2
-#-Wunused-variable'
 #
 CCFLAGS1= -O3 
 #-no-pie
@@ -79,60 +72,62 @@ CCFLAGS1= -O3
 #CFLAGS =	'-g $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 #CCFLAGS =  '-g $(MEM) -D$(MACHTYPE) $(COMPILEFLAGS)'
 #CCFLAGS1= '-g'
-
+#
 ifneq ($(OSTYPE),darwin)
 	NOPIE =	-no-pie
 endif
 $(info NOPIE ="$(NOPIE)")
-
+#
+# ******** SHOULD NOT NEED TO MODIFY BELOW HERE *********
+#
 COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
-		common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/computePhiZ.o \
-		common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
-		common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
-		common/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o \
-		common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
-		common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
-		common/$(MACHTYPE)-$(OSTYPE)/getHeight.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/getIrregData.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/getMVhInputFile.o \
-		common/$(MACHTYPE)-$(OSTYPE)/getRegion.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/getShelfMask.o \
-		common/$(MACHTYPE)-$(OSTYPE)/getXYHeight.o \
-		common/$(MACHTYPE)-$(OSTYPE)/groundRangeToLLNew.o \
-		common/$(MACHTYPE)-$(OSTYPE)/initMatrix.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/initRoutines.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/interpOffsets.o \
-		common/$(MACHTYPE)-$(OSTYPE)/interpPhaseImage.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/interpVCorrect.o \
-		common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
-		common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/lltoxy.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/lltoxy1.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/outputGeocodedImage.o \
-		common/$(MACHTYPE)-$(OSTYPE)/parseInputFile.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
-		common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
-		common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
-		common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
-		common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/readXYDEM.o \
-		common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToRA.o \
-		common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToXY.o \
-	    common/$(MACHTYPE)-$(OSTYPE)/scalingFunctions.o \
-		common/$(MACHTYPE)-$(OSTYPE)/smlocateZD.o \
-		common/$(MACHTYPE)-$(OSTYPE)/svBase.o \
-		common/$(MACHTYPE)-$(OSTYPE)/vectorFunc.o \
-		common/$(MACHTYPE)-$(OSTYPE)/xyGetZandSlope.o \
-		common/$(MACHTYPE)-$(OSTYPE)/xytoll1.o \
-		common/$(MACHTYPE)-$(OSTYPE)/xytoll.o
+	    		common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
+			common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
+			common/$(MACHTYPE)-$(OSTYPE)/computePhiZ.o \
+			common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
+			common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
+			common/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o \
+			common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
+			common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
+			common/$(MACHTYPE)-$(OSTYPE)/getHeight.o \
+	   		common/$(MACHTYPE)-$(OSTYPE)/getIrregData.o \
+	   		common/$(MACHTYPE)-$(OSTYPE)/getMVhInputFile.o \
+			common/$(MACHTYPE)-$(OSTYPE)/getRegion.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/getShelfMask.o \
+			common/$(MACHTYPE)-$(OSTYPE)/getXYHeight.o \
+			common/$(MACHTYPE)-$(OSTYPE)/groundRangeToLLNew.o \
+			common/$(MACHTYPE)-$(OSTYPE)/initMatrix.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/initRoutines.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/interpOffsets.o \
+			common/$(MACHTYPE)-$(OSTYPE)/interpPhaseImage.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/interpVCorrect.o \
+			common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
+			common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/lltoxy.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/lltoxy1.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/outputGeocodedImage.o \
+			common/$(MACHTYPE)-$(OSTYPE)/parseInputFile.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
+			common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
+			common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
+			common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
+			common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/readXYDEM.o \
+			common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToRA.o \
+			common/$(MACHTYPE)-$(OSTYPE)/rotateFlowDirectionToXY.o \
+	   		 common/$(MACHTYPE)-$(OSTYPE)/scalingFunctions.o \
+			common/$(MACHTYPE)-$(OSTYPE)/smlocateZD.o \
+			common/$(MACHTYPE)-$(OSTYPE)/svBase.o \
+			common/$(MACHTYPE)-$(OSTYPE)/vectorFunc.o \
+			common/$(MACHTYPE)-$(OSTYPE)/xyGetZandSlope.o \
+			common/$(MACHTYPE)-$(OSTYPE)/xytoll1.o \
+			common/$(MACHTYPE)-$(OSTYPE)/xytoll.o
 
 STANDARD =	$(PROGDIR)/clib/$(MACHTYPE)-$(OSTYPE)/standard.o
 
