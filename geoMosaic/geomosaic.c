@@ -60,7 +60,8 @@ int main(int argc, char *argv[])
 	outputImageStructure outputImage;
 	inputImageStructure *inputImage; /* Linked list of input images */
 	float *weights;
-	float x1, y1, x2, y2, fl;
+	double x1, y1, x2, y2;
+	float fl;
 	int32_t nFiles, maxR, maxA;
 	int32_t smoothL, smoothOut, orbitPriority, removePad;
 	int32_t i, j; /* LCV */

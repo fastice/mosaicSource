@@ -1,12 +1,14 @@
 #include <stdio.h>
 #include <stdint.h>
 #include "clib/standard.h"
+#include "gdalIO/gdalIO/grimpgdal.h"
 #include "cRecipes/cRecipes.h"
 #include "geocode.h"
 #include <ogr_core.h>
 #include <ogr_srs_api.h>
 #include <cpl_conv.h>
 #include <gdal.h>
+#include <stddef.h> // For size_t
 
 #define MAXOFFBUF 72000000
 #define MAXOFFLENGTH 30000
@@ -375,6 +377,9 @@ double getReH(conversionDataStructure *cP, inputImageStructure *inputImage, doub
 double bPoly(double b0, double b1, double b2, double x);
 double secondForSAR(SARData *par);
 char *appendSuffix(char *file, char *suffix, char *buf);
+int fileExists(const char *filename, int abort);
+// Function to check if a string ends with a specific extension (case-insensitive)
+int has_extension(const char *filename, const char *extension);
 int32_t rangeAzimuthToLL(double *rg, double range, double iFloat, double rhoSp, double ReH, double Re, double *lat, double *lon,
 						 double *hWGS, inputImageStructure *inputImage, xyDEM *xyDem, double tol, double step);
 double groundRangeToLLNew(double groundRange, double azimuth, double *lat, double *lon, inputImageStructure *inputImage, int32_t recycle);
@@ -386,3 +391,4 @@ OGRDataSourceH getGeojsonDataSet(char *geojsonFile);
 OGRGeometryH createGeometry(double *lat, double *lon);
 OGRFeatureDefnH createFeatureDef(int32_t nState);
 const char *svTag(int32_t i, char *svType);
+char *replace_wildcard(const char *filename, const char *wildcard, const char *replacement);

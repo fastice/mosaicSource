@@ -319,9 +319,14 @@ float interpolateFloatInputImage(inputImageStructure inputImage, double range, d
   Input xy (PS) DEM.
 */
 void readXYDEMGeoInfo(char *xyFile, xyDEM *xydem, int32_t resetProjection);
-void readXYDEMcrop(char *xyFile, xyDEM *xydem, float xmin, float xmax, float ymin, float ymax);
+void readXYDEMcrop(char *xyFile, xyDEM *xyDEM, double xmin, double xmax, double ymin, double ymax);
 void readXYDEM(char *xyFile, xyDEM *xydem);
 void readXYVel(xyVEL *xyvel, char *xyFile);
+void readXYCropVel(xyVEL *xyvel, char *velFile, double xmin, double xmax, double ymin, double ymax);
+//void getGeoTransform(GDALDatasetH hDataset, double *geoTransform);
+// void getImageSize(GDALDatasetH hDataset, int32_t *xSize, int32_t *ySize);
+// int readXYDEMGDALCropped(char *xyFile, xyDEM *xydem, double xMin, double xMax, double yMin, double yMax);
+
 
 void xytoll1(double x, double y, int32_t hemi, double *alat, double *alon,
 			 double dlam, double slat);

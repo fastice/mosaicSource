@@ -3,7 +3,13 @@
 #include "stdlib.h"
 #include "float.h"
 #include "common.h"
+#include <stdio.h>
+#include <ctype.h>
 
+// Function to trim trailing whitespace from a string
+static void trim_trailing_whitespace(char *str);
+// Function to perform a case-insensitive comparison of two strings
+static int case_insensitive_compare(const char *str1, const char *str2);
 /*
   Set up buffers for different mosiacing routines - e.g. speckleTrack
 */
@@ -811,6 +817,19 @@ char *appendSuffix(char *file, char *suffix, char *buf)
 	return datFile;
 }
 
+int fileExists(const char *filename, int abort)
+{
+	FILE *fp = fopen(filename, "r");
+	if(fp)
+	{
+		fclose(fp);
+		return TRUE;
+	}
+	if(abort == TRUE)
+		error("Cannot open %s", filename);
+	return FALSE;
+}
+
 double secondForSAR(SARData *par)
 {
 	return par->hr * 3600.0 + par->min * 60. + par->sec;
@@ -930,4 +949,72 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 	}
 
 	return;
+}
+
+
+// Function to trim trailing whitespace from a string
+static void trim_trailing_whitespace(char *str) {
+    if (!str || *str == '\0') {
+        return; // Handle NULL or empty string
+    }
+    char *end = str + strlen(str) - 1;
+    while (end >= str && isspace((unsigned char)*end)) {
+        *end = '\0';
+        end--;
+    }
+}
+
+// Function to perform a case-insensitive comparison of two strings
+static int case_insensitive_compare(const char *str1, const char *str2) {
+    while (*str1 && *str2) {
+        if (tolower((unsigned char)*str1) != tolower((unsigned char)*str2)) {
+            return FALSE; // Characters do not match
+        }
+        str1++;
+        str2++;
+    }
+    if(*str1 == '\0' && *str2 == '\0') return TRUE; // Ensure both strings end at the same time
+	return FALSE;
+}
+
+// Function to check if a string ends with a specific extension (case-insensitive)
+int has_extension(const char *filename, const char *extension) {
+    if (!filename || !extension) {
+        return FALSE; // Null input is invalid
+    }
+
+    size_t filename_len = strlen(filename);
+    size_t extension_len = strlen(extension);
+
+    // Check if the filename is long enough and compare the end of the string
+    if (filename_len >= extension_len) {
+        return case_insensitive_compare(filename + filename_len - extension_len, extension);
+    }
+    return FALSE; // Filename is too short
+}
+
+char *replace_wildcard(const char *filename, const char *wildcard, const char *replacement) {
+    // Find the position of the wildcard string
+    const char *wildcard_pos = strstr(filename, wildcard);
+    if (!wildcard_pos) {
+        // No wildcard found; return a copy of the original filename
+        char *result = malloc(strlen(filename) + 1);
+        if (result) strcpy(result, filename);
+        return result;  // Return the copy
+    }
+    // Calculate the lengths of the parts
+    size_t prefix_len = wildcard_pos - filename; // Length of the prefix before the wildcard
+    size_t replacement_len = strlen(replacement); // Length of the replacement string
+    size_t wildcard_len = strlen(wildcard); // Length of the wildcard string
+    size_t suffix_len = strlen(wildcard_pos + wildcard_len); // Length of the suffix after the wildcard
+    // Allocate memory for the new string
+    char *result = malloc(prefix_len + replacement_len + suffix_len + 1);
+    if (!result) return NULL;  // Allocation failed
+    // Build the new string
+    strncpy(result, filename, prefix_len);  // Copy prefix
+    result[prefix_len] = '\0';  // Null-terminate to safely append
+    strcat(result, replacement);  // Add replacement
+    strcat(result, wildcard_pos + wildcard_len);  // Add suffix
+
+    return result;
 }

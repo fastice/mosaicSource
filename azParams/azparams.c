@@ -6,7 +6,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include "math.h"
-#include "gdalIO/gdalIO/grimpgdal.h"
+//#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   Estimate baseline using tiepoints.
 

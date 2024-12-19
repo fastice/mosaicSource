@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
-#include "gdalIO/gdalIO/grimpgdal.h"
+//#include "gdalIO/gdalIO/grimpgdal.h"
 
 static GDALRasterBandH getVRTOffsetMeta(char *datFile, int32_t *rO, int32_t *aO, int32_t *nr, int32_t *na, float *deltaR, float *deltaA)
 {

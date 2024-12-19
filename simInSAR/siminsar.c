@@ -1,12 +1,13 @@
 #include "stdio.h"
 #include "string.h"
+
 #include "mosaicSource/common/common.h"
 #include "simInSARInclude.h"
 #include <sys/types.h>
 #include <sys/time.h>
 #include <math.h>
 #include <stdlib.h>
-#include "gdalIO/gdalIO/grimpgdal.h"
+
 /*
   Program to simulate InSAR image including both terrain and motion effects.
 */
@@ -336,7 +337,7 @@ static void usage()
 		"   slantRangeDEM = use dem of image size in slant range coords",
 		"   xyDEM         = xyDEM file with xyDEM.geodat file",
 		"   demFile          = dem file in lat/lon, xy, or slant range format",
-		"   displacementFile = motion file (not implemententet yet)",
+		"   displacementFile = velocity file (not .vx,.vy for biary) and .vv. or .*. for .tif or .vrt",
 		"   sceneFile        = file with location info",
 		"   outPutImage      = simulated interferogram",
 		"if outputImage == stdio output is to stdout");
