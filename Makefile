@@ -156,7 +156,8 @@ LANDSATCODE =		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/readLSOffsets.o \
 					landsatMosaic/$(MACHTYPE)-$(OSTYPE)/makeLandSatMosaic.o
 
 GDALIO = 	$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/gdalIO.o \
-			$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/dictionaryCode.o
+			$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/dictionaryCode.o \
+			$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/tiffWriteCode.o
 
 TARGETS = mosaic3d siminsar rparams azparams coarsereg tiepoints lltora getlocc geomosaic
 
