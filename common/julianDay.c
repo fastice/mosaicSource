@@ -35,3 +35,35 @@ double juldayDouble(int32_t mm, int32_t id, int32_t iyyy)
 {
         return ((double)julday(mm, id, iyyy) - 0.5);
 }
+
+
+void julian_to_gregorian(long jd, int *year, int *month, int *day) {
+    long l, n, i, j, k;
+
+    // Correct Julian Day Number for Gregorian Calendar
+    l = jd + 68569;
+    n = (4 * l) / 146097;
+    l = l - (146097 * n + 3) / 4;
+    i = (4000 * (l + 1)) / 1461001;
+    l = l - (1461 * i) / 4 + 31;
+    j = (80 * l) / 2447;
+    *day = l - (2447 * j) / 80;
+    l = j / 11;
+    *month = j + 2 - (12 * l);
+    *year = 100 * (n - 49) + i + l;
+}
+
+void jd_to_date_and_time(double jd, int *year, int *month, int *day, int *hour, int *minute, int *second) {
+    long intPart = (long)jd;  // Integer part of the Julian Day Number
+    double fracPart = jd - intPart;  // Fractional part of the Julian Day
+
+    // Convert the integer part of the Julian Day Number to a Gregorian date
+    julian_to_gregorian(intPart, year, month, day);
+
+    // Convert the fractional part to time (hours, minutes, seconds)
+    double dayFraction = fracPart * 24.0;  // Multiply by 24 to get the time in hours
+    *hour = (int)dayFraction;
+    dayFraction -= *hour;
+    *minute = (int)(dayFraction * 60);
+    *second = (int)((dayFraction * 60 - *minute) * 60);
+}

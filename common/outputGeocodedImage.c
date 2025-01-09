@@ -69,3 +69,33 @@ void outputGeocodedImage(outputImageStructure outputImage, char *outputFile)
     fclose(imageDatFP);
     return;
 }
+
+
+void outputGeocodedImageTiff(outputImageStructure outputImage, char *outputFile, char *driverType, const char *epsg,
+                            dictNode *summaryMetaData, float noDataValue, int32_t dataType)
+{
+    double geoTransform[6];
+    char *outputFileTiff;
+    if(hasSuffix(outputFile, ".tif"))
+    {
+        outputFileTiff = outputFile;
+    }
+    else 
+    {
+        outputFileTiff = appendSuffix(outputFile, ".tif", (char *)malloc(strlen(outputFile) + 5));
+    }
+    
+    if (outputImage.imageType == COMPLEX) 
+    {
+        error("Tiff output for complex not currently supported");
+    }
+    // Compute Geotransform
+	computeGeoTransform(geoTransform, outputImage.originX, outputImage.originY, outputImage.xSize,
+					    outputImage.ySize, outputImage.deltaX, outputImage.deltaY);
+	// Set up meta data
+	char *timeStamp = timeStampMeta();
+	insert_node(&summaryMetaData, "CreationTime", timeStamp);
+    // Write to tiff file
+    saveAsGeotiff(outputFileTiff, (float *)outputImage.image[0], outputImage.xSize,
+				outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, dataType, noDataValue);
+}

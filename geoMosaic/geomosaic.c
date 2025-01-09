@@ -6,6 +6,9 @@
 #include <sys/time.h>
 #include <math.h>
 #include <stdlib.h>
+#include "gdalIO/gdalIO/grimpgdal.h"
+#include "gdal.h"
+#include "ogr_srs_api.h"
 
 #define PSISAVE 2
 #define GAMMACORSAVE 4
@@ -16,7 +19,7 @@
 static void parseAntPat(char *antPatFile, inputImageStructure *inputImage);
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
-					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData);
+					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale);
 static void usage();
 static void processMosaicDateGeo(outputImageStructure *outputImage, char *date1, char *date2);
 static void parseBetaNought(inputImageStructure *inputImage);
@@ -25,7 +28,23 @@ static void parseImages(inputImageStructure *inputImages, outputImageStructure *
 static void outputBounds(inputImageStructure *inputImage, outputImageStructure *outputImage, int32_t nFiles);
 static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStructure *outputImage,
 							  int32_t maxR, int32_t maxA, int32_t nFiles, int32_t removePad);
-static void outputS1Cal(outputImageStructure outputImage, char *outputFile, float **psi, float **gamma, int32_t s1Cal);
+static void outputS1Cal(outputImageStructure outputImage, char *outputFile, float **psi, float **gamma, int32_t s1Cal, char *driver);
+static void byteScaleImage(outputImageStructure *outputImage, double lowerBound, double upperBound, double scale, double exponent);
+
+typedef struct {
+    double lowerBound;
+    double upperBound;
+    double scale;
+    double exponent;
+} byteScaleParameters;
+
+byteScaleParameters byteScaleParams = {
+	.lowerBound = 0.53,
+	.upperBound = 2.4,
+	.scale = 0.00015 / 0.13,
+	.exponent = 0.2
+};
+
 /*
    Global variables definitions
 */
@@ -43,18 +62,18 @@ int32_t hybridZ = -1;
 int32_t noPower = -1;
 int32_t rsatFineCal = FALSE;
 int32_t S1Cal = FALSE;
-
 char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 1234;		/* Kluge to maintain backwards compat 9/13/06 */
 float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
 float *smoothBuf;
+
 int main(int argc, char *argv[])
 {
 	extern int32_t nearestDate;
 	extern int32_t noPower;
 	extern char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 	extern float *smoothBuf;
-	float **psi, **gamma;
+	float **psi, **gamma, *fpImage;
 	void *dem;
 	xyDEM xyDem;
 	outputImageStructure outputImage;
@@ -62,6 +81,7 @@ int main(int argc, char *argv[])
 	float *weights;
 	double x1, y1, x2, y2;
 	float fl;
+	int32_t GTiff, COG, byteScale, dataType;
 	int32_t nFiles, maxR, maxA;
 	int32_t smoothL, smoothOut, orbitPriority, removePad;
 	int32_t i, j; /* LCV */
@@ -70,13 +90,14 @@ int main(int argc, char *argv[])
 	char *demFile, *inputFile, *outFile;
 	char **imageFiles, **geodatFiles, **antPatFiles;
 	char tmp[2048];
+	char *driver;
 	/*
 	   Read command line args and compute filenames
 	*/
 	GDALAllRegister();
 	smoothBuf = NULL;
 	readArgs(argc, argv, &inputFile, &demFile, &outFile, &fl, &removePad, &nearestDate, &noPower,
-			 &hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData);
+			 &hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData, &driver, &byteScale);
 	/* This step just reads in the dem projection info, which is then used for the outputs */
 	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
 	outputImage.slat = xyDem.stdLat;
@@ -125,23 +146,87 @@ int main(int argc, char *argv[])
 	  Output result
 	*/
 	if (S1Cal > 0)
-		outputS1Cal(outputImage, outFile, psi, gamma, S1Cal);
-	else
-		outputGeocodedImage(outputImage, outFile);
+		outputS1Cal(outputImage, outFile, psi, gamma, S1Cal, driver);
+	else 
+	{
+		if(driver == NULL)
+		{	
+			outputGeocodedImage(outputImage, outFile);
+		}
+		else
+		{
+			dictNode *summaryMetaData = NULL;
+			const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);
+			if(byteScale == FALSE) {
+				dataType = GDT_Float32;
+			} 
+			else
+			{
+				dataType = GDT_Byte;
+				// Constants need to made user definable.
+				byteScaleImage(&outputImage, 0.53, 2.4, 0.00015 / 0.13, 0.2);
+			}
+			
+			outputGeocodedImageTiff(outputImage, outFile, driver, epsg, summaryMetaData, 0., dataType);
+		}
+		
+	}
 	/* For now only save incidence angle buffer if S1Cal */
 	fprintf(stderr, "********* %i\n", S1Cal);
 }
 
-static void outputS1Cal(outputImageStructure outputImage, char *outFile, float **psi, float **gamma, int32_t S1Cal)
+static void byteScaleImage(outputImageStructure *outputImage, double lowerBound, double upperBound, double scale, double exponent)
+{
+	float **originalImage, value;
+	unsigned char **scaledImage;
+	unsigned char *byteBuff;
+	extern byteScaleParameters byteScaleParams;
+
+	originalImage = (float **)outputImage->image;
+	byteBuff = (unsigned char *)malloc((size_t)(outputImage->xSize * outputImage->ySize * sizeof(unsigned char)));
+	scaledImage  = (unsigned char **)malloc((size_t)(outputImage->ySize * sizeof(unsigned char *)));
+	for (int32_t i = 0; i < outputImage->ySize; i++)
+	{
+		scaledImage[i] = (unsigned char *)&(byteBuff[i * outputImage->xSize]);
+		for(int32_t j = 0; j < outputImage->ySize; j++ )
+		{
+			if(originalImage[i][j] == 0.0)
+			{
+				scaledImage[i][j] = 0;
+			} 
+			else
+			{
+			    value = pow((byteScaleParams.scale * originalImage[i][j]), byteScaleParams.exponent);
+				value = (value - byteScaleParams.lowerBound) * (1. /(byteScaleParams.upperBound - byteScaleParams.lowerBound)) * 255.;
+				value = min(255, max(1, value));
+				scaledImage[i][j] = (unsigned char) value;
+			}
+		}
+	}
+	outputImage->image = (void **)scaledImage;
+}
+
+
+static void outputS1Cal(outputImageStructure outputImage, char *outFile, float **psi, float **gamma, int32_t S1Cal, char *driver)
 {
 	char tmp[2048], *psiFile, *gFile, *sigFile;
 	float **tmpFloat;
 	int32_t i, j;
+	const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);	
+	int32_t dataType = GDT_Float32;
 	/*
 	  output image
 	 */
 	sigFile = appendSuffix(outFile, ".sigma0", tmp);
-	outputGeocodedImage(outputImage, sigFile);
+	if(driver == NULL)
+	{
+		outputGeocodedImage(outputImage, sigFile);
+	}
+	else
+	{
+		dictNode *summaryMetaData = NULL;
+		outputGeocodedImageTiff(outputImage, sigFile, driver, epsg, summaryMetaData, -30., dataType);
+	}
 	fprintf(stderr, "%i %i %i\n", S1Cal, S1Cal & PSISAVE, S1Cal & GAMMACORSAVE);
 	/*
 	  Output gamma
@@ -163,7 +248,15 @@ static void outputS1Cal(outputImageStructure outputImage, char *outFile, float *
 				tmpFloat[i][j] = max(roundf(tmpFloat[i][j] * 100) / 100., MINS1DB);
 			}
 		}
-		outputGeocodedImage(outputImage, gFile);
+		if(driver == NULL)
+		{
+			outputGeocodedImage(outputImage, gFile);
+		}
+		else
+		{
+			dictNode *summaryMetaData = NULL;
+			outputGeocodedImageTiff(outputImage, gFile, driver, epsg, summaryMetaData, -30., dataType);
+		}
 	}
 	/* Output psi 	*/
 	if ((S1Cal & PSISAVE) > 0)
@@ -374,7 +467,7 @@ static void parseAntPat(char *antPatFile, inputImageStructure *inputImage)
 
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int32_t *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
-					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData)
+					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -384,7 +477,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	int32_t doy[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 333};
 	int32_t i, n;
 
-	if (argc < 4 || argc > 20)
+	if (argc < 4 || argc > 28)
 	{
 		fprintf(stderr, "To many/few args %i", argc);
 		usage();
@@ -403,6 +496,8 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	*smoothOut = 1;
 	stringbuf[0] = '\0';
 	*orbitPriority = -1;
+	*driver = NULL;
+	*byteScale = FALSE;
 	for (i = 1; i <= n; i++)
 	{
 		argString = strchr(argv[i], '-');
@@ -443,7 +538,19 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		else if (strstr(argString, "rsatFineCal") != NULL)
 		{
 			*rsatFineCal = 1;
-		}
+		} 
+		else if (strstr(argString, "COG") != NULL)
+		{
+			*driver = "COG";
+		}	
+		else if (strstr(argString, "GTiff") != NULL)
+		{
+			*driver = "GTiff";
+		}	
+		else if (strstr(argString, "byteScale") != NULL)
+		{
+			*byteScale = TRUE;
+		}		
 		else if (strstr(argString, "S1Cal") != NULL)
 		{
 			*S1Cal = TRUE;
@@ -498,11 +605,32 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		{
 			fprintf(stderr, "obsolute center flag - can remove");
 		}
+		else if (strstr(argString, "BSlowerBound") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &byteScaleParams.lowerBound);
+			i++;
+		}
+		else if (strstr(argString, "BSupperBound") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &byteScaleParams.upperBound);
+			i++;
+		}
+		else if (strstr(argString, "BSexponent") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &byteScaleParams.exponent);
+			i++;
+		}
+		else if (strstr(argString, "BSscale") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &byteScaleParams.scale);
+			i++;
+		}
 		else
 		{
 			fprintf(stderr, "\n\narg %s not parsed \n\n", argString);
 			usage();
-		}
+		} 	
+		
 	}
 	if (strlen(stringbuf) > 8)
 	{
@@ -540,6 +668,11 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		fprintf(stderr, "nearest data %i %i %i\n", month, day, year);
 	}
 
+	if(*driver == NULL && *byteScale == TRUE)
+	{
+		fprintf(stderr,"\nbyte scale only works with tiff output\n");
+		usage();
+	}
 	if (hybridZ > 0 && nearestDate < 0)
 		error("hybrid Z requires a nearest date ");
 	*inputFile = argv[argc - 3];
@@ -558,6 +691,14 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	fprintf(stderr, "nearestDate= %i\n", *nearestDate);
 	fprintf(stderr, "noPower= %i\n", *noPower);
 	fprintf(stderr, "orbitPriority (<0 none; 0 desc; 1 asc) = %i\n", *orbitPriority);
+	if(*byteScale == TRUE)
+	{
+		fprintf(stderr, "\nByte Scale Parameters\n");
+		fprintf(stderr, "\tlowerBound %lf\n", byteScaleParams.lowerBound);
+		fprintf(stderr, "\tupperBound %lf\n", byteScaleParams.upperBound);
+		fprintf(stderr, "\tscale %lf\n", byteScaleParams.scale);
+		fprintf(stderr, "\texponent %lf\n\n", byteScaleParams.exponent);
+	}
 
 	if (*orbitPriority >= 0 || (*S1Cal & TRUE) == TRUE)
 		if (*fl > 0)
@@ -617,13 +758,20 @@ static void parseBetaNought(inputImageStructure *inputImage)
 
 static void usage()
 {
-	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
 		  "mosaic images*",
 		  "Usage:", " \033[1mgeomosaic -rsatFineCal -S1Cal -noPower -noData -descending -ascending -nearestDate "
 					"YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL -smoothOut"
 					"smoothOut -fl fl -removePad pad -xyDEM \\",
 		  "\tinputFile Demfile outPutImage\033[0m",
 		  "where\n",
+		   "\tGTiff =\t\t\t Save to geotiff files will add .tif extension if not present",
+		  "\tCOG =\t\t\t Save to Cloud Optimized Geotiff will add .tif extension if not present",
+		  "\tbyteScale			write data a scaled byte ouput to look nice using empirically determined params",
+		  "\tBSlowerBound		lowerBound for byteScale [0.53]",
+		  "\tBSupperBound		upperBound for byteScale [2.4]",
+		  "\tBSscale			scale factor for byteScale [0.0011538463]",
+		  "\tBSexponent			exponent for byteScale [0.2]",
 		  "\tfl               	= feather length",
 		  "\tdate1, date2 	  	= range of dates to include in mosaic",
 		  "\tdescending      	= put descending on top",

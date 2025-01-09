@@ -340,7 +340,8 @@ float **mallocImage(int32_t nr, int32_t nc);
 void centerLLNew(inputImageStructure *inputImage, double *lat, double *lon, double deltaT);
 int32_t julday(int32_t mm, int32_t id, int32_t iyyy);
 double juldayDouble(int32_t mm, int32_t id, int32_t iyyy);
-
+void julian_to_gregorian(long jd, int *year, int *month, int *day);
+void jd_to_date_and_time(double jd, int *year, int *month, int *day, int *hour, int *minute, int *second);
 double earthRadius(double lat, double rp, double re);
 double earthRadiusCurvatureWGS84(double lat);
 double earthRadiusWGS84(double lat);
@@ -376,6 +377,7 @@ void setTiePointsMapProjectionForHemisphere(tiePointsStructure *tiePoints);
 double getReH(conversionDataStructure *cP, inputImageStructure *inputImage, double azimuth);
 double bPoly(double b0, double b1, double b2, double x);
 double secondForSAR(SARData *par);
+int32_t hasSuffix(const char *filename, const char *suffix);
 char *appendSuffix(char *file, char *suffix, char *buf);
 int fileExists(const char *filename, int abort);
 // Function to check if a string ends with a specific extension (case-insensitive)

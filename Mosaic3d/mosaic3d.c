@@ -25,6 +25,7 @@
   are used to carry around the locations of the blocks of memory. Prior to reading each image, the
   buffer pointers are set as needed with explicit routine (setBuffer).
 */
+static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images, vhParams *params);
 static void removeOutOfBounds(outputImageStructure *outputImage, inputImageStructure **ascImages, vhParams **ascParams, int32_t *nImages);
 static void findOutBounds(outputImageStructure *outputImage, inputImageStructure *ascImages, inputImageStructure *descImages,
 						  landSatImage *LSImages, int32_t *autoSize, int32_t writeBlank);
@@ -35,7 +36,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 					 referenceVelocity *refVel, int32_t *statsFlag, outputImageStructure *outputImage, int32_t *writeBlank,
 					 char **verticalCorrectionFile, int32_t *GTiff, int32_t *COG);
 static void write3Doutput(outputImageStructure outputImage, char *outFileBase);
-static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg);
+static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg, char *date1,  char *date2);
 static int32_t writeMetaFile(inputImageStructure *image, outputImageStructure *outputImage, vhParams *params, char *outFileBase,
 							 char *demFile, int32_t writeBlank);
 void caldat(int32_t julian, int32_t *mm, int32_t *id, int32_t *iyyy);
@@ -144,7 +145,8 @@ int main(int argc, char *argv[])
 			outputImage.fpLog, &outputImage);
 	logInputFiles3d(&outputImage, geodatFiles, phaseFiles, baselineFiles, rOffsetFiles, rParamsFiles, offsetFiles, azParamsFiles,
 					nDays, weights, crossFlags, nFiles, offsetFlag);
-
+	
+	fprintf(stderr, "%s %s\n", date1, date2); 
 	/*
 	  Determine hemisphere
 	*/
@@ -201,6 +203,7 @@ int main(int argc, char *argv[])
 	mallocOutputImage(&outputImage);
 	/* Consolodate lists */
 	consolodateLists(&images, &params, ascImages, descImages, ascParams, descParams, nAsc, nDesc);
+ 	computeDateRange(&date1, &date2, &outputImage, images, params);
 	tmpP = params;
 	for (tmp = images; tmp != NULL; tmp = tmp->next, tmpP = tmpP->next)
 	{
@@ -309,7 +312,7 @@ int main(int argc, char *argv[])
 			{
 				char *driverType;
 				if(COG == TRUE) driverType = "COG"; else driverType = "GTiff";
-				write3DTiffOutput(outputImage, outFileBase, driverType, epsg);
+				write3DTiffOutput(outputImage, outFileBase, driverType, epsg, date1, date2);
 			}
 			
 			remove("NoOutput_noDataInRange");
@@ -324,6 +327,29 @@ int main(int argc, char *argv[])
 	{
 		writeTieFile(&outputImage, &dem, &verticalCorrection, outFileBase, tieThresh, extraTieFile, tideFile, autoSize);
 	}
+}
+
+static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images, vhParams *params)
+{
+	double jd1 = outputImage->jd2, jd2 = outputImage->jd1;
+	int year, month, day, hour, minute, second;
+	if(*date1 == NULL || *date2 == NULL) {
+		vhParams *currentParams;
+		inputImageStructure *currentImage;
+		for (currentImage = images, currentParams = params;
+			 currentImage != NULL;
+			 currentImage = currentImage->next, currentParams = currentParams->next)
+		{
+			fprintf(stderr, "jd %lf", currentImage->julDay);
+			jd1 = min(jd1, currentImage->julDay);
+			jd2 = max(jd2, currentImage->julDay + currentParams->nDays);
+		}
+	}
+	jd_to_date_and_time(jd1, &year, &month, &day, &hour, &minute, &second);
+	if(*date1 == NULL) { *date1 = malloc(11); sprintf(*date1, "%4d-%02d-%02d", year, month, day);}
+	jd_to_date_and_time(jd2, &year, &month, &day, &hour, &minute, &second);
+	if(*date2 == NULL) { *date2 = malloc(11); sprintf(*date2, "%4d-%02d-%02d", year, month, day);}
+	fprintf(stderr, "%s %s", *date1, *date2);
 }
 
 static void removeOutOfBounds(outputImageStructure *outputImage, inputImageStructure **ascImages, vhParams **ascParams, int32_t *nImages)
@@ -713,11 +739,12 @@ static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 
 
 
-static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg)
+static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg, char *date1,  char *date2)
 {
 	char *outFileVx, *outFileVy, *outFileVz; /* Output files */
 	char *outFileEx, *outFileEy;
 	double geoTransform[6];
+	float noDataValues[5] = {-2.0e9, -2.0e9, -2.0e9, -2.0e9, -2.0e9};
 	/* Output file names velocity */
 	outFileVx = appendSuffix(outFileBase, ".vx.tif", (char *)malloc(strlen(outFileBase) + 8));
 	outFileVy = appendSuffix(outFileBase, ".vy.tif", (char *)malloc(strlen(outFileBase) + 8));
@@ -739,43 +766,50 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 		filterDT(outputImage);
 	}
     // Compute Geotransform
-
 	computeGeoTransform(geoTransform, outputImage.originX, outputImage.originY, outputImage.xSize,
 					    outputImage.ySize, outputImage.deltaX, outputImage.deltaY);
-
+	// Set up meta data
+	dictNode *summaryMetaData = NULL;
 	char *timeStamp = timeStampMeta();
-	char *metaData[] = {timeStamp, NULL};
-	for(int i=0; i<6; i++) fprintf(stderr, "%.3lf ", geoTransform[i]);
-	fprintf(stderr, "\n%s\n", timeStamp);
+	insert_node(&summaryMetaData, "FirstDate", date1);
+	insert_node(&summaryMetaData, "LastDate", date2);
+	insert_node(&summaryMetaData, "CreationTime", timeStamp);
+	// Get epsg code
 	if(epsg == NULL)
 	{
 		epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere); 
 	}	
+	// Save files as tiffs
 	// Vx
 	saveAsGeotiff(outFileVx, (float *)outputImage.image[0], outputImage.xSize,
-					    outputImage.ySize, geoTransform, epsg, metaData, driverType, GDT_Float32);
+				outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, GDT_Float32, noDataValues[0]);
 	free(outputImage.image[0]);
 	free(outputImage.image);
 	// Vy
 	saveAsGeotiff(outFileVy, (float *)outputImage.image2[0], outputImage.xSize,
-				 outputImage.ySize, geoTransform, epsg, metaData, driverType, GDT_Float32);
+				 outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, GDT_Float32, noDataValues[1]);
 	free(outputImage.image2[0]);
 	free(outputImage.image2);
 	// Vz
 	saveAsGeotiff(outFileVz, (float *)outputImage.image3[0], outputImage.xSize,
-				 outputImage.ySize, geoTransform, epsg, metaData, driverType, GDT_Float32);
+				 outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, GDT_Float32, noDataValues[2]);
 	free(outputImage.image3[0]);
 	free(outputImage.image3);
 	// Ex
 	saveAsGeotiff(outFileEx, (float *)outputImage.errorX[0], outputImage.xSize,
-				 outputImage.ySize, geoTransform, epsg, metaData, driverType, GDT_Float32);
+				 outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, GDT_Float32, noDataValues[3]);
 	free(outputImage.errorX[0]);
 	free(outputImage.errorX);
 	// Ey
 	saveAsGeotiff(outFileEy, (float *)outputImage.errorY[0], outputImage.xSize,
-				 outputImage.ySize, geoTransform, epsg, metaData, driverType, GDT_Float32);
+				 outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, GDT_Float32, noDataValues[4]);
 	free(outputImage.errorY[0]);
 	free(outputImage.errorY);	
+	//
+	// Create VRT
+	char *vrtFile = appendSuffix(outFileBase, ".vrt", (char *)malloc(strlen(outFileBase) + 5));
+	const char *bands[] = {outFileVx, outFileVy, outFileVz, outFileEx, outFileEy};
+	makeTiffVRT(vrtFile, bands, 5, noDataValues, summaryMetaData);
 }
 
 static void processMosaicDate(outputImageStructure *outputImage, char *date1, char *date2)
@@ -942,7 +976,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 	int32_t noVhFlag, no3d, rOffsetFlag, vzFlag, noTide, timeOverlapFlag;
 	int32_t deltaB;
 
-	if (argc < 4 || argc > 27)
+	if (argc < 4 || argc > 30)
 	{
 		fprintf(stderr, "Arg count > 27: %i\n", argc);
 		usage(); /* Check number of args */

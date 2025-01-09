@@ -492,7 +492,8 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority)
 {
 	int32_t i1, j1;
-	if (orbitPriority < 0)
+	fprintf(stderr, "HERE00000000  %i\n", orbitPriority);
+	if (orbitPriority >= 0)
 		return;
 
 	for (i1 = 0; i1 < outputImage->ySize; i1++)

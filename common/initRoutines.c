@@ -803,7 +803,25 @@ void setTiePointsMapProjectionForHemisphere(tiePointsStructure *tiePoints)
 	}
 	tiePoints->imageCoords = FALSE;
 }
+int32_t hasSuffix(const char *filename, const char *suffix)
+{
+    if (!filename || !suffix) {
+        return FALSE; // Null pointer check
+    }
+    size_t filename_len = strlen(filename);
+    size_t suffix_len = strlen(suffix);
 
+    // If the suffix is longer than the filename, it can't match
+    if (suffix_len > filename_len) {
+        return FALSE;
+    }
+    // Compare the end of the filename with the suffix
+    if(strcmp(filename + (filename_len - suffix_len), suffix) == 0)
+	{
+		return TRUE;
+	} 
+	return FALSE;
+}
 /*
 append a suffix to a file name, use buff for space.
 */

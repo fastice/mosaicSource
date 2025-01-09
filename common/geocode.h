@@ -7,6 +7,7 @@
 
 #define LSB 0
 #define MSB 1
+#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   This is the include file for using geocode routines with other programs.
 */
@@ -301,6 +302,7 @@ size_t fwriteOptionalBS(void *ptr, size_t nitems, size_t size, FILE *fp, int32_t
   with image header info
 */
 void outputGeocodedImage(outputImageStructure outputImage, char *outputFile);
+void outputGeocodedImageTiff(outputImageStructure outputImage, char *outputFile, char *driverType, const char *epsg, dictNode *summaryMetaData, float noDataValue, int32_t dataType);
 /*
    Convert lat/lon and h to image coordinates using alogrithm by Shusun Li.
 */
