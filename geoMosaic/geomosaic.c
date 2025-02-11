@@ -142,6 +142,7 @@ int main(int argc, char *argv[])
 	*/
 	makeGeoMosaic(inputImage, outputImage, dem, nFiles, maxR, maxA, imageFiles, fl, smoothL,
 				  smoothOut, orbitPriority, &psi, &gamma);
+	fprintf(stderr, "Outputting result....");
 	/*
 	  Output result
 	*/
@@ -166,13 +167,11 @@ int main(int argc, char *argv[])
 				// Constants need to made user definable.
 				byteScaleImage(&outputImage, 0.53, 2.4, 0.00015 / 0.13, 0.2);
 			}
-			
 			outputGeocodedImageTiff(outputImage, outFile, driver, epsg, summaryMetaData, 0., dataType);
 		}
 		
 	}
 	/* For now only save incidence angle buffer if S1Cal */
-	fprintf(stderr, "********* %i\n", S1Cal);
 }
 
 static void byteScaleImage(outputImageStructure *outputImage, double lowerBound, double upperBound, double scale, double exponent)
@@ -188,7 +187,7 @@ static void byteScaleImage(outputImageStructure *outputImage, double lowerBound,
 	for (int32_t i = 0; i < outputImage->ySize; i++)
 	{
 		scaledImage[i] = (unsigned char *)&(byteBuff[i * outputImage->xSize]);
-		for(int32_t j = 0; j < outputImage->ySize; j++ )
+		for(int32_t j = 0; j < outputImage->xSize; j++ )
 		{
 			if(originalImage[i][j] == 0.0)
 			{

@@ -25,7 +25,7 @@
   are used to carry around the locations of the blocks of memory. Prior to reading each image, the
   buffer pointers are set as needed with explicit routine (setBuffer).
 */
-static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images, vhParams *params);
+static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images, vhParams *params, double minJDLS, double maxJDLS);
 static void removeOutOfBounds(outputImageStructure *outputImage, inputImageStructure **ascImages, vhParams **ascParams, int32_t *nImages);
 static void findOutBounds(outputImageStructure *outputImage, inputImageStructure *ascImages, inputImageStructure *descImages,
 						  landSatImage *LSImages, int32_t *autoSize, int32_t writeBlank);
@@ -91,13 +91,14 @@ int main(int argc, char *argv[])
 	outputImageStructure outputImage;				  /* Output image */
 	vhParams *ascParams, *descParams, *params, *tmpP; /* Param lists */
 	irregularData *irregDat, *irregTmp;
-	inputImageStructure *ascImages, *descImages, *images, *tmp; /* Lists of asc/desc and all  images */
+	inputImageStructure *ascImages=NULL, *descImages=NULL, *images=NULL, *tmp; /* Lists of asc/desc and all  images */
 	double tieThresh;											/* Limiting value used for tiepoints */
 	char *demFile, *inputFile, *outFileBase;
 	char **phaseFiles, **geodatFiles, **baselineFiles;
 	float *weights, *nDays;
 	float timeThresh, timeThreshPhase;	 /* For mosaicking 3Offsets only use crossing pairs with this many days seperation */
 	float fl;							 /* Feathering length */
+	double minLSJD = HIGHJD, maxLSJD = 0; // Initial values
 	char *irregFile;					 /* File with irregularly spaced data for interpolation */
 	char **azParamsFiles, **offsetFiles; /* Az paramter and offest files */
 	char **rOffsetFiles, **rParamsFiles; /* Range offset file */
@@ -156,7 +157,8 @@ int main(int argc, char *argv[])
 	LSImages = NULL;
 	if (landSatFile != NULL)
 	{
-		LSImages = parseLSInputs(landSatFile, LSImages, outputImage.jd1, outputImage.jd2, outputImage.timeOverlapFlag);
+		LSImages = parseLSInputs(landSatFile, LSImages, outputImage.jd1, outputImage.jd2, outputImage.timeOverlapFlag, &minLSJD, &maxLSJD);
+		fprintf(stderr, "min/max JD from Landsat %f  %f\n", minLSJD, maxLSJD);
 	}
 	/* Find bounding box */
 	fprintf(stderr, "nAsc/nDesc %i %i\n", nAsc, nDesc);
@@ -176,7 +178,9 @@ int main(int argc, char *argv[])
 		fflush(outputImage.fpLog);
 	}
 	else
+	{
 		outputImage.shelfMask = NULL;
+	}
 
 	if (verticalCorrectionFile != NULL)
 	{
@@ -203,7 +207,7 @@ int main(int argc, char *argv[])
 	mallocOutputImage(&outputImage);
 	/* Consolodate lists */
 	consolodateLists(&images, &params, ascImages, descImages, ascParams, descParams, nAsc, nDesc);
- 	computeDateRange(&date1, &date2, &outputImage, images, params);
+ 	computeDateRange(&date1, &date2, &outputImage, images, params, minLSJD, maxLSJD);
 	tmpP = params;
 	for (tmp = images; tmp != NULL; tmp = tmp->next, tmpP = tmpP->next)
 	{
@@ -215,20 +219,15 @@ int main(int argc, char *argv[])
 		}
 		fprintf(stderr, "--\n");
 	}
-	/*
-	  Init and input DEM
-	*/
+	//  Init and input DEM
 	fprintf(outputImage.fpLog, ";\n; About to Read XYDEM %s\n", demFile);
 	readXYDEM(demFile, &dem);
 	for (tmpP = params; tmpP != NULL; tmpP = tmpP->next)
 		tmpP->xydem = dem;
 	fprintf(outputImage.fpLog, ";\n; Returned from readXYDEM\n");
 	fflush(outputImage.fpLog);
-	/*
-	  Init values
-	*/
+	// Init values
 	init3DImages(&outputImage, &refVel);
-
 	/*
 	  Step 0: Switched to first map since to accomdate discard of large dt.
 	  *******************************START Landsat mosaics******************************
@@ -254,8 +253,6 @@ int main(int argc, char *argv[])
 		make3DOffsets(images, params, &dem, &outputImage, fl, timeThresh);
 		fprintf(stderr, "End of 3d offsets %i\n", threeDOffFlag);
 	}
-	/*	  Setup dem stuff	*/
-
 	/*
 	   Step 2: Make phase/az offset velocity
 	*/
@@ -264,7 +261,9 @@ int main(int argc, char *argv[])
 		makeVhMosaic(images, params, &outputImage, fl);
 	}
 	else
+	{
 		fprintf(outputImage.fpLog, ";\n; NoVh flag set, not Enterng makeVhMosaic\n;\n");
+	}
 	/*
 	  Step 3: Include fully speckle-tracked data
 	*/
@@ -273,7 +272,9 @@ int main(int argc, char *argv[])
 		speckleTrackMosaic(images, params, &outputImage, fl, &refVel, statsFlag);
 	}
 	else
+	{
 		fprintf(outputImage.fpLog, ";\n; rOffset flag False, not Entering speckleTrackMosaic\n;\n");
+	}
 	/********************************END Landsat mosaics******************************	*/
 	/*
 	  Step 6: Include irregularly interpolated data, if specified.
@@ -329,10 +330,16 @@ int main(int argc, char *argv[])
 	}
 }
 
-static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images, vhParams *params)
+static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images,
+							 vhParams *params, double minJDLS, double maxJDLS)
 {
-	double jd1 = outputImage->jd2, jd2 = outputImage->jd1;
+	double jd1 = minJDLS, jd2 = maxJDLS;
 	int year, month, day, hour, minute, second;
+	// No images to compute date range for.
+	if(images == NULL) 
+	{
+		return;
+	}
 	if(*date1 == NULL || *date2 == NULL) {
 		vhParams *currentParams;
 		inputImageStructure *currentImage;
@@ -340,10 +347,14 @@ static void computeDateRange(char **date1, char **date2, outputImageStructure *o
 			 currentImage != NULL;
 			 currentImage = currentImage->next, currentParams = currentParams->next)
 		{
-			fprintf(stderr, "jd %lf", currentImage->julDay);
+			// fprintf(stderr, "jd %lf", currentImage->julDay);
 			jd1 = min(jd1, currentImage->julDay);
 			jd2 = max(jd2, currentImage->julDay + currentParams->nDays);
 		}
+	}
+	else 
+	{
+		return;
 	}
 	jd_to_date_and_time(jd1, &year, &month, &day, &hour, &minute, &second);
 	if(*date1 == NULL) { *date1 = malloc(11); sprintf(*date1, "%4d-%02d-%02d", year, month, day);}

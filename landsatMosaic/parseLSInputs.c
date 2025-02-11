@@ -12,12 +12,13 @@ char *lineBufLS, *keyBuf, *valueBuf; /* Input line buffer */
 */
 float dateWeight(double jd1, double jd2, double jdRange1, double jdRange2);
 
-landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1, double jd2, int timeOverlapFlag)
+landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1, double jd2, int timeOverlapFlag, double *minJD, double *maxJD)
 {
 	extern char *lineBufLS, *keyBuf, *valueBuf; /* Input line buffer */
 	FILE *fp;
 	int32_t notdone, lineCount, lineLength;
 	landSatImage *tmpImage, *firstImage, *prevImage;
+	
 	char *line, *lineSave;
 	char *matchFile, *fitFile, *maskFile;
 	float tmpWeight;
@@ -27,13 +28,12 @@ landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1,
 	keyBuf = (char *)malloc(sizeof(char) * (LINEMAX + 1));
 	valueBuf = (char *)malloc(sizeof(char) * (LINEMAX + 1));
 	lineBufLS = (char *)malloc(sizeof(char) * (LINEMAX + 1));
-
 	line = (char *)malloc(sizeof(char) * (LINEMAX + 1));
 	lineSave = line;
 	fprintf(stderr, "Enter ParseLSInputs -- %s \n", inputFile);
-	/*
-	   Open Input File
-	*/
+	*minJD = 2e9;
+	*maxJD = 0.0;
+	// Open Input File
 	fp = openInputFile(inputFile);
 	/*
 	  Loop through lines
@@ -123,6 +123,8 @@ landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1,
 					strcpy(LSImages->fitResult.fitFile, fitFile);
 				}
 				parseFitFile(&(LSImages->fitResult));
+				*minJD = min(*minJD, LSImages->matches.jdEarly);
+				*maxJD = max(*maxJD, LSImages->matches.jdLate);
 			}
 			else
 			{

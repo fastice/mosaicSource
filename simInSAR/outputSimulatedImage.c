@@ -45,7 +45,7 @@ static void outputLL(sceneStructure scene, char *outputFile)
 		}
 		fclose(imageFP);
 	}
-	file = appendSuffix(outputFile, ".ll.vrt", bufvrt);
+	file = STR_BUFF("%s.ll.vrt", outputFile); 
 	if(scene.byteOrder == MSB) byteSwapOption = "ByteOrder=MSB"; else byteSwapOption = "ByteOrder=LSB";
 	popuplateMeta(&metaData, scene);
 	writeSingleVRT(scene.rSize, scene.aSize, metaData, file, bandFiles, bandNames, dataTypes, byteSwapOption, -2.0e9, 2);
@@ -62,6 +62,7 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 	int32_t i, j;
 	GDALDataType dataTypes[1];
 	FILE *imageFP;
+	
 	// Setup file name
 	if(scene.maskFlag == TRUE) {
 		if(scene.saveLLFlag == TRUE || scene.toLLFlag)
@@ -104,13 +105,16 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 			fwriteBS(buf, scene.rSize, sizeof(char), imageFP, BYTEFLAG);
 		}
 	}
+	
+	fprintf(stderr,"\n+\n");
 	if (scene.maskFlag == TRUE) free(buf);
 	fclose(imageFP);
 	// Now write VRT
-	fileVRT = appendSuffix(file, ".vrt", buf2);
+	fileVRT = STR_BUFF("%s.vrt", file); 
+	// fileVRT = appendSuffix(file, ".vrt", buf2);
 	if(scene.saveLLFlag == TRUE || scene.toLLFlag)
 		popuplateMeta(&metaData, scene);
-	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, -2.e9, 1);
+	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, -2.e9, 1);	
 }
 
 /*
@@ -147,6 +151,7 @@ void outputSimulatedImage(sceneStructure scene, char *outputFile, char *demFile,
 	//
 	//  Form header filename by adding .simdat suffix to outputFile
 	//
+	buf1[0] = '\0';
 	outputFileDat = appendSuffix(outputFile, ".simdat", buf1);
 	// Open image outputfile
 	imageDatFP = fopen(outputFileDat, "w");

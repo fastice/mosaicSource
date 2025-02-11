@@ -321,7 +321,7 @@ static void parseLSOffsetMeta(char *datFile, lsFit *fitDat, matchResult *matches
 
 void parseKeyValue(char *line, char *keyword, char *value)
 {
-	char tmp1[LINEMAX];
+	char tmp1[LINEMAX+1];
 	uint32_t i, j;
 	/*
 	  Process keyword

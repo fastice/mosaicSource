@@ -50,8 +50,10 @@ int main(int argc, char *argv[])
 	   Read command line args
 	*/
 	readArgs(argc, argv, &scene, &demFile, &displacementFile, &sceneFile, &outputFile);
+	
 	/* Added August 2021 to force projections to match dem */
 	fprintf(stderr, "outFile %s\n", outputFile);
+	
 	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
 	imageMask = malloc(sizeof(ShelfMask));
 	/*
@@ -74,6 +76,7 @@ int main(int argc, char *argv[])
 		xyVel.xSize = 0;
 		xyVel.ySize = 0;
 	}
+	
 	fprintf(stderr, "Loading DEM...\n");
 	readXYDEM(demFile, &xyDem);
 	dem = (void *)&xyDem;
@@ -94,7 +97,9 @@ int main(int argc, char *argv[])
 	if (scene.heightFlag == TRUE)
 		fprintf(stderr, "Outputing DEM\n");
 	fprintf(stderr, "Writing results....\n");
+	
 	outputSimulatedImage(scene, outputFile, demFile, displacementFile);
+	fprintf(stderr, "Done\n");
 }
 
 static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFile, char **displacementFile,
