@@ -214,12 +214,12 @@ static int32_t useDeltaB(char *offsetFile, int32_t deltaB)
 	dname = dirname(offsetFileCopy);
 	catPath(svFile, dname, "motion/use.deltabp");
 	/* fprintf(stderr,"%s\n",svFile);*/
-	fprintf(stderr, "%i", access(svFile, F_OK));
+	//fprintf(stderr, "%i", access(svFile, F_OK));
 	if (access(svFile, F_OK) != -1)
 		return (DELTABCONST);
 	catPath(svFile, dname, "motion/use.quad");
 	/* fprintf(stderr,"%s\n",svFile); */
-	fprintf(stderr, "%i", access(svFile, F_OK));
+	//fprintf(stderr, "%i", access(svFile, F_OK));
 	if (access(svFile, F_OK) != -1)
 		return (DELTABQUAD);
 	return deltaB;
@@ -266,6 +266,10 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 		inputImage[i].stateFlag = TRUE;
 		inputImage[i].llInit = FALSE;
 		/*  Parse the Geodat file	*/
+		if(i % 100 == 0) 
+		{
+			fprintf(stderr, "\r Parsing files %i",i);
+		}
 		parseInputFile(geodatFiles[i], &(inputImage[i]));
 		julDay1 = inputImage[i].julDay;
 		julDay2 = inputImage[i].julDay + nDays[i];
@@ -302,7 +306,7 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 				noPhase = FALSE;
 			getBaseline(baselineFiles[i], dumParams, noPhase);
 			/*	  Get time info	*/
-			fprintf(stderr, "time weight, nDays %f %f\n", weight, nDays[i]);
+			//fprintf(stderr, "time weight, nDays %f %f\n", weight, nDays[i]);
 			dumParams->nDays = nDays[i];
 			if (nDays[i] < 0)
 				error("Negative number of days");

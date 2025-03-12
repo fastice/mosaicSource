@@ -145,7 +145,7 @@ void readOffsetParams(char *datFile, Offsets *offsets, int32_t merge)
 		error("%s  %i of %s", "readOffsets -- Missing image parameters at line:", lineCount, datFile);
 	else if (nRead == 6)
 	{
-		fprintf(stderr, "**** WARNING-MISSING SIGMA STREAKS for %s\n", datFile);
+		//fprintf(stderr, "**** WARNING-MISSING SIGMA STREAKS for %s\n", datFile);
 		sigmaS = 0.0;
 		sigmaR = 0.0;
 	}
@@ -177,7 +177,7 @@ void readOffsetParams(char *datFile, Offsets *offsets, int32_t merge)
 			path = NULL;
 		offsets->geo1 = mergePath(file1, path);
 		offsets->geo2 = mergePath(file2, path);
-		fprintf(stderr, "Found geo1 & geo2. %s %s \n", offsets->geo1, offsets->geo2);
+		//fprintf(stderr, "Found geo1 & geo2. %s %s \n", offsets->geo1, offsets->geo2);
 	}
 	fclose(fp);
 }
@@ -254,9 +254,9 @@ void getRParams(Offsets *offsets)
 	/*
 	  Input baseline estimated with tiepoints.
 	*/
-	/*lineCount=getDataString(fp,lineCount,line,&eod);*/
 	dBpQ = 0.0;
 	dBnQ = 0.0;
+	rConst = LARGEINT;
 	if (sscanf(line, "%lf%lf%lf%lf%lf%lf%lf", &bn, &bp, &dBn, &dBp, &rConst, &dBnQ, &dBpQ) != 7)
 	{
 		if (sscanf(line, "%lf%lf%lf%lf%lf", &bn, &bp, &dBn, &dBp, &rConst) != 5)
@@ -269,12 +269,22 @@ void getRParams(Offsets *offsets)
 	/* This parameter will get calculated in the SV basline init routine if its used, so only set for computed baseline */
 	//offsets->rConst = 0.; this was overwriting earlier values
 	if (offsets->deltaB == DELTABNONE)
-		offsets->rConst = rConst;
+	{	
+		if(rConst < LARGEINT)
+		{
+			offsets->rConst = rConst;
+		} 
+		else 
+		{
+			error("getRparams: rCoonst not initialized");
+		}
+	}
+		
 	offsets->dBnQ = dBnQ;
 	offsets->dBpQ = dBpQ;
 
-	fprintf(stderr, "bn %f %f %f bp %f %f %f off %f\n", offsets->bn, offsets->dBn,
-			offsets->dBnQ, offsets->bp, offsets->dBp, offsets->dBpQ, offsets->rConst);
+	//fprintf(stderr, "bn %f %f %f bp %f %f %f off %f\n", offsets->bn, offsets->dBn,
+	//		offsets->dBnQ, offsets->bp, offsets->dBp, offsets->dBpQ, offsets->rConst);
 	fclose(fp);
 }
 
@@ -473,12 +483,12 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
 	char *eFileA, *file;
 	GDALDatasetH hDS;
 
-	fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
+	//fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
 	vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
 	if (vrtFile != NULL)
 	{	// Zero params
 		initOffParams(offsets);
-		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
 		// Read azimuthg offsets and errors
@@ -490,7 +500,7 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
 	else
 	{
 		datFile = appendSuffix(offsets->file, ".dat", buf);
-		fprintf(stderr, "OPENING DAT %s\n", datFile);
+		//fprintf(stderr, "OPENING DAT %s\n", datFile);
 		// Read the data file
 		readOffsetParams(datFile, offsets, TRUE);
 		// Init memory
@@ -532,7 +542,7 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 	if (vrtFile != NULL)
 	{	// Zero parameters
 		initOffParams(offsets);
-		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
 		// Read data and close
@@ -547,7 +557,7 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 		initOffParams(offsets);
 		// read offset param
 		datFile = appendSuffix(offsets->rFile, ".dat", buf);
-		fprintf(stderr, "OPENING DAT %s\n", datFile);
+		//fprintf(stderr, "OPENING DAT %s\n", datFile);
 		readOffsetParams(datFile, offsets, TRUE);
 		// setup buffers
 		initOffsetBuffers(offsets, RGONLY);
@@ -591,7 +601,7 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
 	vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer); 
 	if (vrtFile != NULL)
 	{
-		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
 		// Read data and close
@@ -604,7 +614,7 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
 	{
 		// read offset param
 		datFile = appendSuffix(offsets->rFile, ".dat", buf);
-		fprintf(stderr, "OPENING DAT %s\n", datFile);
+		//fprintf(stderr, "OPENING DAT %s\n", datFile);
 		readOffsetParams(datFile, offsets, TRUE);
 		// setup buffers
 		if (orbitType == ASCENDING)

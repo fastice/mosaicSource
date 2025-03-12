@@ -93,7 +93,7 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 	double xs1, ys1, zs1, vsx1, vsy1, vsz1;
 	double drx, dry, drz;
 	double RNear, rgPixSize;
-	double C1, C2, df;
+	double C1, C2, df, dT;
 	int32_t tol = 2000;
 	int32_t i, n;
 	cp = &(inputImage->cpAll);
@@ -106,18 +106,25 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 		return;
 	}
 	/* Refine later */
-	if (inputImage->lastTime >= (cp->sTime - 10) && inputImage->lastTime <= (cp->eTime + 10))
+	if (inputImage->lastTime >= (cp->sTime - 10) && inputImage->lastTime <= (cp->eTime + 10) )
 	{
 		myTime = inputImage->lastTime;
 	}
 	else
-		myTime = sv->times[sv->nState / 2];
+		myTime = (cp->sTime + cp->eTime) * 0.5;
+		//myTime = sv->times[sv->nState / 2];
 	llToECEF(lat, lon, h, &xt, &yt, &zt);
 	C2 = 0.0; /* Not used for zero dop */
-	n = (int32_t)((myTime - sv->times[1]) / (sv->deltaT) + .5);
-	n = min(max(0, n - NUSESTATE/2), sv->nState - NUSESTATE);
+	C1 = 0;
+	dT = 10000;  // Force intial state vector selection
 	for (i = 0; i < 35; i++)
 	{
+		// if time jumps more than state vector interval, update (added 3/10/25)
+		if(fabs(dT > sv->deltaT))
+		{
+			n = (int32_t)((myTime - sv->times[1]) / (sv->deltaT) + .5);
+			n = min(max(0, n - NUSESTATE/2), sv->nState - NUSESTATE);
+		}
 		/* Interpolate postion and velocity */
 		polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]), &(sv->z[n]), &(sv->vx[n]), &(sv->vy[n]), &(sv->vz[n]),
 				  myTime, &xs, &ys, &zs, &vsx, &vsy, &vsz);
@@ -128,9 +135,10 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 		/* setup correction */
 		df = dot(drx, dry, drz, vsx, vsy, vsz);
 		C1 = -dot(vsx, vsy, vsz, vsx, vsy, vsz);
-		myTime -= df / (C1 + C2);
+		dT = df / (C1 + C2);
+		myTime -= dT;
 		/* Check for convergence */
-		if (fabs(df / C1) < inputImage->tolerance)
+		if (fabs(dT) < inputImage->tolerance)
 			break;
 	}
 	// Final call 
@@ -143,9 +151,7 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 	{
 		*range = -9999.0;
 		*azimuth = -9999.0;
-	} else {
-	//fprintf(stderr,"%d %f %f %f %f %f %f %e\n", i, myTime, inputImage->lastTime, *range, *azimuth, lat, lon, fabs(df/C1));
-}
+	} 
 	inputImage->lastTime = myTime;
 }
 

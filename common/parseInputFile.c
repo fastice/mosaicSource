@@ -350,7 +350,7 @@ static void parseControlPointsGeoJson(OGRFeatureH myFeature, inputImageStructure
 	{
 		inputImage->latControlPoints[i] = lat[index[i]];
 		inputImage->lonControlPoints[i] = lon[index[i]];
-		fprintf(stderr, "%f %f\n",lat[index[i]],lon[index[i]]);
+		//fprintf(stderr, "%f %f\n",lat[index[i]],lon[index[i]]);
 	}
 	double const *ll = OGR_F_GetFieldAsDoubleList(myFeature, OGR_F_GetFieldIndex(myFeature, "CenterLatLon"), &nItems);
 	inputImage->latControlPoints[0] = ll[0];
@@ -380,13 +380,13 @@ static int determineAscDesc(inputImageStructure *inputImage, const char *line)
 	if (strstr(lineLower, "descending") != NULL)
 	{
 		inputImage->passType = DESCENDING;
-		fprintf(stderr, "*** Descending - ");
+		//fprintf(stderr, "*** Descending - ");
 		return TRUE;
 	}
 	else if (strstr(lineLower, "ascending") != NULL)
 	{
 		inputImage->passType = ASCENDING;
-		fprintf(stderr, "*** Ascending - ");
+		//fprintf(stderr, "*** Ascending - ");
 		return TRUE;
 	}
 	return FALSE;
@@ -407,12 +407,12 @@ static int determineLookDir(inputImageStructure *inputImage, const char *line)
 	if (strstr(lineLower, "left") != NULL)
 	{
 		inputImage->lookDir = LEFT;
-		fprintf(stderr, "LEFT LOOKING DATA ****\n");
+		//fprintf(stderr, "LEFT LOOKING DATA ****\n");
 	}
 	else if (strstr(lineLower, "right") != NULL)
 	{
 		inputImage->lookDir = RIGHT;
-		fprintf(stderr, "RIGHT LOOKING DATA ***\n");
+		//fprintf(stderr, "RIGHT LOOKING DATA ***\n");
 		
 	} else return FALSE;
 	// Set the value for par
@@ -434,7 +434,7 @@ static void parseLookDir(inputImageStructure *inputImage, char *line, char *inpu
 static char *checkGeojson(char *input)
 {
 	char *geojson;
-	fprintf(stderr, "%s", input);
+	//fprintf(stderr, "%s", input);
 	if (strstr(input, ".geojson") != NULL)
 	{
 		geojson = input;
@@ -470,7 +470,7 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	geojson = checkGeojson(inputFile);
 	// If a geojson version exist use that
 	if(geojson != NULL) {
-		fprintf(stderr, "\nParsing %s\n", geojson);
+		//fprintf(stderr, "\nParsing %s\n", geojson);
 		parseGeojson(geojson, inputImage);
 		//dumpParsedInput(inputImage, stderr);
 		return;
@@ -513,7 +513,7 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	/* Get corrected time */
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	parseTime(inputImage, line, eod, "%i %i %lf");
-	fprintf(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);	
+	//f(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);	
 	/* PRF */
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	parsePRF(inputImage, line, eod);
@@ -595,7 +595,7 @@ void parseGeojson(char *inputFile, inputImageStructure *inputImage)
 	//  Get corrected time
 	const char* timeString = OGR_F_GetFieldAsString(myFeature, OGR_F_GetFieldIndex(myFeature, "CorrectedTime"));
 	parseTime(inputImage, (char *) timeString, FALSE, "%2u %2u %lf");
-	fprintf(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);
+	//fprintf(stderr, "Time %i %i %f\n", inputImage->par.hr, inputImage->par.min, inputImage->par.sec);
 	// PRF
 	inputImage->par.prf = OGR_F_GetFieldAsDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "PRF"));
 	// Wavelength

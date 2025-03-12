@@ -40,8 +40,10 @@ void svInterpBnBp(inputImageStructure *inputImage, Offsets *offsets, double azim
 	/* Center of first multi look pixel in sl pixels */
 	mlpAzCenter = (inputImage->nAzimuthLooks - 1) * 0.5;
 	/* If not alread initialized, the init */
-	if (offsets->bnS == NULL || offsets->bpS == NULL)
+	if (offsets->bnS == NULL || offsets->bpS == NULL) {
 		svInitBnBp(inputImage, offsets);
+		//error("Stop %f", offsets->rConst);
+	}
 	/* Convert multi-look az to single look, then to offset */
 	floatAzimuth = (mlpAzCenter + azimuth * inputImage->nAzimuthLooks - offsets->aO) / offsets->deltaA;
 	iAzimuth = (int)(floatAzimuth + 0.5);
@@ -192,7 +194,7 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets)
 			llToImageNew(lat, lon, 0, &range1, &azimuth1, inputImage);	 /* convert back to range1,azimuth1 */
 			llToImageNew(lat, lon, 0, &range2, &azimuth2, &inputImage2); /* same for second */
 			/* only do if point overlaps */
-			if (range2 > 0 && range2<inputImage2.rangeSize & azimuth2> 0 && azimuth2 < inputImage2.azimuthSize)
+			if (range2 > 0 && range2 < inputImage2.rangeSize && azimuth2 > 0 && azimuth2 < inputImage2.azimuthSize)
 			{
 				da[n] = (azimuth2 - azimuth1) * inputImage->nAzimuthLooks * inputImage->par.slpA;
 				ra[n].r = (r - r0) * MTOKM;
@@ -214,6 +216,7 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets)
 		offsets->azFit[i] = myFit[i + 1];
 	}
 	fprintf(stderr, "\nSV Fit for Offsets sqrt(x2/nPts) %f %i\n", sqrt(chisq / nPts), nPts);
+	//error("STOP");
 	offsets->azInit = TRUE;
 }
 
@@ -327,7 +330,7 @@ void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets
 		*cnstR = 0.0;
 		*cnstA = 0.0;
 	}
-	fprintf(stderr, "\033[1;31m dR,dA %f %f %i\033[0m\n", *cnstR, *cnstA, nPts);
+	fprintf(stderr, "\033[1;31m dR,dA %f %f \033[0m\n", *cnstR, *cnstA);
 }
 
 void svBaseTCN(double myTime, double dt1t2, stateV *sv1, stateV *sv2, double bTCN[3])

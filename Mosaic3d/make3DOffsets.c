@@ -83,7 +83,6 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	   MAIN LOOP Loop over ascending images
 	*/
 	aa = 0;
-	fprintf(stderr, "1\n");
 	tCenter = (outputImage->jd1 + outputImage->jd2 + 1.) * 0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
 	for (aOffImage = allImages; aOffImage != NULL; aOffImage = aOffImage->next, aParams = aParams->next)
 	{
@@ -128,7 +127,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			*/
 			if (fabs(aOffImage->julDay - dOffImage->julDay) > timeThresh || dOffImage->weight < 0.05 || dParams->offsets.rFile == NULL)
 				continue;
-			fprintf(stderr, "time JD %f %f\n", aOffImage->julDay, dOffImage->julDay);
+			//fprintf(stderr, "time JD %f %f\n", aOffImage->julDay, dOffImage->julDay);
 			/*
 			   Added this 7/31/2015 to skip over images with no overlap
 			*/
@@ -158,10 +157,10 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			*/
 			readRangeOrRangeOffsets(&(dParams->offsets), DESCENDING);
 			getRParams(&(dParams->offsets));
-
 			/*
 			  Loop over output grid and compute velocities
 			*/
+double tmp;
 			fprintf(stderr, "---- Asc %i / %i Des %i \n", aa, nTotal, dd);
 			Aset = FALSE;
 			for (i = iMin; i < iMax; i++)
@@ -194,6 +193,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 						/*  Interpolate range offsets */
 						dDelta = interpRangeOffset(drange, dAzimuth, &(dParams->offsets), dOffImage, dRange, dThetaD, dRSLPixSize, dTheta, &dDemError);
 						aDelta = interpRangeOffset(arange, aAzimuth, &(aParams->offsets), aOffImage, aRange, aThetaD, aRSLPixSize, aTheta, &aDemError);
+		 tmp = dDelta;
 					}
 					else
 					{
@@ -283,6 +283,11 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 							{
 								vzTmp[i][j] = vz;
 							}
+					//**if(sqrt(vx*vx + vy*vy) > 18000) {
+					//**	fprintf(stderr, "%s %s\n", aParams->offsets.file, dParams->offsets.rFile);
+					//** */	fprintf(stderr, "%f %f %f %f %f %f %f %f %f\n", aP, dP, aPe, dPe, dDelta, dRange, dAzimuth, -dzdtSubmergence * cos(dPsi) * (double)dParams->nDays / 365.25, tmp);
+					//** */	error("STO");
+					//** */}
 							sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
 							syTmp[i][j] = scY;
 							fScale[i][j] = 1.0; /* Value for zero feathering */
@@ -296,7 +301,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 				} /* j loop */
 				if ((i % 100) == 0)
 				{
-					fprintf(stderr, "-- %i %f %f %f %f  thetas %f %f\n", i, A[0][0], A[0][1], A[1][0], A[1][1], aTheta * RTOD, dTheta * RTOD);
+					fprintf(stderr, "-- %i %f %f %f %f  thetas %f %f\n", i, A[0][0], A[0][1], A[1][0], A[1][1], aTheta * RTOD, dTheta * RTOD );
 				}
 			} /* i loop */
 			/*

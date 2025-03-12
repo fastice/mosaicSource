@@ -38,7 +38,7 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 	char line[1024];
 	int32_t crossFlag;
 	/*
-	  Open file for input
+	  Open file for input 
 	*/
 	fp = openInputFile(inputFile);
 	/*

@@ -148,6 +148,7 @@ int main(int argc, char *argv[])
 					nDays, weights, crossFlags, nFiles, offsetFlag);
 	
 	fprintf(stderr, "%s %s\n", date1, date2); 
+	
 	/*
 	  Determine hemisphere
 	*/
@@ -163,6 +164,7 @@ int main(int argc, char *argv[])
 	/* Find bounding box */
 	fprintf(stderr, "nAsc/nDesc %i %i\n", nAsc, nDesc);
 	findOutBounds(&outputImage, ascImages, descImages, LSImages, &autoSize, writeBlank);
+	fprintf(stderr, "xSize=%d, ySize=%d\n",outputImage.xSize, outputImage.ySize );
 	/* Remove images that are outside output area */
 	removeOutOfBounds(&outputImage, &ascImages, &ascParams, &nAsc);
 	removeOutOfBounds(&outputImage, &descImages, &descParams, &nDesc);
