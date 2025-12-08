@@ -220,6 +220,7 @@ typedef struct outputImageType
 	*/
 	ShelfMask *shelfMask;
 	xyDEM *verticalCorrection;
+	char *verticalCorrectionSuffix;
 	/*  flags for velocity work */
 	int32_t noVhFlag;
 	int32_t no3d;

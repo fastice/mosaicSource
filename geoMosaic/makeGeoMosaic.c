@@ -382,9 +382,9 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 		getRegion(&(inputImage[i]), &iMin, &iMax, &jMin, &jMax, &outputImage);
 		fprintf(stderr, "*** iMin, iMax, jMin, jMax ++ w %i %i %i %i ++ %f\n", iMin, iMax, jMin, jMax, inputImage[i].weight);
 		/* If zero weight or out of bounds, force skip */
-		if (inputImage[i].weight < 0.0001 || iMin > iMax || jMin > jMax)
+		if (inputImage[i].weight < 1e-20 || iMin > iMax || jMin > jMax)
 		{
-			fprintf(stderr, "Skip\n");
+			fprintf(stderr, "Skip (out of bounds or 0 weight\n");
 			continue;
 		}
 		/* Read image  */
@@ -492,7 +492,6 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority)
 {
 	int32_t i1, j1;
-	fprintf(stderr, "HERE00000000  %i\n", orbitPriority);
 	if (orbitPriority >= 0)
 		return;
 

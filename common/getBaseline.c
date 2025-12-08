@@ -131,7 +131,7 @@ void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase)
 			}
 		}
 	}
-	fprintf(stderr, "sigma*sqrt(X2/n) = %lf\n", params->sigma);
+	//fprintf(stderr, "sigma*sqrt(X2/n) = %lf\n", params->sigma);
 	/*
 	  Input baseline estimated with tiepoints.
 	*/

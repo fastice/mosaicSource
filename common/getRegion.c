@@ -46,6 +46,9 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
 	/*
 	  Compute i,j min,max with pad
 	*/
+	//fprintf(stderr, "bounds %f %f %f %f\n", minX, maxX, minY, maxY);
+	//fprintf(stderr, "x0, y0, dx, dy %f %f %f %f\n", outputImage->originX, outputImage->originY,
+ 	//outputImage->deltaX, outputImage->deltaY);
 	pad = 15000.;
 	*iMin = (int)((minY * KMTOM - outputImage->originY - pad) / outputImage->deltaY);
 	*jMin = (int)((minX * KMTOM - outputImage->originX - pad) / outputImage->deltaX);

@@ -120,6 +120,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/outputGeocodedImage.o \
 			common/$(MACHTYPE)-$(OSTYPE)/parseInputFile.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/parseIrregFile.o \
+				common/$(MACHTYPE)-$(OSTYPE)/parseSLCvrt.o \
 			common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
@@ -384,7 +385,7 @@ getlocc:
 GEOMOSAIC =	geoMosaic/$(MACHTYPE)-$(OSTYPE)/makeGeoMosaic.o \
                 geoMosaic/$(MACHTYPE)-$(OSTYPE)/processInputFileGeo.o
 
-GEOMOSAICDIRS =	geoMosaic common landsatMosaic $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
+GEOMOSAICDIRS =	geoMosaic common landsatMosaic $(PROGDIR)/gdalIO/gdalIO $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
 geomosaic:	
 	@for i in ${GEOMOSAICDIRS}; do \

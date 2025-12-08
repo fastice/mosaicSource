@@ -55,6 +55,19 @@ void initllToImageNew(inputImageStructure *inputImage)
 		cp->ReH = NULL;
 	cp->prf = par->prf;
 	cp->sTime = par->hr * 3600. + par->min * 60.0 + par->sec;
+
+
+	stateV *sv = &(inputImage->sv);
+	// If sv start is much greater than data start, the data has probably
+	// crossed a day boundary and the statevectors have not. 
+	// So add 86400 to time to compensate
+	if( (sv->times[1] - cp->sTime) > 50000 )
+	{
+		cp->sTime += 86400;
+		fprintf(stderr, 
+			"Adjusting data sec of day from %f to %f to match SV start time of %f\n",
+			cp->sTime-86400, cp->sTime, sv->times[1]);
+	}
 	cp->eTime = cp->sTime + (cp->azSize * inputImage->nAzimuthLooks) / cp->prf;
 	cp->pixelToAzimuthPixel = 1. / inputImage->azimuthPixelSize;
 	cp->toRangePixel = 1.0 / inputImage->rangePixelSize;

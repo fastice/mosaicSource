@@ -129,6 +129,7 @@ typedef struct OffsetsType
 	double rOffS;
 	double azFit[10];
 	int32_t azInit;
+	char *verticalCorrectionSuffix;
 } Offsets;
 
 typedef struct vhParamsType
@@ -314,6 +315,7 @@ void readOffsets(Offsets *offsets);
 void readAzimuthOffsets(Offsets *offsets);
 void readRangeOffsets(Offsets *offsets, int32_t includeErrors);
 void readOldPar(char *parFile, SARData *sarD, stateV *sv);
+void parseSLCVrt(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder);
 void geometryInfo(conversionDataStructure *cP, inputImageStructure *currentImage, double azimuth, double range, double z, double thetaC,
 				  double *ReH, double *Range, double *theta, double *thetaD, double *phi, double zSp);
 

@@ -195,7 +195,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 		*/
 		for (i = 0; i < nData; i++)
 		{
-			if (fabs(tiePoints->phase[i]) < 1.0E6)
+			if (fabs(tiePoints->phase[i]) < 1.0E6 )
 			{ /* Use only good points */
 				i1 = j + 1;
 				zSp = tiePoints->z[i];
@@ -269,7 +269,9 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				sigmas on the low weight (good) to unreasonably low errors. Either way, it shouldn't affect the solution, but it could skew the covariance matrix
 				and hence the baseline error estimates. To avoid this situation, sigmas cannot drop below 0.1.
 				*/
+			
 				sig[i1] = max(sigP * tiePoints->weight[i] * npts / weightSum, 0.1 * sigP);
+				//fprintf(stderr, "%i %i %f %f\n",kkk, j, sig[i1], tiePoints->weight[i]);
 				j++;
 			} /* End if */
 		}	  /* End for i */

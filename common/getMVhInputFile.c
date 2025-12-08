@@ -32,11 +32,20 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 	double xo, yo, xs, ys, deltaX, deltaY;
 	float weight, nDay;
 	int32_t lineCount, eod;
-	int32_t i, j;
-	char phase[1024], geodat[1024], baseline[1024];
+	int32_t i, j, len, ii;
+	char phase[2048], phaseTmp[2048], geodat[1024], baseline[1024];
 	char offsets[1024], rOffsets[1024], azParams[1024], rParams[1024];
 	char line[1024];
+	char *verticalCorrectionSuffix=NULL;
 	int32_t crossFlag;
+	if(outputImage->verticalCorrectionSuffix != NULL)
+	{
+		len = strlen(outputImage->verticalCorrectionSuffix);
+		verticalCorrectionSuffix = (char *)malloc(sizeof(char) * (len+2));
+		verticalCorrectionSuffix[ii] = '.';
+		for(ii=1;  ii <=min(len,2048); ii++) verticalCorrectionSuffix[ii] = outputImage->verticalCorrectionSuffix[ii-1];
+		verticalCorrectionSuffix[len+1] = '\0';
+	}
 	/*
 	  Open file for input 
 	*/
@@ -144,10 +153,20 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 				}
 			}
 		}
-		(*phaseFiles)[i] = dupName(phase);
+		// Suffix for vertical correction if its different than default (none)
+		if(verticalCorrectionSuffix != NULL)
+		{   
+			(*phaseFiles)[i] = appendSuffix(phase, verticalCorrectionSuffix,
+				(char *)malloc(strlen(phase)+ strlen(verticalCorrectionSuffix) + 1));
+			(*baselineFiles)[i] = appendSuffix(baseline, verticalCorrectionSuffix,
+				(char *)malloc(strlen(baseline)+ strlen(verticalCorrectionSuffix) + 1));
+		} 
+		else
+		{
+			(*phaseFiles)[i] = dupName(phase);
+			(*baselineFiles)[i] = dupName(baseline);
+		}
 		(*geodatFiles)[i] = dupName(geodat);
-		(*baselineFiles)[i] = dupName(baseline);
-
 		if (offsetFlag == TRUE || rOffsetFlag == TRUE || threeDOffFlag == TRUE)
 		{
 			(*offsetFiles)[i] = dupName(offsets);

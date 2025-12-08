@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
 	char *extraTieFile, *tideFile;		 /* tide file for tiepoints */
 	char *date1, *date2;				 /* Date range */
 	char *shelfMaskFile, *landSatFile;	 /* Shelf and landsat file names */
-	char *verticalCorrectionFile;
+	char *verticalCorrectionFile; // File for vertical correction and suffix, if any, to apply to phase, rBaseline, and baseline files.
 	int32_t i, j;								  /* LCV */
 	int32_t northFlag, threeDOffFlag, haveData; /* Flags */
 	int32_t nAsc, nDesc, nFiles;			  /* Number of ascending/descending and all files */
@@ -121,8 +121,8 @@ int main(int argc, char *argv[])
 	*/
 	readArgs(argc, argv, &inputFile, &demFile, &outFileBase, &fl, &irregFile, &shelfMaskFile, &tieThresh,
 			 &extraTieFile, &tideFile, &northFlag, &landSatFile, &threeDOffFlag,
-			 &timeThresh, &timeThreshPhase, &date1, &date2, &refVel, &statsFlag, &outputImage, &writeBlank, &verticalCorrectionFile,
-			 &GTiff, &COG);
+			 &timeThresh, &timeThreshPhase, &date1, &date2, &refVel, &statsFlag, &outputImage, &writeBlank,
+			&verticalCorrectionFile, &GTiff, &COG);
 	/* Added August 2021 to set projection parameters from DEM */
 	readXYDEMGeoInfo(demFile, &dem, TRUE);
 	/* Removed no offset flag version */
@@ -980,7 +980,7 @@ static int32_t writeMetaFile(inputImageStructure *image, outputImageStructure *o
 static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFile, char **outFileBase, float *fl, char **irregFile, char **shelfMaskFile,
 					 double *tieThresh, char **extraTieFile, char **tideFile, int32_t *north, char **landSatFile, int32_t *threeDOffFlag, float *timeThresh, float *timeThreshPhase,
 					 char **date1, char **date2, referenceVelocity *refVel, int32_t *statsFlag, outputImageStructure *outputImage, int32_t *writeBlank, char **verticalCorrectionFile,
-					int32_t *GTiff, int32_t *COG)
+					 int32_t *GTiff, int32_t *COG)
 {
 	extern int32_t sepAscDesc;
 	char *argString;
@@ -988,6 +988,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 	int32_t i, n;
 	int32_t noVhFlag, no3d, rOffsetFlag, vzFlag, noTide, timeOverlapFlag;
 	int32_t deltaB;
+	char *verticalCorrectionSuffix;
 
 	if (argc < 4 || argc > 30)
 	{
@@ -1025,6 +1026,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 	vzFlag = VZDEFAULT;
 	*statsFlag = FALSE;
 	*verticalCorrectionFile = NULL;
+	verticalCorrectionSuffix = NULL;
 	*COG = FALSE;
 	*GTiff = FALSE;
 	/* Added this flag to sort ignore crossing orbits or like asc/desc types May 6 2014 */
@@ -1079,12 +1081,17 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		{
 			*tideFile = argv[i + 1];
 			i++;
+		} // Make sure this goes before shorter verticalCorrection
+		else if (strstr(argString, "verticalCorrectionSuffix") != NULL)
+		{
+			verticalCorrectionSuffix = argv[i + 1];
+			i++;
 		}
 		else if (strstr(argString, "verticalCorrection") != NULL)
 		{
 			*verticalCorrectionFile = argv[i + 1];
 			i++;
-		}
+		}	
 		else if (strstr(argString, "fl") != NULL)
 		{
 			sscanf(argv[i + 1], "%f", fl);
@@ -1202,16 +1209,17 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 	outputImage->vzFlag = vzFlag;
 	outputImage->deltaB = deltaB;
 	outputImage->timeOverlapFlag = timeOverlapFlag;
+	outputImage->verticalCorrectionSuffix = verticalCorrectionSuffix;
 	return;
 }
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
-		  " \t-verticalCorrection vcFile -no3d -3dOff -deltaBQ -deltaBC -noVh -landSat landSatList  -refVel refVelFile -initMap -clipThresh clipThresh -lsClip clipVal  \\",
+		  " \t-verticalCorrection vcFile -verticalCorrectionSuffix suffix -no3d -3dOff -deltaBQ -deltaBC -noVh -landSat landSatList  -refVel refVelFile -initMap -clipThresh clipThresh -lsClip clipVal  \\",
 		  " \t-shelfMask shelfMask -fl fl  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide \\",
 		  " \tinputFile demFile outPutImage\n",
 		  " where :",
@@ -1226,6 +1234,7 @@ static void usage()
 		  "\ttimeOverlap =\t\t Default is False so only images full in (date1,date2) are included. \n\t\t\t\t If set,  images that overlap (date1,date2) are included and weighted accordingly",
 		  "\ttideFile =\t\t Tidal correction used for creating tiepoints",
 		  "\tverticalCorrection =\t\t Vertical velocity correction (sub/emerg vel) in m/yr",
+		  "\tverticalCorrectionSuffix =\t\t Suffix to add to phase, baseline, and rBaseline files for  velocity correction (sub/emerg vel) in m/yr",
 		  "\tno3d =\t\t\t No crossing orbit solution with phase",
 		  "\t3dOff =\t\t\t Crossing orbit solution with offsets",
 		  "\tSVAlongTrack =\t\tIf available, use along track correction to  state vector solution",

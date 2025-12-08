@@ -407,7 +407,7 @@ static int determineLookDir(inputImageStructure *inputImage, const char *line)
 	if (strstr(lineLower, "left") != NULL)
 	{
 		inputImage->lookDir = LEFT;
-		//fprintf(stderr, "LEFT LOOKING DATA ****\n");
+		fprintf(stderr, "LEFT LOOKING DATA ****\n");
 	}
 	else if (strstr(lineLower, "right") != NULL)
 	{

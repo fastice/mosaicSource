@@ -106,6 +106,7 @@ int main(int argc, char *argv[])
 	  read inputfile (uses routine from mosaicDEMS).
 	*/
 	processInputFileGeo(inputFile, &imageFiles, &geodatFiles, &outputImage, &nFiles, &weights, &antPatFiles);
+	
 	/*
 	  Malloc input images
 	*/
@@ -321,7 +322,7 @@ static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStruct
 		fprintf(stderr, "Malloced %lu scale buffer \n", outputImage->xSize * outputImage->ySize * sizeof(float));
 	else
 		error("Malloc failed for scale buffer of size %i\n", outputImage->xSize * outputImage->ySize * sizeof(float));
-	fprintf(stderr, "mallocing buf2 %f\n", outputImage->xSize * outputImage->ySize * sizeof(float) / 1e6);
+	fprintf(stderr, "mallocing buf2 %f MB\n", outputImage->xSize * outputImage->ySize * sizeof(float) / 1e6);
 	for (i = 0; i < outputImage->ySize; i++)
 	{
 		outputImage->image[i] = (void *)&(buf1[i * outputImage->xSize]);
@@ -342,6 +343,7 @@ static void outputBounds(inputImageStructure *inputImage, outputImageStructure *
 	{
 		for (j = 1; j < 5; j++)
 		{
+			// fprintf(stderr, "%f %f\n", inputImage[i].latControlPoints[j], inputImage[i].lonControlPoints[j]);
 			lltoxy1(inputImage[i].latControlPoints[j], inputImage[i].lonControlPoints[j], &x, &y, Rotation, outputImage->slat);
 			minX = min(x, minX);
 			minY = min(y, minY);
@@ -750,7 +752,8 @@ static void parseBetaNought(inputImageStructure *inputImage)
 	fclose(fp);
 	sscanf(line, "%f\n", &betaNought);
 	fprintf(stderr, "%s %f\n", line, betaNought);
-	if (betaNought < 100 || betaNought > 1000)
+	// Hack for NISAR - may have to update
+	if ( ((betaNought < 100 && betaNought > 2) || betaNought > 1000) )
 		error("invalid BetaNought");
 	inputImage->betaNought = betaNought;
 }

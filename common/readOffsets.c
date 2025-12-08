@@ -21,7 +21,7 @@ static void readOffsetFile(float **data, int32_t nr, int32_t na, char *offsetFil
 static void mapBuffer(int32_t nr, int32_t na, float **d, float **s,  float *buffSpaceD, float *buffSpaceS);
 static void initOffsetBuffers(Offsets *offsets, int32_t mode);
 static char *mergePath(char *file1, char *path);
-static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB);
+static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB, char *verticalCorrectionSuffix);
 static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB);
 
 static char *checkForOffsetsVrt(char *filename, char *vrtBuff) 
@@ -197,12 +197,24 @@ static void readOffsetFile(float **data, int32_t nr, int32_t na, char *offsetFil
 	/* fprintf(stderr,"- done - \n");	*/
 }
 
-static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB)
+static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB, char *verticalCorrectionSuffix)
 {
+	char *myFile;
 	char *suffix[3] = {"", ".deltabp", ".quad"};
+	char tmpSuffix[64], fullSuffix[64];
+
 	if (deltaB > DELTABQUAD || deltaB < DELTABNONE)
 		error("invalide deltaB flag %i", deltaB);
+	fullSuffix[0] = '\0';
+	if(verticalCorrectionSuffix != NULL) 
+	{
+		appendSuffix(suffix[deltaB], ".", tmpSuffix);
+		appendSuffix(tmpSuffix, verticalCorrectionSuffix, fullSuffix);
+		return (appendSuffix(rParamsFile, fullSuffix, newFile));
+	} 
 	return (appendSuffix(rParamsFile, suffix[deltaB], newFile));
+	
+	
 }
 
 void getRParams(Offsets *offsets)
@@ -214,11 +226,15 @@ void getRParams(Offsets *offsets)
 	int32_t ci;
 	int32_t lineCount = 0, eod, special;
 	int32_t i, j;
-	char line[256], *tmp, paramFile[1024];
-	/*
-	  Input parm info
-	*/
-	RgOffsetsParamName(offsets->rParamsFile, paramFile, offsets->deltaB);
+	char line[256], *tmp, paramFile[2048];
+	//error("STOP HERE..");
+	if((strlen(offsets->rParamsFile)) > 2040) 
+	{
+		error("filname: %s exceeds 1800 characters");		
+	}	
+	//error("STOP HERE");
+	//  Input parm info
+	RgOffsetsParamName(offsets->rParamsFile, paramFile, offsets->deltaB, offsets->verticalCorrectionSuffix);
 	fp = fopen(paramFile, "r");
 	if (fp == NULL)
 	{
@@ -278,13 +294,13 @@ void getRParams(Offsets *offsets)
 		{
 			error("getRparams: rCoonst not initialized");
 		}
-	}
-		
+	}	
 	offsets->dBnQ = dBnQ;
 	offsets->dBpQ = dBpQ;
 
 	//fprintf(stderr, "bn %f %f %f bp %f %f %f off %f\n", offsets->bn, offsets->dBn,
-	//		offsets->dBnQ, offsets->bp, offsets->dBp, offsets->dBpQ, offsets->rConst);
+	//	offsets->dBnQ, offsets->bp, offsets->dBp, offsets->dBpQ, offsets->rConst);
+	//error("STOP %s\n", paramFile);
 	fclose(fp);
 }
 
@@ -636,36 +652,55 @@ void getMosaicInputImage(inputImageStructure *inputImage)
 	FILE *fp;
 	float **fimage;
 	float *imageLine;
+	char vrtBuf[4092], *vrtFile;
 	int32_t i, j;
+	dictNode *metaOut = NULL;
+  	int xSize, ySize, dataType, status;
 	/*
 	  Open image
 	*/
-	fprintf(stderr, "Reading %s --- ", inputImage->file);
+	fprintf(stderr, "Reading %s --- \n", inputImage->file);
+	vrtFile = checkForVrt(inputImage->file, vrtBuf);
 	fimage = (float **)inputImage->image;
-	if (strstr(inputImage->file, "nophase") == NULL)
+	if(vrtFile != NULL) 
 	{
-		fp = fopen(inputImage->file, "r");
-		if (fp == NULL)
-			error("*** getPhaseOrPowerImage: Error opening %s ***\n",
-				  inputImage->file);
-	}
-	else
-		fp = NULL;
-	imageLine = fimage[0];
-
-	if (fp != NULL)
+		imageLine = inputImage->image[0];
+		fprintf(stderr, "VRT FILE %s exists\n", vrtFile);	
+		readRasterVRT(vrtFile, 1, &xSize, &ySize, &dataType, &metaOut, imageLine);
+		fprintf(stderr, "azimuthSize %i %i rangeSize %i %i\n", inputImage->azimuthSize, ySize,
+			inputImage->rangeSize, xSize);
+		fprintf(stderr, "VRT read\n");
+		return;
+	} else 
 	{
-		freadBS(imageLine, sizeof(float), inputImage->rangeSize * inputImage->azimuthSize, fp, FLOAT32FLAG);
-	}
-	else
-	{ /* nophase case */
-		for (i = 0; i < inputImage->azimuthSize; i++)
-			for (j = 0; j < inputImage->rangeSize; j++)
-				fimage[i][j] = -2.0e9;
+		fprintf(stderr, "NO VRT FILE\n");	
+		if (strstr(inputImage->file, "nophase") == NULL)
+		{
+			fp = fopen(inputImage->file, "r");
+			if (fp == NULL)
+				error("*** getPhaseOrPowerImage: Error opening %s ***\n",
+					inputImage->file);
+		}
+		else
+		{
+			fp = NULL;
+		}
+		imageLine = fimage[0];
+		if (fp != NULL)
+		{
+			freadBS(imageLine, sizeof(float), inputImage->rangeSize * inputImage->azimuthSize, fp, FLOAT32FLAG);
+		}
+		else
+		{ /* nophase case */
+			for (i = 0; i < inputImage->azimuthSize; i++)
+				for (j = 0; j < inputImage->rangeSize; j++)
+					fimage[i][j] = -2.0e9;
+			if (fp != NULL)
+			fclose(fp);
+		}
+		
 	}
 	fprintf(stderr, "completed \n");
-	if (fp != NULL)
-		fclose(fp);
 	return;
 }
 

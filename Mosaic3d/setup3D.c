@@ -217,8 +217,7 @@ static int32_t useDeltaB(char *offsetFile, int32_t deltaB)
 	//fprintf(stderr, "%i", access(svFile, F_OK));
 	if (access(svFile, F_OK) != -1)
 		return (DELTABCONST);
-	catPath(svFile, dname, "motion/use.quad");
-	/* fprintf(stderr,"%s\n",svFile); */
+	catPath(svFile, dname, "motion/use.quad"); 
 	//fprintf(stderr, "%i", access(svFile, F_OK));
 	if (access(svFile, F_OK) != -1)
 		return (DELTABQUAD);
@@ -304,7 +303,21 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 				noPhase = TRUE;
 			else
 				noPhase = FALSE;
-			getBaseline(baselineFiles[i], dumParams, noPhase);
+			// Don'read baseline if nophase 
+			if(strstr(phaseFiles[i], "nophase")== NULL)
+			{
+				getBaseline(baselineFiles[i], dumParams, noPhase);
+				
+			} 
+			else 
+			{ // Shouldn't be needed, but zero anyway
+				dumParams->Bn = 0.;
+				dumParams->Bp = 0.;
+				dumParams->dBn = 0.;
+				dumParams->dBp = 0.;
+				dumParams->dBnQ = 0.;
+				dumParams->dBpQ = 0.;
+			}	
 			/*	  Get time info	*/
 			//fprintf(stderr, "time weight, nDays %f %f\n", weight, nDays[i]);
 			dumParams->nDays = nDays[i];
@@ -353,7 +366,9 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 			dumParams->offsets.bpS = NULL;
 			dumParams->offsets.azInit = FALSE;
 			dumParams->offsets.rOffS = 0.0;
+			dumParams->offsets.verticalCorrectionSuffix = outputImage->verticalCorrectionSuffix;
 			dumParams->offsets.deltaB = useDeltaB(offsetFiles[i], outputImage->deltaB);
+			
 			if (inputImage[i].passType == DESCENDING)
 				addToList(phaseFiles[i], dumParams, &(inputImage[i]), &desc, descImages, &vhD,
 						  descParams, &maxRd, &maxAd, nDesc);
