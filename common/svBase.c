@@ -330,7 +330,7 @@ void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets
 		*cnstR = 0.0;
 		*cnstA = 0.0;
 	}
-	fprintf(stderr, "\033[1;31m dR,dA %f %f \033[0m\n", *cnstR, *cnstA);
+	fprintf(stderr, "\033[1;31m Constants dR,dA %f %f \033[0m\n", *cnstR, *cnstA);
 }
 
 void svBaseTCN(double myTime, double dt1t2, stateV *sv1, stateV *sv2, double bTCN[3])

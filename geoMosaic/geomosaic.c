@@ -48,8 +48,7 @@ byteScaleParameters byteScaleParams = {
 /*
    Global variables definitions
 */
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
+
 int32_t RangeSize = RANGESIZE;				/* Range size of complex image */
 int32_t AzimuthSize = AZIMUTHSIZE;			/* Azimuth size of complex image */
 int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
@@ -106,13 +105,12 @@ int main(int argc, char *argv[])
 	  read inputfile (uses routine from mosaicDEMS).
 	*/
 	processInputFileGeo(inputFile, &imageFiles, &geodatFiles, &outputImage, &nFiles, &weights, &antPatFiles);
-	
 	/*
 	  Malloc input images
 	*/
 	inputImage = (inputImageStructure *)malloc((size_t)(sizeof(inputImageStructure) * nFiles));
 	/*
-	  Parse input file and input data for each image.
+	  Parse infput file and input data for each image.
 	*/
 	parseImages(inputImage, &outputImage, imageFiles, geodatFiles, weights, antPatFiles, nFiles,
 				S1Cal & TRUE, &maxR, &maxA, noData);
@@ -742,7 +740,14 @@ static void parseBetaNought(inputImageStructure *inputImage)
 	fprintf(stderr, "parseBetaNought\n");
 	fprintf(stderr, "%s\n", betaNoughtFile);
 	/* Open and read file */
-	fp = openInputFile(betaNoughtFile);
+
+	fp = fopen(betaNoughtFile, "r");
+	if(fp == NULL) 
+	{
+		fprintf(stderr, "Warning no beta nought, using 1");
+		inputImage->betaNought = 1.0;
+		return;
+	}
 	eod = 0;
 	lineCount = 0;
 	while (lineCount < 1)

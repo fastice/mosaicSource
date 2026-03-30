@@ -32,6 +32,7 @@ float interpAzOffset(double range, double azimuth, Offsets *offsets, inputImageS
 	/*
 		Interpolate
 	*/
+
 	result = bilinearInterp((float **)offsets->da, rangeOff, azimuthOff, offsets->nr, offsets->na, -0.9999 * LARGEINT, (float)-LARGEINT);
 	if (result < -0.9999 * LARGEINT)
 		return -LARGEINT;
@@ -48,6 +49,14 @@ float interpAzOffset(double range, double azimuth, Offsets *offsets, inputImageS
 	result *= azSLPixSize;
 	result -= zeroOffset;
 	result -= alongTrack;
+/*
+if(rangeOff > 0 && rangeOff < offsets->nr && azimuthOff > 0 && azimuthOff < offsets->na)
+{
+	fprintf(stderr, "interpAzOffset: range %f azimuth %f rangeOff %f azimuthOff %f normAzimuth %f alongTrack %f %i %i\n",
+		 range, azimuth, rangeOff, azimuthOff, normAzimuth, alongTrack, offsets->nr, offsets->na);
+	fprintf(stderr, "interpAzOffset: da %f %f %f %f %f %f %f %f\n", result, zeroOffset, alongTrack, offsets->c1, offsets->dbcds, offsets->dbhds, Range, theta	);
+}	*/
+
 	return result;
 }
 

@@ -24,7 +24,6 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 
 static void usage();
 
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 999; /* mem conserve Kluge to maintain backwards compat 9/13/06 */
 /*
    Global variables definitions
@@ -37,10 +36,6 @@ char *shelfMaskFile;
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
-
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
 
 int main(int argc, char *argv[])
 {

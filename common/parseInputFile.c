@@ -311,6 +311,7 @@ static int32_t parseControlPoints(FILE *fp, int32_t lineCount, inputImageStructu
 	double lat, lon, x, y, sLat;
 	int32_t eod, i;
 	char line[512];
+	
 	/*
 	  Init corner point arrays (allocate 4 for corner 1 for center and 1 for additional point).
 	*/
@@ -336,7 +337,16 @@ static int32_t parseControlPoints(FILE *fp, int32_t lineCount, inputImageStructu
 static void parseControlPointsGeoJson(OGRFeatureH myFeature, inputImageStructure *inputImage)
 {
 	double lat[5], lon[5];
-	int32_t i, nItems;
+	int32_t i, nItems, latFirst = TRUE;
+	/*
+		Check the coordinate order - default is lat,lon but if lon,lat then set latFirst to false and remap points below
+	*/
+	int idx = OGR_F_GetFieldIndex(myFeature, "coordOrder");
+	if (idx >= 0 && OGR_F_IsFieldSetAndNotNull(myFeature, idx)) {
+    	const char *val = OGR_F_GetFieldAsString(myFeature, idx);
+		if (strcmp(val, "LonLat") == 0)			
+			latFirst = FALSE;
+	}
 	// Space for lat/long
 	inputImage->latControlPoints = (double *)malloc((size_t)(NCONTROLPOINTS * sizeof(double)));
 	inputImage->lonControlPoints = (double *)malloc((size_t)(NCONTROLPOINTS * sizeof(double)));
@@ -348,9 +358,13 @@ static void parseControlPointsGeoJson(OGRFeatureH myFeature, inputImageStructure
 	int32_t index[5] = {0, 0, 3, 1, 2};
 	for (i = 1; i < 5; i++)
 	{
-		inputImage->latControlPoints[i] = lat[index[i]];
-		inputImage->lonControlPoints[i] = lon[index[i]];
-		//fprintf(stderr, "%f %f\n",lat[index[i]],lon[index[i]]);
+		if (latFirst == TRUE) {
+			inputImage->latControlPoints[i] = lat[index[i]];
+			inputImage->lonControlPoints[i] = lon[index[i]];
+		} else {
+			inputImage->latControlPoints[i] = lon[index[i]];
+			inputImage->lonControlPoints[i] = lat[index[i]];
+		}
 	}
 	double const *ll = OGR_F_GetFieldAsDoubleList(myFeature, OGR_F_GetFieldIndex(myFeature, "CenterLatLon"), &nItems);
 	inputImage->latControlPoints[0] = ll[0];

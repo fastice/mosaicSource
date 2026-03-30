@@ -133,17 +133,17 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 				  Get slope and elevation
 				*/
 				xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, currentImage);
-				validData = FALSE;
+				validData = FALSE;	
+				//fprintf(stderr, "i %i j %i x %f y %f lat %f lon %f zSp %f da %f dr %f dzda %f dzdr %f\n", i, j, x, y, lat, lon, zSp, da, dr, dzda, dzdr);
 				if (zSp > (MINELEVATION + 1) && zSp < 9999.)
 				{ /* If valid z ....*/
-					/* Get range azimuth coords */
+					// Get range azimuth coords 
+					//fprintf(stderr, ".");
 					llToImageNew(lat, lon, zWGS84, &range, &azimuth, currentImage);
 					/* Note use theta c fixed, which is referenced to baseline */
 					geometryInfo(cP, currentImage, azimuth, range, zSp, thetaC, &ReH, &Range, &theta, &thetaD, &psi, zSp);
 					cotanpsi = 1.0 / tan(psi);
-					/*
-					  Get azimuth and range components from the offset field. Note these values come back as meters
-					*/
+					// Get azimuth and range components from the offset field. Note these values come back as meters
 					da = interpAzOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
 					dr = interpRangeOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, thetaD, rSLPixSize, theta, &demError);
 					/*
@@ -157,12 +157,15 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						da = -LARGEINT;
 						dr = -LARGEINT;
 					};
-		
 					/*
 					  Process only good  points
 					*/
+					//fprintf(stderr, "da %f dr %f sMask %i\n", da, dr, sMask);
+
 					if (fabs(dr) < 13.0E4 && fabs(da) < 10.0e4 && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
 					{
+						//fprintf(stderr,"+");
+						/* Compute sigma for velocity error estimate. Note that the sigmas come back as meters;
 						/* Moved inside of if statement 3/1/16 */
 						sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
 						sig2Off = computeSig2AzParam(sin(theta), cos(theta), azimuth, Range, currentImage, &(currentParams->offsets));
@@ -218,6 +221,8 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						*/
 						rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
 						rotateFlowDirectionToXY(dzdr, dzda, &dzdx, &dzdy, xyAngle, hAngle);
+
+			//fprintf(stderr, "i %i j %i x %f y %f lat %f lon %f zSp %f da %f dr %f vx %f vy %f vz %f er %f ea %f\n", i, j, x, y, lat, lon, zSp, da, dr, vx, vy, vz, er, ea);	
 						/*
 						   Clip data
 						*/

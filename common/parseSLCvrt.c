@@ -88,3 +88,90 @@ void parseSLCVrt(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder)
         *byteOrder = MSB;   
     }  
 }
+
+void parseSLCVrtNew(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder,
+                 GDALDatasetH *hDSOut, GDALRasterBandH *hBandOut)
+{
+    GDALDatasetH hDS;
+    GDALRasterBandH hBand;
+    dictNode *metaData = NULL, *metaDataMT = NULL;
+    int32_t nXSize, nYSize;
+    hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+
+    if (hDS != NULL) {
+    /* Get width (X) and height (Y) */
+        nXSize = GDALGetRasterXSize(hDS);
+        nYSize = GDALGetRasterYSize(hDS);
+        sarD->nSlpA = nYSize;
+        sarD->nSlpR = nXSize;
+        printf("Image Size: %d x %d pixels\n", nXSize, nYSize);
+    } else {
+        fprintf(stderr, "Failed to open VRT file.\n");
+    }
+
+    if (hDS == NULL)
+    {
+        fprintf(stderr, "Failed to open VRT file %s\n", vrtFile);
+        exit(1);
+    }
+
+    readDataSetMetaData(hDS, &metaData);
+
+    flagError(6, sscanf(get_value(metaData, "datetime"), "%d-%d-%d %d:%d:%lf",
+        &(sarD->year), &(sarD->month), &(sarD->day),
+        &(sarD->hr), &(sarD->min), &(sarD->sec)), "datetime");
+
+    flagError(1, sscanf(get_value(metaData, "PRF"), "%lf", &(sarD->prf)), "PRF");
+
+    for (int i = 0; i < 4; i++)
+    {
+        sarD->fd[i] = 0;
+    }
+
+    flagError(1, sscanf(get_value(metaData, "SLCFirstZeroDopplerTime"), "%lf",
+        &(sarD->echoTD)), "SLCFirstZeroDopplerTime");
+
+    flagError(1, sscanf(get_value(metaData, "SLCNearRange"), "%lf",
+        &(sarD->rn)), "SLCNearRange");
+
+    flagError(1, sscanf(get_value(metaData, "SLCFarRange"), "%lf",
+        &(sarD->rf)), "SLCFarRange");
+
+    sarD->rc = 0.5 * (sarD->rn + sarD->rf);
+
+    flagError(1, sscanf(get_value(metaData, "SLCRangePixelSize"), "%lf",
+        &(sarD->slpR)), "SLCRangePixelSize");
+
+    flagError(1, sscanf(get_value(metaData, "SLCAzimuthPixelSize"), "%lf",
+        &(sarD->slpA)), "SLCAzimuthPixelSize");
+
+    //flagError(1, sscanf(get_value(metaData, "SLCRangeSize"), "%d",
+    //    &(sarD->nSlpR)), "SLCRangeSize");
+
+    //flagError(1, sscanf(get_value(metaData, "SLCAzimuthSize"), "%d",
+     //   &(sarD->nSlpA)), "SLCAzimuthSize");
+   
+    //fprintf(stderr, "Image Size: %d x %d pixels  %d\n", sarD->nSlpR, sarD->nSlpA, nYSize);
+    readVRTState(metaData, sv);
+
+    *byteOrder = -1;
+    if (strstr(get_value(metaData, "ByteOrder"), "LSB") != NULL)
+    {
+        *byteOrder = LSB;
+    }
+    else if (strstr(get_value(metaData, "ByteOrder"), "MSB") != NULL)
+    {
+        *byteOrder = MSB;
+    }
+
+    hBand = GDALGetRasterBand(hDS, 1);
+    if (hBand == NULL)
+    {
+        fprintf(stderr, "Failed to get raster band from %s\n", vrtFile);
+        GDALClose(hDS);
+        exit(1);
+    }
+
+    *hDSOut = hDS;
+    *hBandOut = hBand;
+}

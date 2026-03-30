@@ -90,6 +90,7 @@ $(info NOPIE ="$(NOPIE)")
 #
 COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
+			common/$(MACHTYPE)-$(OSTYPE)/buffers.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computePhiZ.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
@@ -123,7 +124,8 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 				common/$(MACHTYPE)-$(OSTYPE)/parseSLCvrt.o \
 			common/$(MACHTYPE)-$(OSTYPE)/polintVec.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/rangeAzimuthToLL.o \
-	    		common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
+	    	common/$(MACHTYPE)-$(OSTYPE)/readOffsets.o \
+			common/$(MACHTYPE)-$(OSTYPE)/readOffsetCorrection.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readOldPar.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readShelf.o \
 			common/$(MACHTYPE)-$(OSTYPE)/readTiePoints.o \

@@ -18,9 +18,12 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene,
 static void usage();
 
 float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
+//void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
+//void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
+char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2, *SEBuf; /* Buffers for offset and azimuth parameter interpolation, and special culling cases. */
+void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
 int32_t llConserveMem = 999; /* Kluge to maintain backwards compat 9/13/06 */
 
 /*
@@ -102,11 +105,34 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "Done\n");
 }
 
+int parseBnBpParamsFile(const char *bpParamsFile,
+                        double *bn, double *bp,
+                        double *dbn, double *dbp)
+{
+    FILE *fp;
+	double x;
+    fp = fopen(bpParamsFile, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "Error: could not open %s\n", bpParamsFile);
+        return -1;
+    }
+
+    if (fscanf(fp, "%lf %lf %lf %lf %lf", bn, bp, dbn, &x, dbp) != 5) {
+        fprintf(stderr, "Error: failed to read bn bp dbn dbp from %s\n", bpParamsFile);
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
 static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFile, char **displacementFile,
 					 char **sceneFile, char **outputFile)
 {
 	int32_t filenameArg;
 	char *argString;
+	char bpParamsFile[2048];
 	double bn, bp;
 	double bnStart, bnEnd;
 	double bpStart, bpEnd;
@@ -178,6 +204,14 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 			bp = bpStart;
 			if (bpFlag == TRUE)
 				error("readargs: bpStart/bpEnd incompatible bp\n");
+		} else if (strstr(argString, "bParamsFile") != NULL)
+		{
+			sscanf(argv[i + 1], "%s", bpParamsFile);
+			bnFlag = TRUE;
+			bpFlag = TRUE;
+			parseBnBpParamsFile(bpParamsFile, &bn, &bp, &dBn, &dBp);
+			if (bnStartFlag == TRUE)
+				error("readargs: dBn incompatible bnStart/bnEnd\n");
 		}
 		else if (strstr(argString, "toLL") != NULL)
 		{
@@ -313,39 +347,41 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 
 static void usage()
 {
-	error(
-		"\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
-		"Simulate interferogram using a DEM",
-		"Usage:",
-		"siminsar -LSB -bn bn -dBn dBn -bp bp -dBp dBp ",
-		"         -bnStart bnStart -bnEnd -bpStart bpStart -bpEnd ",
-		"         -flat -height -rPix rPix -aPix deltA -velocity",
-		"         -slantRangeDEM -xyDEM -mask -saveLL -toLL file.dat",
-		"          demFile displacementFile sceneFile outPutImage",
-		"where",
-		"   LSB             Output results as LSB [MSB]",
-		"   mask          = output a mask using displaceMent file as mask",
-		"   toLL file.dat = save LL on offset defined grid write outputimage.lat,.lon (can output mask or height with this option)",
-		"   saveLL  	  =  save LL on the geodat defined grid and write outputimage.lat and .lon",
-		"   bn            = normal component of baseline",
-		"   dBn           = change in bn over scene (use instead of bnStart/end",
-		"   bnStart/bnEnd = bn at start and end of scene",
-		"   bp            = parallel component of baseline",
-		"   dBn           = change in bp over scene (use instead of bpStart/end",
-		"   bpStart/bpEnd = bn at start and end of scene",
-		"   dT			  = time interval for simulation displacement",
-		"   flat          = flattened image",
-		"   height        = output height values instead of phase",
-		"   rPix          = range single look pixel size",
-		"   aPix          = azimuth single look pixel size",
-		"   velocity      = use velocity",
-		"   slantRangeDEM = use dem of image size in slant range coords",
-		"   xyDEM         = xyDEM file with xyDEM.geodat file",
-		"   demFile          = dem file in lat/lon, xy, or slant range format",
-		"   displacementFile = velocity file (not .vx,.vy for biary) and .vv. or .*. for .tif or .vrt",
-		"   sceneFile        = file with location info",
-		"   outPutImage      = simulated interferogram",
-		"if outputImage == stdio output is to stdout");
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
+			"Simulate interferogram using a DEM",
+			"Usage:",
+			"siminsar -LSB -bn bn -dBn dBn -bp bp -dBp dBp ",
+			"         -bnStart bnStart -bnEnd bnEnd -bpStart bpStart -bpEnd bpEnd ",
+			"         -bParamsFile bParamsFile",
+			"         -flat -height -rPix rPix -aPix deltA -velocity",
+			"         -slantRangeDEM -xyDEM -mask -saveLL -toLL file.dat",
+			"          demFile displacementFile sceneFile outPutImage",
+			"where",
+			"   LSB             Output results as LSB [MSB]",
+			"   mask            = output a mask using displacement file as mask",
+			"   toLL file.dat   = save LL on offset defined grid write outputimage.lat,.lon (can output mask or height with this option)",
+			"   saveLL          = save LL on the geodat defined grid and write outputimage.lat and .lon",
+			"   bn              = normal component of baseline",
+			"   dBn             = change in bn over scene (use instead of bnStart/bnEnd)",
+			"   bnStart/bnEnd   = bn at start and end of scene",
+			"   bp              = parallel component of baseline",
+			"   dBp             = change in bp over scene (use instead of bpStart/bpEnd)",
+			"   bpStart/bpEnd   = bp at start and end of scene",
+			"   bParamsFile     = file with bn, bp, dBn, dBp for simulation",
+			"   dT              = time interval for simulation displacement",
+			"   flat            = flattened image",
+			"   height          = output height values instead of phase",
+			"   rPix            = range single look pixel size",
+			"   aPix            = azimuth single look pixel size",
+			"   velocity        = use velocity",
+			"   slantRangeDEM   = use dem of image size in slant range coords",
+			"   xyDEM           = xyDEM file with xyDEM.geodat file",
+			"   demFile          = dem file in lat/lon, xy, or slant range format",
+			"   displacementFile = velocity file (not .vx,.vy for binary) and .vv. or .*. for .tif or .vrt",
+			"   sceneFile        = file with location info",
+			"   outPutImage      = simulated interferogram",
+			"if outputImage == stdio output is to stdout");
+	//exit(0);
 }
 
 /*

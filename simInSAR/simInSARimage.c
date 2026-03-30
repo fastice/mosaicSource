@@ -105,6 +105,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 	inputImage = &(scene->I);
 	initllToImageNew(inputImage);
 	deltaToPhase = 4.0 * PI / scene->I.par.lambda;
+	fprintf(stderr, "Delta to phase %f lambda %f\n", deltaToPhase, scene->I.par.lambda);
 	Re = inputImage->cpAll.Re;
 	RCenter = inputImage->cpAll.RCenter;
 	ReH = inputImage->cpAll.Re + inputImage->par.H;
@@ -211,6 +212,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					/* Use h on single spherical reference for phase
 					  even though locally spherical value was used for location */
 					hSp = getXYHeight(lat, lon, xyDem, Re, SPHERICAL);
+					
 					/* NOT VALIDATED */
 					hSp = hSp + Re - inputImage->cpAll.Re;
 					Re = inputImage->cpAll.Re;
@@ -226,7 +228,10 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					  theta = acos( ( range*range + ReH*ReH - (Re+h)*(Re+h) )/
 					  (2.0*ReH*range) );
 					*/
+				
 					theta = thetaRReZReH(range, (Re + hSp), ReH);
+					//fprintf(stderr, "%f %f %f %f %f %f %f\n", hSp, hWGS, hSp - hWGS, theta*RTOD, thetaRReZReH(range, (Re + 0), ReH)*RTOD, lat, lon);
+					//fprintf(stderr, "%f %f %f %f\n",scene->bn, scene->bp, thetaD*RTOD, range);
 					thetaD = theta - thetaC;
 					/*
 					  Add componenent of delta from topography in meters.
@@ -272,6 +277,14 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					{
 						scene->image[iIndex][jLoop] = (float)(delta * deltaToPhase);
 						scene->image[iIndex][jLoop] += vr * scene->dT / 365. * deltaToPhase;
+						
+						//if(fabs(vx) > 100)
+						//{
+						//	fprintf(stderr, "\n%f %f %f %f\n", vx, vy, psi, vx * cos(hAngle - xyAngle) - vy * sin(hAngle - xyAngle));
+						//	fprintf(stderr, "%f %f -- %f %f %f \n", delta, deltaToPhase, vr, scene->dT, deltaToPhase);
+						//	error("STOP");
+						//}
+						
 					} else
 					{
 						scene->image[iIndex][jLoop] = -LARGEINT;

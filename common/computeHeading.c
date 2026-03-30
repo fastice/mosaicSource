@@ -36,6 +36,8 @@ double computeHeading(double lat, double lon, double z, inputImageStructure *inp
 	/* Compute range/azimuth coords for point dlat to north and south of lat */
 	llToImageNew(lat - dlat, lon, z, &range1, &azimuth1, inputImage);
 	llToImageNew(lat + dlat, lon, z, &range2, &azimuth2, inputImage);
+	if(range1 < -9998  || range2 < -9998)
+		return(9999.);	
 	/* Handle case where along track variation in lookup */
 	if (cP->ReH != NULL)
 	{
@@ -61,14 +63,18 @@ double computeHeading(double lat, double lon, double z, inputImageStructure *inp
 	/*	rho1 = acos( min((r1*r1 - ReH*ReH - (Re+zSp1)*(Re+zSp1) ) / (-2.0*(Re+zSp1)*ReH ),1.) );*/
 	gRange1 = Re * rho1;
 	r2 = RNear + inputImage->rangePixelSize * range2;
+	//fprintf(stderr, "Range1 %f Range2 %f r1 %f r2 %f\n", range1, range2, r1, r2);
 	rho2 = rhoRReZReH(r2, (Re + zSp2), ReH);
+	//fprintf(stderr, "r2 %f Re %f zSp2 %f ReH %f rho2 %f\n", r2, Re, zSp2, ReH, rho2);
 	/*rho2 = acos( min((r2*r2 - ReH*ReH - (Re+zSp2)*(Re+zSp2) ) / (-2.0*(Re+zSp2)*ReH ),1.) );*/
 	gRange2 = Re * rho2;
 	/* delta ground range */
 	dgr = gRange2 - gRange1;
+	//fprintf(stderr, "r1 %f r2 %f rho1 %f rho2 %f gRange1 %f gRange2 %f da %f dgr %f\n", r1, r2, rho1, rho2, gRange1, gRange2, da, dgr);
 	/*
 	  Compute track heading
 	*/
+	//fprintf(stderr, "computeHeading: lat %f lon %f da %f dgr %f\n", lat, lon, da, dgr);
 	if (inputImage->lookDir == RIGHT)
 	{
 		hAngle = atan2(da, dgr);

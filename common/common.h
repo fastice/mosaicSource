@@ -1,3 +1,6 @@
+#ifndef COMMON_H
+#define COMMON_H
+
 #include <stdio.h>
 #include <stdint.h>
 #include "clib/standard.h"
@@ -10,8 +13,8 @@
 #include <gdal.h>
 #include <stddef.h> // For size_t
 
-#define MAXOFFBUF 72000000
-#define MAXOFFLENGTH 30000
+#define MAXOFFBUF 288000000
+#define MAXOFFLENGTH 60000
 
 #define MINELEVATION -1000
 #define MINVELOCITY 5
@@ -31,6 +34,7 @@
 #define RANGEONLY 0
 #define RANGEANDAZIMUTH 1
 #define LARGEINT 2000000000
+#define SEBUF 20
 #define DESCENDING 0
 #define ASCENDING 1
 #define INIT 2
@@ -64,8 +68,17 @@
 #define DELTABQUAD 2
 #define DELTABCONST 1
 #define DELTABNONE 0
+
+#define RANGEBUFF 20
+#define AZIMUTHBUFF 21
+#define RANGEERRORBUFF 22
+#define AZIMUTHERRORBUFF 23
+#define RANGEUSEAZIMUTHBUFF 24
 extern double RangePixelSize;	/* Size in m of range pixel */
 extern double AzimuthPixelSize; /* Size in m of azimuth pixel */
+
+extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
 
 typedef struct irregType
 {
@@ -82,6 +95,19 @@ typedef struct irregType
 	double maxArea;
 	struct irregType *next;
 } irregularData;
+
+// For ionospheric correction
+typedef struct offsetCorrectionType
+{
+	int32_t nr;
+	int32_t na;
+	int32_t rO;
+	int32_t aO;
+	float deltaA;
+	float deltaR;
+	float **rangeOffsetCorrection;
+} offsetCorrection;
+
 
 typedef struct OffsetsType
 {
@@ -111,6 +137,7 @@ typedef struct OffsetsType
 	float **dr;
 	float **sa;
 	float **sr;
+	float **SECorrection; // Needed for speciall culling cases.
 	char *file;
 	char *azParamsFile;
 	char *rFile;
@@ -130,7 +157,9 @@ typedef struct OffsetsType
 	double azFit[10];
 	int32_t azInit;
 	char *verticalCorrectionSuffix;
+	offsetCorrection rOffCorrection;
 } Offsets;
+
 
 typedef struct vhParamsType
 {
@@ -290,6 +319,7 @@ void endScale(outputImageStructure *outputImage, float **vXimage, float **vYimag
 			  float **scaleY, float **scaleZ, int statsFlag);
 void readBothOffsets(Offsets *offsets);
 void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors);
+void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode);
 void readOffsetParams(char *datFile, Offsets *offsets, int32_t);
 //char *checkForVrt(char *filename, char *vrtBuff);
 void undoNormalization(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY,
@@ -316,6 +346,8 @@ void readAzimuthOffsets(Offsets *offsets);
 void readRangeOffsets(Offsets *offsets, int32_t includeErrors);
 void readOldPar(char *parFile, SARData *sarD, stateV *sv);
 void parseSLCVrt(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder);
+void parseSLCVrtNew(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder,
+                 	GDALDatasetH *hDSOut, GDALRasterBandH *hBandOut);
 void geometryInfo(conversionDataStructure *cP, inputImageStructure *currentImage, double azimuth, double range, double z, double thetaC,
 				  double *ReH, double *Range, double *theta, double *thetaD, double *phi, double zSp);
 
@@ -396,3 +428,5 @@ OGRGeometryH createGeometry(double *lat, double *lon);
 OGRFeatureDefnH createFeatureDef(int32_t nState);
 const char *svTag(int32_t i, char *svType);
 char *replace_wildcard(const char *filename, const char *wildcard, const char *replacement);
+
+#endif

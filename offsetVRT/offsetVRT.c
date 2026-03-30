@@ -27,10 +27,6 @@ double Rotation = 45.;
 double SLat = -91.;
 int llConserveMem = 999;
 
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
 
 void getArgs(int argc, char *argv[], char *filename[], char **datfile, char **vrtfile, int32_t *xSize, int32_t *ySize, int32_t *byteSwap, int32_t *nBands)
 {

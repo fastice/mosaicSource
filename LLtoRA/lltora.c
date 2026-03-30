@@ -28,13 +28,13 @@ double Rotation = 45.;
 double SLat = -91.0;
 int32_t sepAscDesc = TRUE;
 
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
+//float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 999;		/* Kluge to maintain backwards compat 9/13/06 */
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
+//float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
+//void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+//void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
 
 int main(int argc, char *argv[])
 {

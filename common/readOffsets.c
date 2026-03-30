@@ -6,11 +6,7 @@
 #include <unistd.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
 
-#define RANGEBUFF 20
-#define AZIMUTHBUFF 21
-#define RANGEERRORBUFF 22
-#define AZIMUTHERRORBUFF 23
-#define RANGEUSEAZIMUTHBUFF 24
+
 #define AZONLY 30
 #define RGANDAZ 31
 #define RGONLY 32
@@ -23,6 +19,8 @@ static void initOffsetBuffers(Offsets *offsets, int32_t mode);
 static char *mergePath(char *file1, char *path);
 static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB, char *verticalCorrectionSuffix);
 static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB);
+static int is_not_final_range(const char *vrtFile);
+static int get_se_correction_path(const char *vrtFile, char *outPath, size_t outSize);
 
 static char *checkForOffsetsVrt(char *filename, char *vrtBuff) 
 {
@@ -66,8 +64,8 @@ static void mapBuffer(int32_t nr, int32_t na, float **d, float **s, float *buffS
 
 static void initOffsetBuffers(Offsets *offsets, int32_t mode)
 {
-	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
+	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
 	float *fBuf1, *fBuf2, *fBuf3, *fBuf4;
 	int32_t i, nr, na;
 	nr = offsets->nr;
@@ -101,6 +99,12 @@ static void initOffsetBuffers(Offsets *offsets, int32_t mode)
 			// fprintf(stderr, "RANGE FLIP BUFFERS\n");
 			mapBuffer(nr, na, offsets->dr, offsets->sr, fBuf3, fBuf4);
 			break;
+		case SEBUF:
+			offsets->SECorrection = (float **)lSEBuf;
+			fBuf1 = (float *)offSEBuffSpace;
+			//fprintf(stderr, "Special Solid Earth BUFFERS\n");
+			mapBuffer(nr, na, offsets->SECorrection, offsets->SECorrection, fBuf1, fBuf1);
+			break;		
 		default:
 		error("initOffsets invalid buffer code %i", mode);
 			break;
@@ -355,18 +359,6 @@ void getAzParams(Offsets *offsets)
 	fclose(fp);
 }
 
-
-//char *checkForVrt(char *filename, char *vrtBuff)
-//{
-//	char *vrtFile;
-//	vrtFile = appendSuffix(filename, ".vrt", vrtBuff);
-//	if (access(vrtFile, F_OK) == 0)
-//	{
-//		return vrtFile;
-//	}
-//	return NULL;
-//}
-
 void initOffParams(Offsets *offsets){
 	offsets->nr = 0;
 	offsets->na = 0;
@@ -409,6 +401,7 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	return hBand;
 }
 
+
 static void mapBandDescriptionsToBandNumbers(GDALDatasetH hDS, int32_t bandNumbers[5])
 {	
 	/* 
@@ -422,10 +415,18 @@ static void mapBandDescriptionsToBandNumbers(GDALDatasetH hDS, int32_t bandNumbe
 	GDALRasterBandH hBand;
 	for(int i=1; i <= 4; i++) bandNumbers[i] = 0;
 	int32_t nBands = GDALGetRasterCount(hDS);
+	// fprintf(stderr, "Number of bands in offset file %i\n", nBands);
 	if(nBands > 4) error("mapBandDescriptionsToBandNumbers: to many (%i) bands for offset file\n", nBands);
 	for(int i=1; i <= nBands; i++) {
 		hBand = GDALGetRasterBand(hDS, i);
+		// fprintf(stderr, "Band %i\n", i);
 		description = GDALGetMetadataItem(hBand, "Description", NULL);
+		if(description == NULL)
+		{
+			description = GDALGetDescription(hBand);
+		}
+		if (description == NULL || strlen(description) == 0) error("No description found for this band.\n");
+		//fprintf(stderr, "AfterBand %i %s\n", i, description);
 		// fprintf(stderr, "Description %s %i\n", description, i);
 		if(strstr(description, "AzimuthOffsets") != NULL) bandNumbers[1] = i;
 		else if(strstr(description, "AzimuthSigma")  != NULL) bandNumbers[3] = i;
@@ -446,6 +447,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 	GDALRasterBandH hBand;
 
 	mapBandDescriptionsToBandNumbers(hDS, bandNumbers);
+	fprintf(stderr, "Band numbers: az %i range %i azSigma %i rangeSigma %i\n", bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
 	// Handle various buffer cases
 	buf[0] = '\0';
 	switch (bufferMode)
@@ -461,7 +463,9 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 		fprintf(stderr, "RANGE BUFF  %s\n", offsets->rFile);
 		path = dirname(strcpy(buf, offsets->rFile));
 		hBand = getBandAndMeta(hDS, offsets, bandNumbers[2], path);
+		fprintf(stderr, "Range offsets meta read\n");
 		initOffsetBuffers(offsets, RGONLY);
+		fprintf(stderr, "Range offsets buffers initialized\n");
 		data = offsets->dr[0];
 		break;
 	case RANGEUSEAZIMUTHBUFF:
@@ -500,7 +504,12 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
 	GDALDatasetH hDS;
 
 	//fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
-	vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
+	if (has_suffix(offsets->file, ".vrt") == TRUE)
+		vrtFile = strcpy(vrtBuffer, offsets->file);
+	else
+		vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
+	fprintf(stderr, "vrtFile %s\n", vrtFile);
+	//vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
 	if (vrtFile != NULL)
 	{	// Zero params
 		initOffParams(offsets);
@@ -543,28 +552,87 @@ void readOffsets(Offsets *offsets) {
 void readAzimuthOffsets(Offsets *offsets) {
 	readOffsetsOptionalErrors(offsets, FALSE);
 }
+
+
+static void checkForIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets)
+{
+	dictNode *metaData = NULL;
+	char ionospherePath[2048];
+	char tmp[2048];
+	int band = 1;
+	//GDALRasterBandH hBand = GDALGetRasterBand(hDS, band);
+	
+	readDataSetMetaData(hDS, &metaData);
+	fprintf(stderr, "Checking for ionospheric correction =====\n");
+	char *ionsphereCorrection = get_value(metaData, "ionosphereRangeOffsetCorrection");
+	strncpy(tmp, offsets->rFile, sizeof(tmp) - 1);
+	snprintf(ionospherePath, sizeof(ionospherePath), "%s/%s", dirname(tmp), ionsphereCorrection);
+	if (access(ionospherePath, F_OK) == 0) 
+	{
+		readOffsetCorrection(ionospherePath, offsets, RANGEBUFF);
+	}
+
+
+
+// dirname may modify its argument so pass a copy
+
+	fprintf(stderr, "ionosphereRangeOffsetCorrection %s\n", ionospherePath);
+
+}
+
 /*
    Read range  offsets (for now no sigma)
  */
 void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 {
-	char *datFile, buf[2048], bufd[2048], vrtBuffer[2048], *vrtFile;
+	char *datFile, buf[2048], bufd[2048], vrtBuffer[2048], *vrtFile, SEPath[2048];
 	char *eFileR, *file;
+	float *data;
 	GDALDatasetH hDS;
 	/*
 	  Read inputfile
 	*/ 
-	vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
+	if (has_suffix(offsets->rFile, ".vrt") == TRUE)
+		vrtFile = strcpy(vrtBuffer, offsets->rFile);
+	else
+		vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
+	fprintf(stderr, "vrtFile %s\n", vrtFile);
 	if (vrtFile != NULL)
 	{	// Zero parameters
 		initOffParams(offsets);
-		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+		fprintf(stderr, "VRT opened\n");
 		// Read data and close
 		readGDALOffsets(hDS, offsets, RANGEBUFF);
+		fprintf(stderr, "Range offsets read from VRT xxx\n");
 		if(includeErrors == TRUE) 
 			readGDALOffsets(hDS, offsets, RANGEERRORBUFF);
+		// Check for ionospheric correction
+		fprintf(stderr, "Checking for ionospheric correction\n");
+		checkForIonosphereCorrection(hDS, offsets);
+		fprintf(stderr, "%s\n", offsets->rFile);
+		//error("STOP HERE");
+		fprintf(stderr, "Range offsets read from VRT\n");
+		// Check  if intermediate product that needs SE correction
+		// This is kluge, which should only be invoked if creating velocity_nocull product from intermediate offset products.
+		if(is_not_final_range(vrtFile) && get_se_correction_path(offsets->geo1, SEPath, sizeof(SEPath))) {
+			fprintf(stderr, "\033[1;34mWARNING: applying SE correction to %s which is an intermediate file.\n\033[0m", vrtFile);
+			initOffsetBuffers(offsets, SEBUF);
+			data =  offsets->SECorrection[0];
+			int xSize, ySize, dataType;
+			dictNode *metaDictionary = NULL;
+			readRasterVRT(SEPath, 1, &xSize, &ySize,  &dataType, &metaDictionary, data);
+			// Apply SE correction to range offsets
+			for(int i=0; i < ySize; i++)
+			{
+				for(int j=0; j < xSize; j++) 
+				{
+					offsets->dr[i][j] -= offsets->SECorrection[i][j];
+				}		
+			}
+		} 
 		GDALClose(hDS);
 	}
 	else
@@ -603,6 +671,107 @@ void readBothOffsets(Offsets *offsets)
 	fprintf(stderr, "SIGMA FINAL %f %f", offsets->sigmaStreaks, offsets->sigmaRange);
 }
 
+
+/*
+ * Returns 1 if:
+ *   - filename is exactly "range.offsets.fast"
+ *   OR
+ *   - filename contains ".interp.dr"
+ * Otherwise returns 0.
+ */
+static int is_not_final_range(const char *vrtFile)
+{
+    const char *filename;
+    const char *p;
+
+    if (vrtFile == NULL)
+        return 0;
+
+    /* Find last '/' */
+    filename = strrchr(vrtFile, '/');
+
+    /* Also check for Windows '\' */
+    p = strrchr(vrtFile, '\\');
+    if (p != NULL && (filename == NULL || p > filename))
+        filename = p;
+
+    /* Move past separator if found */
+    if (filename != NULL)
+        filename++;
+    else
+        filename = vrtFile;
+    /* Substring match */
+	//fprintf(stderr, "Checking if %s is an intermediate range offset file\n", filename);
+    if (strstr(filename, "range.offsets.fast") != NULL)
+        return 1;
+
+    /* Substring match */
+    if (strstr(filename, "cull.interp") != NULL)
+        return 1;
+
+    return 0;
+}
+
+
+/*
+ * If offsets.SECorrection.vrt exists in same directory as vrtFile:
+ *   - writes full path into outPath
+ *   - returns 1
+ * Otherwise:
+ *   - returns 0
+ */
+int get_se_correction_path(const char *vrtFile,
+                           char *outPath,
+                           size_t outSize)
+{
+    const char *filename;
+    const char *p;
+    size_t dir_len;
+    FILE *fp;
+
+    if (!vrtFile || !outPath || outSize == 0)
+        return 0;
+
+    /* Find last path separator */
+    filename = strrchr(vrtFile, '/');
+    p = strrchr(vrtFile, '\\');
+    if (p && (!filename || p > filename))
+        filename = p;
+
+    if (filename)
+        dir_len = filename - vrtFile + 1;  /* include separator */
+    else
+        dir_len = 0;
+
+    if (dir_len + strlen("offsets.SECorrection.vrt") + 1 > outSize)
+        return 0;
+
+    /* Copy directory */
+    if (dir_len > 0)
+    {
+        strncpy(outPath, vrtFile, dir_len);
+        outPath[dir_len] = '\0';
+    }
+    else
+    {
+        outPath[0] = '\0';
+    }
+
+    /* Append filename */
+    strcat(outPath, "offsets.SECorrection.vrt");
+
+    /* Check existence */
+    fp = fopen(outPath, "r");
+    if (fp)
+    {
+        fclose(fp);
+        return 1;
+    }
+
+    return 0;
+}
+
+
 /*
   This reads the range offsets, but uses the azimuth  offsets buffer for the asc and the range for the descending
 */
@@ -614,7 +783,12 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
 	int bufferMode;
 	// Zero parameters
 	initOffParams(offsets);
-	vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer); 
+	if (has_suffix(offsets->rFile, ".vrt") == TRUE)
+		vrtFile = strcpy(vrtBuffer, offsets->rFile);
+	else
+		vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
+	//fprintf(stderr, "vrtFile %s\n", vrtFile);
+	//vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer); 
 	if (vrtFile != NULL)
 	{
 		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);

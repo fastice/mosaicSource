@@ -71,12 +71,12 @@ void readXYCropVel(xyVEL *xyvel, char *velFile, double xmin, double xmax, double
 	} else {
 		vxFile = appendSuffix(velFile, ".vx",
 							   (char *)malloc((size_t)strlen(velFile) + 4));
-		vyFile = appendSuffix(velFile, ".vx",
+		vyFile = appendSuffix(velFile, ".vy",
 							   (char *)malloc((size_t)strlen(velFile) + 4));
 	}
 	// Check file exists. TRUE forces abort if file does not exist
 	fprintf(stderr, "Files: %s %s\n", vxFile, vyFile);
-	error("STOP");
+	//error("STOP");
 	fileExists(vxFile, TRUE);
 	fileExists(vyFile, TRUE);
 	

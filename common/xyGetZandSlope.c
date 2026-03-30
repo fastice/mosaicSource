@@ -79,10 +79,12 @@ void xyGetZandSlope(double lat, double lon, double x, double y, double *zSp, dou
 	hAngle = computeHeading(lat, lon, 0, image, cP);
 	if (hAngle > (2.0001 * PI))
 	{
+		
 		*zSp = 1000000.;
 		*zWGS84 = 1000000;
 		return;
 	}
+	//error("STOPZSP %f %f %f	%f %f\n", lat, lon, *zSp, *zWGS84, hAngle	);
 	/*
 	   Rotate dzdx,dzdy to dr,da
 	*/

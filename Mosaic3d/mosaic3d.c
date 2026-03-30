@@ -72,11 +72,6 @@ int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.;
 
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
-
 int32_t llConserveMem = 1234; /* Kluge to maintain backwards compat 9/13/06 */
 
 int main(int argc, char *argv[])
@@ -125,6 +120,7 @@ int main(int argc, char *argv[])
 			&verticalCorrectionFile, &GTiff, &COG);
 	/* Added August 2021 to set projection parameters from DEM */
 	readXYDEMGeoInfo(demFile, &dem, TRUE);
+	
 	/* Removed no offset flag version */
 	processMosaicDate(&outputImage, date1, date2);
 	/* Write to log */
@@ -513,14 +509,15 @@ static void init3DImages(outputImageStructure *outputImage, referenceVelocity *r
 
 static void malloc3DBuffers()
 {
-	extern char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
-	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
+	extern char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2, *SEBuf;
+	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
 
 	Abuf1 = malloc(MAXADBUF);
 	Abuf2 = malloc(MAXADBUF2);
 	Dbuf1 = malloc(MAXADBUF);
 	Dbuf2 = malloc(MAXADBUF2);
+	SEBuf = malloc(max(MAXADBUF, MAXADBUF2));
 	/*
 	  Init buffer memory
 	*/
@@ -528,11 +525,17 @@ static void malloc3DBuffers()
 	offBufSpace2 = (void *)malloc(MAXOFFBUF);
 	offBufSpace3 = (void *)malloc(MAXOFFBUF);
 	offBufSpace4 = (void *)malloc(MAXOFFBUF);
+	offSEBuffSpace = (void *)malloc(MAXOFFBUF);
+
 	/* Used for pointers rows to above buffer space */
 	lBuf1 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
 	lBuf2 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
 	lBuf3 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
 	lBuf4 = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
+	lSEBuf = (void *)malloc(sizeof(float *) * MAXOFFLENGTH);
+	if(lSEBuf == NULL || lBuf1 == NULL || lBuf2 == NULL || lBuf3 == NULL || lBuf4 == NULL || offBufSpace1 == NULL || offBufSpace2 == NULL || offBufSpace3 == NULL || offBufSpace4 == NULL ||
+	   Abuf1 == NULL || Abuf2 == NULL || Dbuf1 == NULL || Dbuf2 == NULL || SEBuf == NULL)
+		error("Error allocating 3D buffers");
 }
 
 static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descImages, int32_t nAsc, int32_t nDesc, int32_t northFlag, outputImageStructure *outputImage)

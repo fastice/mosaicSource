@@ -42,9 +42,9 @@ int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
+//void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+//void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 999; /* Kluge to maintain backwards compat 9/13/06 */
 
 // Hard code wkt to avoid proj lib path issues.
