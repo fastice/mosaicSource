@@ -1,14 +1,21 @@
 CC =		gcc
-CFLAGS  =	 $(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
+MACHTYPE =	$(shell uname -m)
+OSTYPE =	$(shell uname -s)
+OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
-OBJS= addOffsetCorrections.o azparams.o computeAzparams.o getOffsets.o   
+$(shell mkdir -p $(OBJDIR))
 
-MACHTYPE = $(shell uname -m)
-OSTYPE = $(shell uname -s)
+CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
 
-$(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
+SRCS =	addOffsetCorrections.c azparams.c computeAzparams.c getOffsets.c
+
+OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
+
+all:	$(OBJS)
+-include $(OBJS:.o=.d)
 
 .KEEP_STATE:
-all:	$(OBJS)
 
-	mv *.o $(MACHTYPE)-$(OSTYPE)
+
+$(OBJDIR)/%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@

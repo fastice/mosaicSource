@@ -61,10 +61,10 @@ int32_t hybridZ = -1;
 int32_t noPower = -1;
 int32_t rsatFineCal = FALSE;
 int32_t S1Cal = FALSE;
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 1234;		/* Kluge to maintain backwards compat 9/13/06 */
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
-float *smoothBuf;
+//float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
+//float *smoothBuf;
 
 int main(int argc, char *argv[])
 {

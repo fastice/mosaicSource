@@ -13,7 +13,7 @@ void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruc
 	double range, azimuth;
 	int32_t i, count;
 	/* Get offsets 	*/
-	readRangeOffsets(offsets, FALSE);
+	readRangeOffsets(offsets, FALSE, 0.0f, (float)LARGEINT);
 	fprintf(stderr, "	OFFSETS READ\n\n");
 	/*
 	  Interpolate offsets
@@ -27,13 +27,25 @@ void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruc
 	
 		tiePoints->phase[i] = bilinearInterp((float **)offsets->dr, range, azimuth,
 											 offsets->nr, offsets->na, -0.99 * LARGEINT, (float)-LARGEINT); /* only scale valid values */
+		if (offsets->rOffCorrection.rangeOffsetCorrection != NULL)
+		{
+			float ionoCorr = interpolateOffsetCorrection(&offsets->rOffCorrection,
+														 tiePoints->r[i] * inputImage.nRangeLooks,
+														 tiePoints->a[i] * inputImage.nAzimuthLooks,
+														 -0.99 * LARGEINT, (float)-LARGEINT);
+			if (ionoCorr > -0.98 * LARGEINT)
+			{
+				fprintf(stderr, "ionoCorr %f phase %f\n", ionoCorr, tiePoints->phase[i]);
+				tiePoints->phase[i] -= ionoCorr;
+			}
+		}
 		if (tiePoints->phase[i] > -0.98 * LARGEINT)
 		{
 			tiePoints->phase[i] *= inputImage.rangePixelSize / inputImage.nRangeLooks;
 			count++;
 		}
 		/*  Multiply by -1 for left to get RHS*/
-		/*         if(inputImage.lookDir==LEFT) tiePoints->phase[i] *=-1; */
+		//        if(inputImage.lookDir==LEFT) tiePoints->phase[i] *=-1; 
 		if (fabs(tiePoints->phase[i]) < LARGEINT / 10 && tiePoints->quiet == FALSE)
 			fprintf(stdout, "; %i  %i  %f %f\n", (int)(tiePoints->r[i] + 0.5), (int)(tiePoints->a[i] + 0.5),
 					tiePoints->z[i], tiePoints->phase[i]);

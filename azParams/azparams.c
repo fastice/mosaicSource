@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
 		svInitAzParams(&inputImage, &offsets);
 		fprintf(stderr, "sv fit %f %f %f %f\n", offsets.azFit[0], offsets.azFit[1], offsets.azFit[2], offsets.azFit[3]);
 	}
-	if(tiePoints.deltaB == DELTABNONE)
+	if(tiePoints.deltaB == DELTABNONE) 
 	{
 		tiePoints.cnstA = 0.0;
 		tiePoints.cnstR = 0.0;
@@ -124,6 +124,7 @@ int main(int argc, char *argv[])
 	addOffsetCorrections(&inputImage, &tiePoints);
 	/*
 	  Output results for checking to sterr
+
 	*/
 	if (tiePoints.quiet == FALSE)
 	{

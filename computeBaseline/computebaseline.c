@@ -67,9 +67,9 @@ int main(int argc, char *argv[])
 	azTime2 = inputImage1.cpAll.sTime + inputImage1.azimuthSize * inputImage1.nAzimuthLooks / inputImage1.par.prf;
 	// Compute baselines in TCN and covert to bnorm, bperp
 	svBaseTCN(azTime1, dt1t2, &(inputImage1.sv), &(inputImage2.sv), bTCN);
-	svBnBp(azTime1, thetaC, dt1t2, &(inputImage1.sv), &(inputImage2.sv), &bn1, &bp1);
-	svBaseTCN(azTime2, dt1t2, &(inputImage1.sv), &(inputImage2.sv), bTCN);	
-	svBnBp(azTime2, thetaC, dt1t2, &(inputImage1.sv), &(inputImage2.sv), &bn2, &bp2);
+	svBnBp(azTime1, thetaC, dt1t2, &(inputImage1.sv), &(inputImage2.sv), &bn1, &bp1, inputImage1.lookDir);
+	svBaseTCN(azTime2, dt1t2, &(inputImage1.sv), &(inputImage2.sv), bTCN);
+	svBnBp(azTime2, thetaC, dt1t2, &(inputImage1.sv), &(inputImage2.sv), &bn2, &bp2, inputImage1.lookDir);
 	
 	fprintf(stderr, "--- %f %f %f %f\n",bn1, bp1, bn2, bp2);
 	bn = (bn1 + bn2) * 0.5;

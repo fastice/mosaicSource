@@ -4,7 +4,15 @@
 #include "common.h"
 #include <libgen.h>
 #include <unistd.h>
+#include <time.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
+
+static double now(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
 
 
 #define AZONLY 30
@@ -41,9 +49,9 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 /*
    Read the offset data and paramter files
  */
-void readOffsetDataAndParams(Offsets *offsets)
+void readOffsetDataAndParams(Offsets *offsets, float azimuthMin, float azimuthMax)
 {
-	readBothOffsets(offsets);
+	readBothOffsets(offsets, azimuthMin, azimuthMax);
 	getAzParams(offsets);
 	getRParams(offsets);
 	fprintf(stderr, "Offsets and parameters read\n");
@@ -370,6 +378,7 @@ void initOffParams(Offsets *offsets){
 	offsets->sigmaRange = 0.0;
 	offsets->geo1 = NULL;
 	offsets->geo2 = NULL;
+	offsets->rOffCorrection.rangeOffsetCorrection = NULL;
 }
 
 static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_t band, char *path)
@@ -438,13 +447,14 @@ static void mapBandDescriptionsToBandNumbers(GDALDatasetH hDS, int32_t bandNumbe
 	// fprintf(stderr, "%i %i %i %i\n", bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
 }
 
-void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
+void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float azimuthMin, float azimuthMax)
 {
 	int32_t status;
 	float *data;
 	char *path, buf[2048];
 	int32_t bandNumbers[5];
 	GDALRasterBandH hBand;
+	int32_t iAzMin, iAzMax, nRows, k;
 
 	mapBandDescriptionsToBandNumbers(hDS, bandNumbers);
 	fprintf(stderr, "Band numbers: az %i range %i azSigma %i rangeSigma %i\n", bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
@@ -476,7 +486,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 		data = offsets->dr[0];
 		break;
 	case AZIMUTHERRORBUFF:
-		// fprintf(stderr, "AZIMUTH ERROR BUFF\n");
+		// fprintf(stderr, "AZIMUTH ERROR BUFF\n")
 		hBand = GDALGetRasterBand(hDS, bandNumbers[3]);
 		data = offsets->sa[0];
 		break;
@@ -488,16 +498,46 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 	default:
 		error("Invalide code readGDALoffstes");
 	}
-	//fprintf(stderr, "RASTERO\n");
-	status = GDALRasterIO(hBand, GF_Read, 0, 0, offsets->nr, offsets->na, data,
-						  offsets->nr, offsets->na, GDT_Float32, 0, 0);
-	//fprintf(stderr, "Raster IO Status %i\n", status);
+
+	/* Clamp azimuth range to valid rows */
+	azimuthMin = (azimuthMin - offsets->aO) / offsets->deltaA;
+	azimuthMax = (azimuthMax - offsets->aO) / offsets->deltaA;
+	iAzMin = max(0, (int32_t)azimuthMin);
+	iAzMax = min(offsets->na - 1, (int32_t)azimuthMax);
+	nRows  = iAzMax - iAzMin + 1;
+
+	if (iAzMin == 0 && iAzMax == offsets->na - 1)
+	{
+		/* Full image read */
+		fprintf(stderr, "\033[32mFull read of %i rows and %i columns\033[0m\n", offsets->na, offsets->nr);
+		status = GDALRasterIO(hBand, GF_Read, 0, 0, offsets->nr, offsets->na, data,
+							  offsets->nr, offsets->na, GDT_Float32, 0, 0);
+	}
+	else
+	{
+		/* Partial read: fill entire buffer with -LARGEINT, then read desired rows
+		   in-place so row indices match those of a full read */
+		for (k = 0; k < offsets->nr * offsets->na; k++)
+			data[k] = (float)-LARGEINT;
+		fprintf(stderr, "\033[34mPartial read of rows %i to %i (of %i) and %i columns\033[0m\n", iAzMin, iAzMax, offsets->na, offsets->nr);
+		status = GDALRasterIO(hBand, GF_Read,
+							  0, iAzMin, offsets->nr, nRows,
+							  data + iAzMin * offsets->nr, offsets->nr, nRows,
+							  GDT_Float32, 0, 0);
+	}
+
+	if (status != CE_None)
+		error("readGDALOffsets: GDALRasterIO failed\n");
+
+	/* Convert any NaN pixels (source nodata) to -LARGEINT sentinel */
+	for (k = 0; k < offsets->nr * offsets->na; k++)
+		if (isnan(data[k])) data[k] = (float)-LARGEINT;
 }
 
 /*
  This combines funtionality of historical readOffsets and readAzimuthOffsets.
 */
-void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
+void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax)
 {
 	char *datFile, buf[1024], bufa[2048], vrtBuffer[2048], *vrtFile;
 	char *eFileA, *file;
@@ -517,9 +557,9 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
 		// Read azimuthg offsets and errors
-		readGDALOffsets(hDS, offsets, AZIMUTHBUFF);
+		readGDALOffsets(hDS, offsets, AZIMUTHBUFF, azimuthMin, azimuthMax);
 		if(includeErrors == TRUE)
-			readGDALOffsets(hDS, offsets, AZIMUTHERRORBUFF);
+			readGDALOffsets(hDS, offsets, AZIMUTHERRORBUFF, azimuthMin, azimuthMax);
 		GDALClose(hDS);
 	}
 	else
@@ -543,47 +583,42 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors)
    Read azimuth offsets with errors
  */
 void readOffsets(Offsets *offsets) {
-	readOffsetsOptionalErrors(offsets, TRUE);
+	readOffsetsOptionalErrors(offsets, TRUE, 0.0f, (float)LARGEINT);
 }
 
 /*
    Read azimuth offsets only
  */
 void readAzimuthOffsets(Offsets *offsets) {
-	readOffsetsOptionalErrors(offsets, FALSE);
+	readOffsetsOptionalErrors(offsets, FALSE, 0.0f, (float)LARGEINT);
 }
 
 
-static void checkForIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets)
+static void checkForIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets, int bufferMode)
 {
 	dictNode *metaData = NULL;
 	char ionospherePath[2048];
 	char tmp[2048];
 	int band = 1;
 	//GDALRasterBandH hBand = GDALGetRasterBand(hDS, band);
-	
+
 	readDataSetMetaData(hDS, &metaData);
-	fprintf(stderr, "Checking for ionospheric correction =====\n");
 	char *ionsphereCorrection = get_value(metaData, "ionosphereRangeOffsetCorrection");
+	if (ionsphereCorrection == NULL)
+		return;
 	strncpy(tmp, offsets->rFile, sizeof(tmp) - 1);
 	snprintf(ionospherePath, sizeof(ionospherePath), "%s/%s", dirname(tmp), ionsphereCorrection);
-	if (access(ionospherePath, F_OK) == 0) 
+	if (access(ionospherePath, F_OK) == 0)
 	{
-		readOffsetCorrection(ionospherePath, offsets, RANGEBUFF);
+		fprintf(stderr, "Found ionospheric correction file %s\n", ionospherePath);
+		readOffsetCorrection(ionospherePath, offsets, bufferMode);
 	}
-
-
-
-// dirname may modify its argument so pass a copy
-
-	fprintf(stderr, "ionosphereRangeOffsetCorrection %s\n", ionospherePath);
-
 }
 
 /*
    Read range  offsets (for now no sigma)
  */
-void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
+void readRangeOffsets(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax)
 {
 	char *datFile, buf[2048], bufd[2048], vrtBuffer[2048], *vrtFile, SEPath[2048];
 	char *eFileR, *file;
@@ -605,14 +640,14 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
 		fprintf(stderr, "VRT opened\n");
 		// Read data and close
-		readGDALOffsets(hDS, offsets, RANGEBUFF);
+		readGDALOffsets(hDS, offsets, RANGEBUFF, azimuthMin, azimuthMax);
 		fprintf(stderr, "Range offsets read from VRT xxx\n");
-		if(includeErrors == TRUE) 
-			readGDALOffsets(hDS, offsets, RANGEERRORBUFF);
+		if(includeErrors == TRUE)
+			readGDALOffsets(hDS, offsets, RANGEERRORBUFF, azimuthMin, azimuthMax);
 		// Check for ionospheric correction
 		fprintf(stderr, "Checking for ionospheric correction\n");
-		checkForIonosphereCorrection(hDS, offsets);
-		fprintf(stderr, "%s\n", offsets->rFile);
+		checkForIonosphereCorrection(hDS, offsets, RANGEBUFF);
+		//fprintf(stderr, "%s\n", offsets->rFile);
 		//error("STOP HERE");
 		fprintf(stderr, "Range offsets read from VRT\n");
 		// Check  if intermediate product that needs SE correction
@@ -623,7 +658,7 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 			data =  offsets->SECorrection[0];
 			int xSize, ySize, dataType;
 			dictNode *metaDictionary = NULL;
-			readRasterVRT(SEPath, 1, &xSize, &ySize,  &dataType, &metaDictionary, data);
+			readRasterVRT(SEPath, 1, &xSize, &ySize,  &dataType, &metaDictionary, data, 0, (int32_t)LARGEINT);
 			// Apply SE correction to range offsets
 			for(int i=0; i < ySize; i++)
 			{
@@ -657,7 +692,7 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors)
 /*
 	read offsets and error files
 */
-void readBothOffsets(Offsets *offsets)
+void readBothOffsets(Offsets *offsets, float azimuthMin, float azimuthMax)
 {
 	char *datFile, buf[1024], bufa[1024], bufd[1024], bufvrt[2048];
 	char *eFileA, *eFileR;
@@ -666,8 +701,8 @@ void readBothOffsets(Offsets *offsets)
 	/*
 	  Read azimuth offsets followed by range offsets
 	*/
-	readOffsetsOptionalErrors(offsets, TRUE);
-	readRangeOffsets(offsets, TRUE);
+	readOffsetsOptionalErrors(offsets, TRUE, azimuthMin, azimuthMax);
+	readRangeOffsets(offsets, TRUE, azimuthMin, azimuthMax);
 	fprintf(stderr, "SIGMA FINAL %f %f", offsets->sigmaStreaks, offsets->sigmaRange);
 }
 
@@ -775,7 +810,7 @@ int get_se_correction_path(const char *vrtFile,
 /*
   This reads the range offsets, but uses the azimuth  offsets buffer for the asc and the range for the descending
 */
-void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
+void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthMin, float azimuthMax)
 {
 	char *datFile, buf[2048], bufd[2048], vrtBuffer[2048], *vrtFile;
 	char *eFileR, *file;
@@ -795,9 +830,11 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
 		// Read data and close
-		if (orbitType == ASCENDING) readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF);
-		else readGDALOffsets(hDS, offsets, RANGEBUFF);
-		readGDALOffsets(hDS, offsets, RANGEERRORBUFF);
+		if (orbitType == ASCENDING) readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF, azimuthMin, azimuthMax);
+		else readGDALOffsets(hDS, offsets, RANGEBUFF, azimuthMin, azimuthMax);
+		readGDALOffsets(hDS, offsets, RANGEERRORBUFF, azimuthMin, azimuthMax);
+		checkForIonosphereCorrection(hDS, offsets,
+									orbitType == ASCENDING ? RANGEUSEAZIMUTHBUFF : RANGEBUFF);
 		GDALClose(hDS);
 	}
 	else
@@ -821,7 +858,7 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType)
 /*
   Input phase or power image for geocode
 */
-void getMosaicInputImage(inputImageStructure *inputImage)
+void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t yMax)
 {
 	FILE *fp;
 	float **fimage;
@@ -840,7 +877,10 @@ void getMosaicInputImage(inputImageStructure *inputImage)
 	{
 		imageLine = inputImage->image[0];
 		fprintf(stderr, "VRT FILE %s exists\n", vrtFile);	
-		readRasterVRT(vrtFile, 1, &xSize, &ySize, &dataType, &metaOut, imageLine);
+		double t0 = now();
+		readRasterVRT(vrtFile, 1, &xSize, &ySize, &dataType, &metaOut, imageLine,
+					  yMin / inputImage->nAzimuthLooks, yMax / inputImage->nAzimuthLooks);
+		fprintf(stderr, "GDAL read time: %.3f s\n", now() - t0);
 		fprintf(stderr, "azimuthSize %i %i rangeSize %i %i\n", inputImage->azimuthSize, ySize,
 			inputImage->rangeSize, xSize);
 		fprintf(stderr, "VRT read\n");

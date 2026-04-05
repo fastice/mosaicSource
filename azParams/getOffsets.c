@@ -33,7 +33,7 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
          count++;
       }
       /*    Multiply by -1 for left to get RHS????	     */
-      if(inputImage.lookDir==LEFT) tiePoints->phase[i] *=-1;
+      /* if(inputImage.lookDir==LEFT) tiePoints->phase[i] *=-1; */
       if (fabs(tiePoints->phase[i]) < (LARGEINT) && tiePoints->quiet == FALSE)
          fprintf(stdout, "; %i  %i  %f %f\n", (int)(tiePoints->r[i] + 0.5), (int)(tiePoints->a[i] + 0.5),
                  tiePoints->z[i], (float)tiePoints->phase[i]);

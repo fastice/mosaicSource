@@ -1,19 +1,30 @@
 CC =		gcc
-CFLAGS  =	 $(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
+MACHTYPE =	$(shell uname -m)
+OSTYPE =	$(shell uname -s)
+OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
-OBJS=  addIrregData.o  bilinearInterp.o buffers.o computeHeading.o computePhiZ.o  computeScale.o computeTiePoints.o computeXYangle.o earthRadiusFunctions.o   geojsonCode.o \
-	getBaseline.o  getDataStringSpecial.o getHeight.o  getIrregData.o getMVhInputFile.o  getRegion.o getShelfMask.o getXYHeight.o groundRangeToLLNew.o julianDay.o  \
-	initMatrix.o  initRoutines.o  interpOffsets.o  interpPhaseImage.o  interpTideDiff.o interpVCorrect.o interpXYDEM.o \
-	llToImageNew.o lltoxy.o lltoxy1.o outputGeocodedImage.o parseInputFile.o  parseIrregFile.o parseSLCvrt.o polintVec.o \
-	rangeAzimuthToLL.o readOffsets.o readOffsetCorrection.o readOldPar.o readShelf.o readTiePoints.o  readXYDEM.o rotateFlowDirectionToRA.o rotateFlowDirectionToXY.o \
-	scalingFunctions.o smlocateZD.o svBase.o vectorFunc.o xyGetZandSlope.o  xytoll1.o  xytoll.o
+$(shell mkdir -p $(OBJDIR))
 
-MACHTYPE = $(shell uname -m)
-OSTYPE = $(shell uname -s)
+CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
 
-$(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
+SRCS =	addIrregData.c bilinearInterp.c buffers.c computeHeading.c computePhiZ.c \
+	computeScale.c computeTiePoints.c computeXYangle.c \
+	earthRadiusFunctions.c geojsonCode.c getAzimuthBoundsForXYBox.c getBaseline.c \
+	getDataStringSpecial.c getHeight.c getIrregData.c \
+	getMVhInputFile.c getRegion.c getShelfMask.c getXYHeight.c groundRangeToLLNew.c julianDay.c \
+	initMatrix.c initRoutines.c interpOffsets.c interpPhaseImage.c interpTideDiff.c interpVCorrect.c interpXYDEM.c interpolateOffsetCorrection.c \
+	llToImageNew.c lltoxy.c lltoxy1.c outputGeocodedImage.c parseInputFile.c parseIrregFile.c parseSLCvrt.c polintVec.c \
+	rangeAzimuthToLL.c readOffsets.c readOffsetCorrection.c readOldPar.c readShelf.c readTiePoints.c readXYDEM.c rotateFlowDirectionToRA.c rotateFlowDirectionToXY.c \
+	scalingFunctions.c smlocateZD.c svBase.c vectorFunc.c xyGetZandSlope.c xytoll1.c xytoll.c
+
+OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
+
+all:	$(OBJS)
+
+-include $(OBJS:.o=.d)
 
 .KEEP_STATE:
-all:	$(OBJS)
-	mv *.o $(MACHTYPE)-$(OSTYPE)
 
+
+$(OBJDIR)/%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@

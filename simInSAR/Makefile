@@ -1,14 +1,22 @@
 CC =		gcc
-CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
+MACHTYPE =	$(shell uname -m)
+OSTYPE =	$(shell uname -s)
+OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
-OBJS= siminsar.o parseSceneFile.o  simInSARimage.o   outputSimulatedImage.o getDisplacement.o  getSlantRangeDEM.o 
+$(shell mkdir -p $(OBJDIR))
+
+CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
+
+SRCS =	siminsar.c parseSceneFile.c simInSARimage.c outputSimulatedImage.c getDisplacement.c getSlantRangeDEM.c
+
+OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
+
+all:	$(OBJS)
+
+-include $(OBJS:.o=.d)
+
 .KEEP_STATE:
 
 
-MACHTYPE = $(shell uname -m)
-OSTYPE = $(shell uname -s)
-
-$(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
-
-all:	$(OBJS)
-	mv *.o $(MACHTYPE)-$(OSTYPE)
+$(OBJDIR)/%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@

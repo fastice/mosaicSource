@@ -317,9 +317,10 @@ void computeXYangle(double lat, double lon, double *xyAngle, xyDEM xydem);
 void computeXYangleNoDem(double lat, double lon, double *xyAngle, double stdLat);
 void endScale(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY, float **scaleX,
 			  float **scaleY, float **scaleZ, int statsFlag);
-void readBothOffsets(Offsets *offsets);
-void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors);
+void readBothOffsets(Offsets *offsets, float azimuthMin, float azimuthMax);
+void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax);
 void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode);
+float interpolateOffsetCorrection(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
 void readOffsetParams(char *datFile, Offsets *offsets, int32_t);
 //char *checkForVrt(char *filename, char *vrtBuff);
 void undoNormalization(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY,
@@ -339,11 +340,11 @@ float shelfMaskCorrection(inputImageStructure *currentImage, vhParams *currentPa
 
 void getAzParams(Offsets *offsets);
 void getRParams(Offsets *offsets);
-void readOffsetDataAndParams(Offsets *offsets);
-void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType);
+void readOffsetDataAndParams(Offsets *offsets, float azimuthMin, float azimuthMax);
+void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthMin, float azimuthMax);
 void readOffsets(Offsets *offsets);
 void readAzimuthOffsets(Offsets *offsets);
-void readRangeOffsets(Offsets *offsets, int32_t includeErrors);
+void readRangeOffsets(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax);
 void readOldPar(char *parFile, SARData *sarD, stateV *sv);
 void parseSLCVrt(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder);
 void parseSLCVrtNew(char *vrtFile, SARData *sarD, stateV *sv, int32_t *byteOrder,
@@ -361,7 +362,7 @@ double sphericalToWGSElev(double z, double lat, double Re);
 void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage, inputImageStructure *dPhaseImage, double A[2][2]);
 void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi, xyDEM *xydem);
 void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], double B[2][2], double *vx, double *vy, double *scaleX, double *scaleY);
-void getMosaicInputImage(inputImageStructure *inputImage);
+void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t yMax);
 void errorsToXY(double er, double ea, double *ex, double *ey, double xyAngle, double hAngle);
 void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseImage, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax,
 				  outputImageStructure *outputImage);
@@ -400,7 +401,7 @@ double dot(double x1, double y1, double z1, double x2, double y2, double z2);
 void cross(double a1, double a2, double a3, double b1, double b2, double b3, double *c1, double *c2, double *c3);
 double norm(double x1, double y1, double z1);
 void svBaseTCN(double myTime, double dt1t2, stateV *sv1, stateV *sv2, double bTCN[3]);
-void svBnBp(double myTime, double theta, double dt1t2, stateV *sv1, stateV *sv2, double *bn, double *bp);
+void svBnBp(double myTime, double theta, double dt1t2, stateV *sv1, stateV *sv2, double *bn, double *bp, int32_t lookDir);
 void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets *offsets, double *cnstR, double *cnstA);
 void svInitBnBp(inputImageStructure *inputImage, Offsets *offsets);
 void svInterpBnBp(inputImageStructure *inputImage, Offsets *offsets, double azimuth, double *bnS, double *bpS);
@@ -428,5 +429,8 @@ OGRGeometryH createGeometry(double *lat, double *lon);
 OGRFeatureDefnH createFeatureDef(int32_t nState);
 const char *svTag(int32_t i, char *svType);
 char *replace_wildcard(const char *filename, const char *wildcard, const char *replacement);
-
+void getAzimuthBoundsForXYBox(int32_t imin, int32_t imax, int32_t jmin, int32_t jmax,
+                               inputImageStructure *currentImage,
+                               outputImageStructure *outputImage,
+                               float *azimuthMin, float *azimuthMax);
 #endif

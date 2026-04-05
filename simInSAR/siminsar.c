@@ -17,13 +17,13 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene,
 					 char **demFile, char **displacementFile, char **sceneFile, char **outputFile);
 static void usage();
 
-float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
+//float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 to seperate image buffers */
 //char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 //void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
 //void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2, *SEBuf; /* Buffers for offset and azimuth parameter interpolation, and special culling cases. */
-void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
-void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2, *SEBuf; /* Buffers for offset and azimuth parameter interpolation, and special culling cases. */
+//void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4, *offSEBuffSpace;
+//void *lBuf1, *lBuf2, *lBuf3, *lBuf4, *lSEBuf;
 int32_t llConserveMem = 999; /* Kluge to maintain backwards compat 9/13/06 */
 
 /*
@@ -34,7 +34,7 @@ int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
 int32_t HemiSphere = NORTH;
 double Rotation = 45.;
 double SLat = -91.0;
-char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
+//char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 
 int main(int argc, char *argv[])
 {

@@ -1,14 +1,23 @@
 CC =		gcc
-CFLAGS  =	 $(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH)
+MACHTYPE =	$(shell uname -m)
+OSTYPE =	$(shell uname -s)
+OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
-OBJS=  get3DInputFile.o make3DOffsets.o make3DMosaic.o  makeVhMosaic.o  mosaic3d.o  setup3D.o speckleTrackMosaic.o  writeTieFile.o 
+$(shell mkdir -p $(OBJDIR))
 
-MACHTYPE = $(shell uname -m)
-OSTYPE = $(shell uname -s)
+CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
 
-$(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
+SRCS =	get3DInputFile.c make3DOffsets.c make3DMosaic.c makeVhMosaic.c \
+	mosaic3d.c setup3D.c speckleTrackMosaic.c writeTieFile.c
 
-.KEEP_STATE:
+OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
+
 all:	$(OBJS)
 
-	mv *.o $(MACHTYPE)-$(OSTYPE)
+-include $(OBJS:.o=.d)
+
+.KEEP_STATE:
+
+
+$(OBJDIR)/%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@

@@ -24,6 +24,7 @@ float interpAzOffset(double range, double azimuth, Offsets *offsets, inputImageS
 	/*
 	  Compute azimuth in image coord stuff
 	*/
+
 	azimuthML = azimuth; /* compute coords will convert input azimuth to range offsets, so save */
 	rangeML = range;	 /* compute coords will convert input azimuth to range offsets, so save */
 
@@ -42,20 +43,24 @@ float interpAzOffset(double range, double azimuth, Offsets *offsets, inputImageS
 	}
 	else
 		zeroOffset = 0.0;
+	
 	zeroOffset += (float)offsets->c1 + Range * sin(theta) * offsets->dbcds - Range * cos(theta) * offsets->dbhds;
+	
 	/* Apply scaling corrections */
-	if (inputImage->lookDir == LEFT)
-		result *= -1.0;
+	/* if (inputImage->lookDir == LEFT)
+		result *= -1.0; */
 	result *= azSLPixSize;
 	result -= zeroOffset;
 	result -= alongTrack;
+	//fprintf(stderr," Zero offset %f\n", result);	
 /*
 if(rangeOff > 0 && rangeOff < offsets->nr && azimuthOff > 0 && azimuthOff < offsets->na)
 {
 	fprintf(stderr, "interpAzOffset: range %f azimuth %f rangeOff %f azimuthOff %f normAzimuth %f alongTrack %f %i %i\n",
-		 range, azimuth, rangeOff, azimuthOff, normAzimuth, alongTrack, offsets->nr, offsets->na);
+		 range, azimuth, rangeOff, azimuthOff, normAzimuth, alongTrack, offsets->nr, offsets->na); *
 	fprintf(stderr, "interpAzOffset: da %f %f %f %f %f %f %f %f\n", result, zeroOffset, alongTrack, offsets->c1, offsets->dbcds, offsets->dbhds, Range, theta	);
-}	*/
+	*/
+	
 
 	return result;
 }

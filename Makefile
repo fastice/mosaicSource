@@ -98,6 +98,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
 			common/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o \
+			common/$(MACHTYPE)-$(OSTYPE)/getAzimuthBoundsForXYBox.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getHeight.o \
@@ -114,6 +115,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/interpTideDiff.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/interpVCorrect.o \
 			common/$(MACHTYPE)-$(OSTYPE)/interpXYDEM.o \
+			common/$(MACHTYPE)-$(OSTYPE)/interpolateOffsetCorrection.o \
 			common/$(MACHTYPE)-$(OSTYPE)/julianDay.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/llToImageNew.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/lltoxy.o \

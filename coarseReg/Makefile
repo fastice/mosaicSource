@@ -1,15 +1,22 @@
 CC =		gcc
-CFLAGS  =	 $(FLAGS) -c -I$(INCLUDEPATH)
+MACHTYPE =	$(shell uname -m)
+OSTYPE =	$(shell uname -s)
+OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
-OBJS= coarseRegister.o coarsereg.o
+$(shell mkdir -p $(OBJDIR))
 
+CFLAGS =	$(FLAGS) -c -I$(INCLUDEPATH) -MMD -MP
 
-MACHTYPE = $(shell uname -m)
-OSTYPE = $(shell uname -s)
+SRCS =	coarseRegister.c coarsereg.c
 
-$(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
+OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
 
-.KEEP_STATE:
 all:	$(OBJS)
 
-	mv *.o $(MACHTYPE)-$(OSTYPE)
+-include $(OBJS:.o=.d)
+
+.KEEP_STATE:
+
+
+$(OBJDIR)/%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@

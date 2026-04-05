@@ -5,7 +5,7 @@
 #include "geomosaic.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
-#include "time.h"
+
 /* from lsmosaic, but only need this */
 double xyscale(double latctr, int32_t proj);
 /*
@@ -21,7 +21,7 @@ static void rsatFinalCal(float **image, int32_t xSize, int32_t ySize);
 static void logSigma(float **image, int32_t xSize, int32_t ySize);
 static void mallocTmpBuffers(float ***imageTmp, float ***scaleTmp, outputImageStructure *outputImage,
 							 float ***psiBuf, float ***psiBufTmp, float ***gBuf, float ***gBufTmp);
-static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDate, int32_t smoothL);
+static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDate, int32_t smoothL, int32_t yMin, int32_t yMax);
 static float applyCorrections(float *value, inputImageStructure *inputImage, double range, double azimuth, double h);
 static void geoMosaicScaling(inputImageStructure *inputImage, float **image, float **imageTmp, float **psiBuf,
 							 float **psiBufTmp, float **gBuf, float **gBufTmp,
@@ -347,6 +347,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	int32_t imageDate;
 	int32_t i, j, i1, j1;
 	int32_t iMin, iMax, jMin, jMax;
+	float azimuthMin, azimuthMax;
 	double Ab, Ag, AbCum, AgCum;
 	double test;
 	double dx[3], dy[3], invNAvg;
@@ -388,7 +389,10 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 			continue;
 		}
 		/* Read image  */
-		getGeoMosaicImage(&(inputImage[i]), &imageDate, smoothL);
+		initllToImageNew(&(inputImage[i])); /* Setup conversions */
+		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, &(inputImage[i]), &outputImage, &azimuthMin, &azimuthMax);
+		fprintf(stderr, "%f %f\n", azimuthMin, azimuthMax);
+		getGeoMosaicImage(&(inputImage[i]), &imageDate, smoothL, (int32_t)azimuthMin, (int32_t)azimuthMax);
 		/*
 		  Loop over output grid
 		*/
@@ -672,19 +676,19 @@ static float applyCorrections(float *value, inputImageStructure *inputImage, dou
 	return (float)(psi * RTOD);
 }
 
-static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDate, int32_t smoothL)
+static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDate, int32_t smoothL, int32_t yMin, int32_t yMax)
 {
 	extern int32_t nearestDate;
 	float **tmpImage;
 	int32_t extraPad, tmpi;
 	int32_t doy[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 333};
 	int32_t k1, k2, i;
-	initllToImageNew(inputImage); /* Setup conversions */
+	
 	*imageDate = inputImage->year * 365. + doy[inputImage->month - 1] + inputImage->day;
 	if (nearestDate > 0)
 		fprintf(stderr, "Image date %i, Nearest Date %i %i %i %i\n",
 				*imageDate, nearestDate, inputImage->year, inputImage->month, inputImage->day);
-	getMosaicInputImage(inputImage);
+	getMosaicInputImage(inputImage, yMin, yMax);
 	/* Multilook the image */
 	if (smoothL > 0)
 		smoothImage(&(inputImage[i]), smoothL);

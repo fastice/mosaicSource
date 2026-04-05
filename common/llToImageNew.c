@@ -116,6 +116,7 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 	{
 		*range = -9999.0;
 		*azimuth = -9999.0;
+		//fprintf(stderr, "RETURNING BAD LL lat %f lon %f\n", lat, lon);
 		return;
 	}
 	/* Refine later */
@@ -159,6 +160,7 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 			  myTime, &xs, &ys, &zs, &vsx, &vsy, &vsz);
 	*range = (sqrt(dot(drx, dry, drz, drx, dry, drz)) - cp->RNear) * cp->toRangePixel;
 	*azimuth = ((myTime - cp->sTime) * cp->prf) / inputImage->nAzimuthLooks;
+	//fprintf(stderr, "\033[33mllToImageNew: lat %f lon %f h %f range %f azimuth %f time %f\n\033[0m", lat, lon, h, *range, *azimuth, myTime);
 	/* allow tol ml pixel buffer in case indexing into slc - allow some tol for calcs like heading - other checks will avoid bad coords */
 	if (*range < -tol || *range > (inputImage->rangeSize + tol) || *azimuth < -tol || *azimuth > (inputImage->azimuthSize + tol))
 	{

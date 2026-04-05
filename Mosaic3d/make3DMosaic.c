@@ -84,7 +84,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	;															 /* velocity and error buffers */
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp; /* Temp solutions */
 	float **scaleX, **scaleY, **scaleZ;							 /*  scale buffers */
-	float dum1, dum2;											 /* Placeholder dummys for function calls */
+	float dum1, dum2;	
+	float azimuthMin, azimuthMax;										 /* Placeholder dummys for function calls */
 	int32_t validData, Aset;									 /* Flags to indicate a valide solution, and A updates */
 	int32_t iMin, iMax, jMin, jMax;								 /* range in pixels over which to compute solutions */
 	int32_t aa, dd;												 /* Counters for asc/desc images */
@@ -140,12 +141,13 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			continue;
 		/*  Set buffer, memory channel for sharedmem, and read image		*/
 		setBuffer(aPhaseImage, AImageBuffer);
-		getMosaicInputImage(aPhaseImage);
-		aPhaseImage->memChan = MEM1;
-		twokA = (4.0 * PI) / aPhaseImage->par.lambda;
 		/*  Setup conversion parameters		*/
 		aCp = setupGeoConversions(aPhaseImage, &dum1, &dum2, &aRe, &aReH, &aThetaC, &aReHfixed, &aThetaCfixedReH);
 		aPhaseImage->tolerance = geoTolerance;
+		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, aPhaseImage, outputImage, &azimuthMin, &azimuthMax);
+		getMosaicInputImage(aPhaseImage, azimuthMin, azimuthMax);
+		aPhaseImage->memChan = MEM1;
+		twokA = (4.0 * PI) / aPhaseImage->par.lambda;
 		/*
 		   SECOND LOOP: Loop over descending images:  Changed 05/30/07 to search all images below one from aPhase loop
 		*/
@@ -197,7 +199,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 				continue; /* no data in range, so skip */
 			/*  Read in descending image if needed (i.e., nozero intersect).	*/
 			setBuffer(dPhaseImage, DImageBuffer);
-			getMosaicInputImage(dPhaseImage);
+			getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, dPhaseImage, outputImage, &azimuthMin, &azimuthMax);
+			getMosaicInputImage(dPhaseImage, azimuthMin, azimuthMax);
 			/*
 			  Loop over output grid and compute velocities
 			*/

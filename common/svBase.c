@@ -184,6 +184,8 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets)
 	/* Loop over time, and range to compute azimuth shift to produce point used for polynomial fit.*/
 	n = 1;
 	r0 = inputImage->par.rc;
+	//error("STOP");
+	/* Init arrays for least squares fit. */
 	for (i = 0; i < NAPTS; i++)
 	{
 		t = inputImage->cpAll.sTime + i * dt;
@@ -200,6 +202,8 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets)
 				ra[n].r = (r - r0) * MTOKM;
 				sigX[n] = 1.;
 				ra[n].a = (t - t0) * inputImage->par.prf * inputImage->par.slpA * MTOKM;
+				//fprintf(stderr, "svInitAzParams: n=%i az1=%f az2=%f da=%f r_km=%f a_km=%f\n",
+				//		n, azimuth1, azimuth2, da[n], ra[n].r, ra[n].a);
 				n++;
 			}
 		}
@@ -257,18 +261,20 @@ void svInitBnBp(inputImageStructure *inputImage, Offsets *offsets)
 		azTime = inputImage->cpAll.sTime + (offsets->aO + i * offsets->deltaA) / inputImage->par.prf;
 		/* Compute baseline */
 		svBaseTCN(azTime, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);
-		svBnBp(azTime, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bnS, &bpS);
+		svBnBp(azTime, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bnS, &bpS, inputImage->lookDir);
 		/* Save values */
 		offsets->bnS[i] = bnS;
 		offsets->bpS[i] = bpS;
 	}
 }
 
-void svBnBp(double myTime, double theta, double dt1t2, stateV *sv1, stateV *sv2, double *bn, double *bp)
+void svBnBp(double myTime, double theta, double dt1t2, stateV *sv1, stateV *sv2, double *bn, double *bp, int32_t lookDir)
 {
 	/* Compute the normal and perpendicular components of baseline using TCN solution */
 	double bTCN[3];
 	svBaseTCN(myTime, dt1t2, sv1, sv2, bTCN);
+	if (lookDir == LEFT)
+		bTCN[1] = -bTCN[1];
 	*bp = bTCN[2] * cos(theta) + bTCN[1] * sin(theta);
 	*bn = bTCN[1] * cos(theta) - bTCN[2] * sin(theta);
 }
@@ -300,10 +306,11 @@ void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets
 	{
 		llToImageNew(image1->latControlPoints[i], image1->lonControlPoints[i], 0, &range1, &azimuth1, image1);
 		llToImageNew(image1->latControlPoints[i], image1->lonControlPoints[i], 0, &range2, &azimuth2, image2);
+		fprintf(stderr, "Control point %i: range1 %f az1 %f range2 %f az2 %f\n", i, range1, azimuth1, range2, azimuth2);
 		Re = earthRadius(image1->latControlPoints[i] * DTOR, EMINOR, EMAJOR) * KMTOM;
 		azTime = image1->cpAll.sTime + azimuth1 * image1->nAzimuthLooks / image1->par.prf;
 		svBaseTCN(azTime, offsets->dt1t2, &(image1->sv), &(offsets->sv2), bTCN);
-		svBnBp(azTime, thetaC, offsets->dt1t2, &(image1->sv), &(offsets->sv2), &bn, &bp);
+		svBnBp(azTime, thetaC, offsets->dt1t2, &(image1->sv), &(offsets->sv2), &bn, &bp, image1->lookDir);
 		r1 = image1->par.rn + range1 * image1->nRangeLooks * image1->par.slpR;
 		r2 = image2->par.rn + range2 * image2->nRangeLooks * image2->par.slpR;
 		a1 = azimuth1 * image1->nAzimuthLooks * image1->par.slpA;
@@ -331,6 +338,7 @@ void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets
 		*cnstA = 0.0;
 	}
 	fprintf(stderr, "\033[1;31m Constants dR,dA %f %f \033[0m\n", *cnstR, *cnstA);
+	// error("Stop after svOffsets");
 }
 
 void svBaseTCN(double myTime, double dt1t2, stateV *sv1, stateV *sv2, double bTCN[3])

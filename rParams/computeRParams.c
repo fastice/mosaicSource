@@ -51,9 +51,9 @@ static void computeLinearBaseline(inputImageStructure *inputImage, Offsets *offs
 	azTime1 = cP->sTime + 0 * inputImage->nAzimuthLooks / inputImage->par.prf;
 	azTime2 = cP->sTime + inputImage->azimuthSize * inputImage->nAzimuthLooks / inputImage->par.prf;
 	svBaseTCN(azTime1, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);
-	svBnBp(azTime1, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bn1, &bp1);
-	svBaseTCN(azTime2, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);	
-	svBnBp(azTime2, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bn2, &bp2);
+	svBnBp(azTime1, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bn1, &bp1, inputImage->lookDir);
+	svBaseTCN(azTime2, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCN);
+	svBnBp(azTime2, thetaC, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), &bn2, &bp2, inputImage->lookDir);
 	
 	fprintf(stderr, "--- %f %f %f %f\n",bn1, bp1, bn2, bp2);
 	*bn = (bn1 + bn2) * 0.5;
@@ -161,6 +161,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 					computeLinearBaseline(&inputImage, offsets, thetaC, &(tiePoints->BnCorig), &(tiePoints->BpCorig), &(tiePoints->dBnorig), &(tiePoints->dBpQorig));
 					tiePoints->dBnQorig = 0.;
 					tiePoints->dBpQorig = 0.;
+					fprintf(stderr, "Initial SV-based baseline estimate: Bn %f dBn %f Bp %f dBp %f\n", tiePoints->BnCorig, tiePoints->dBnorig, tiePoints->BpCorig, tiePoints->dBpQorig);
 				}
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
@@ -216,7 +217,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				{
 					azTime = cP->sTime + azimuth * inputImage.nAzimuthLooks / inputImage.par.prf;
 					svBaseTCN(azTime, offsets->dt1t2, &(inputImage.sv), &(offsets->sv2), bTCN);
-					svBnBp(azTime, thetaC, offsets->dt1t2, &(inputImage.sv), &(offsets->sv2), &bnS, &bpS);
+					svBnBp(azTime, thetaC, offsets->dt1t2, &(inputImage.sv), &(offsets->sv2), &bnS, &bpS, inputImage.lookDir);
 					bnFix = bPoly(Bn, dBn, dBnQ, x[i1].x);
 					bpFix = bPoly(Bp, dBp, dBpQ, x[i1].x);
 					bp = bpS + bpFix;

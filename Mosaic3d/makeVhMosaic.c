@@ -121,7 +121,7 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 			fprintf(stderr, "Skipping %s :no phase given\n", currentImage->file);
 			continue;
 		}
-		getMosaicInputImage(currentImage);
+		getMosaicInputImage(currentImage, 0, (int32_t)LARGEINT);
 		/*
 		  Read offset file if needed.
 		*/

@@ -46,6 +46,8 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 	{											  /* Loop to read lines */
 		linelength = fgetline(fp, line, LINEMAX); /* Read line */
 		lineCount++;
+		if (linelength == 0)
+			break; /* EOF — fgetline returns 0 when fgets hits EOF */
 
 		if (strchr(line, ENDDATA) != NULL)
 			notdone = FALSE; /* End of data, set exit flag */

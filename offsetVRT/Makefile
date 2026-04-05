@@ -1,13 +1,22 @@
 CC =		gcc
-CFLAGS =	$(FLAGS) -c -I$(INCLUDEPATH)
+MACHTYPE =	$(shell uname -m)
+OSTYPE =	$(shell uname -s)
+OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
-OBJS =	offsetVRT.o
+$(shell mkdir -p $(OBJDIR))
 
-MACHTYPE = $(shell uname -m)
-OSTYPE = $(shell uname -s)
+CFLAGS =	$(FLAGS) -c -I$(INCLUDEPATH) -MMD -MP
 
-$(shell mkdir -p $(MACHTYPE)-$(OSTYPE))
+SRCS =	offsetVRT.c
+
+OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
 
 all:	$(OBJS)
-	mv *.o $(MACHTYPE)-$(OSTYPE)
+
+-include $(OBJS:.o=.d)
+
 .KEEP_STATE:
+
+
+$(OBJDIR)/%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@

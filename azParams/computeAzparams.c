@@ -12,7 +12,7 @@ static void constOnlyCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 static void azCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 static void azCoeffsLinear(void *x, int32_t i, double *afunc, int32_t ma);
 static void linearOnlyCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
-static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, double prf, double slPixSize);
+static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, double prf, double slPixSize, int32_t lookDir);
 
 static void constantOnlyFit(void *x, double y[], double sig[], int32_t npts, double a[], int32_t ma, double **u, double **v, double w[],
 							double *chisq, double dbcds, double dbhds, double result[], int32_t pIndex[], double azconst[]);
@@ -40,6 +40,8 @@ static void computeBaselineRates(inputImageStructure *inputImage, Offsets *offse
 	svBaseTCN(azTime2, offsets->dt1t2, &(inputImage->sv), &(offsets->sv2), bTCNLate);
 	// m (prf * slPixSize)
 	*dbc = (bTCNLate[1] - bTCNEarly[1]) / (inputImage->azimuthSize * inputImage->nAzimuthLooks * inputImage->par.slpA);
+	if (inputImage->lookDir == LEFT)
+		*dbc *= -1;
 	*dbh = (bTCNLate[2] - bTCNEarly[2]) / (inputImage->azimuthSize * inputImage->nAzimuthLooks * inputImage->par.slpA);
 	fprintf(stderr, "--- %e %e \n", *dbc, *dbh);
 }
@@ -96,7 +98,8 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	}
 	else
 	{
-		getBaselineRates(&dbcds, &dbhds, baseFile, inputImage->par.prf, inputImage->par.slpA);
+		fprintf(stderr, "Using baseline rates from file\n");
+		getBaselineRates(&dbcds, &dbhds, baseFile, inputImage->par.prf, inputImage->par.slpA, inputImage->lookDir);
 	}
 	fprintf(stderr, "+++ %e %e\n", dbcds, dbhds);
 	if (tiePoints->deltaB != DELTABNONE)
@@ -133,6 +136,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	/*
 	  Run 3 times 1) initial estimate with unknown errors, 2) use estimate to determine residual 3) final solution with sigma detemermine by residual
 	 */
+
 	result[1] = 0;
 	result[2] = dbcds;
 	result[3] = dbhds;
@@ -164,7 +168,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 				/* If solving as correction to sv model */
 				xtmp = result[1] + r0 * sin(theta) * result[2] + result[4] * x[i1].x;
 				if (tiePoints->deltaB != DELTABNONE)
-				{
+				{	// Subtrack the polynomial fit.
 					svSol = svAzOffset(inputImage, offsets, tiePoints->r[i], tiePoints->a[i]);
 					y[i1] -= svSol;
 				}
@@ -376,7 +380,7 @@ void azCoeffsLinear(void *x, int32_t i, double *afunc, int32_t ma)
 	return;
 }
 
-static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, double prf, double slPixSize)
+static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, double prf, double slPixSize, int32_t lookDir)
 {
 	char line[1024];
 	int32_t lineCount, eod;
@@ -384,12 +388,16 @@ static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, doubl
 	FILE *fp;
 
 	fprintf(stderr, "prf,nSingleLook %f %f %s\n", prf, slPixSize, baseFile);
+	fprintf(stderr, "Baseline file %s\n", baseFile);
 	fp = openInputFile(baseFile);
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	lineCount = getDataString(fp, lineCount, line, &eod);
 	if (sscanf(line, "%lf%lf%lf", &x1, &x2, &x3) != 3)
 		error("%s  %i of %s", "readOffsets -- Missing image parameters at line:", lineCount, baseFile);
 	*dbcds = x2 / (prf * slPixSize);
+	// Flip for left looking.
+	//if(lookDir == LEFT) 
+	//	*dbcds *= -1;
 	*dbhds = x3 / (prf * slPixSize);
 	fprintf(stderr, "dbcds,dbhds, %f %f %f %f\n", *dbcds, *dbhds, x2, x3);
 	fclose(fp);

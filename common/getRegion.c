@@ -10,6 +10,7 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
 	double xa1, ya1;
 	double minX, maxX, minY, maxY;
 	double pad;
+	double range, azimuth;
 	int32_t i;
 	/*
 	  Loop through points to find max and min locations
@@ -23,6 +24,9 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
 		   fprintf(stderr,"%f %f %f %f\n",image->cpAll.latControlPoints[i],image->cpAll.lonControlPoints[i],xa1,ya1);
 		*/
 		lltoxy1(image->latControlPoints[i], image->lonControlPoints[i], &xa1, &ya1, Rotation, outputImage->slat);
+		llToImageNew(image->latControlPoints[i], image->lonControlPoints[i], 0, &range, &azimuth, image);
+		//fprintf(stderr, "\033[36mControl point %i: lat %f lon %f x %f y %f range %f azimuth %f\033[0m\n",
+		//	 i, image->latControlPoints[i], image->lonControlPoints[i], xa1, ya1, range, azimuth);
 		/* Commented out print statements 7/31/2015 */
 		/*fprintf(stderr,"%f %f %f %f\n",image->latControlPoints[i],image->lonControlPoints[i],xa1,ya1);
 		fprintf(stderr,"%f %f\n",Rotation,outputImage->slat);*/
@@ -41,7 +45,6 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
 			maxY = max(maxY, ya1);
 		}
 	}
-
 	/* fprintf(stderr,"%f %f %f %f\n",minX, maxX, minY, maxY);*/
 	/*
 	  Compute i,j min,max with pad

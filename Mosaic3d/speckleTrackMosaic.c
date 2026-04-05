@@ -5,6 +5,14 @@
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
+#include <time.h>
+
+static double now()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
 
 static int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel);
 /*
@@ -46,7 +54,8 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 	double scX, scY;
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp;
 	float **errorX, **errorY;
-	float da, dr;
+	float da, dr, ionCorrection;
+	float azimuthMin, azimuthMax;
 	double vx, vy, vz, dzdtSubmergence;
 	double dzdx, dzdy;
 	double tCenter, tOffCenter, deltaOffCenter;
@@ -100,18 +109,29 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 		*/
 		cP = setupGeoConversions(currentImage, &azSLPixSize, &rSLPixSize, &Re, &ReH, &thetaC, &ddum1, &ddum2);
 		getRegion(currentImage, &iMin, &iMax, &jMin, &jMax, outputImage);
+		double t0 = now();
+		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, currentImage, outputImage, &azimuthMin, &azimuthMax);
+		double t1 = now();
+		//azimuthMin =0; azimuthMax= LARGEINT;
+		fprintf(stderr, "Time to get azimuth bounds: %f seconds\n", t1-t0);
+		fprintf(stderr, "\033[35mRegion i %i to %i j %i to %i azimuth range %f to %f\033[0m	\n", iMin, iMax, jMin, jMax, azimuthMin, azimuthMax);
 		/*
 		  Read Offset
 		*/
 		if (iMin <= iMax && jMin <= jMax)
 		{
-			readOffsetDataAndParams(&(currentParams->offsets));
+			double t0 = now();
+			readOffsetDataAndParams(&(currentParams->offsets), azimuthMin, azimuthMax);
+			double t1 = now();
+			fprintf(stderr, "Time read offsets: %f seconds\n", t1-t0);
 		}
 		else
 		{
 			iMax = iMin - 1;
 			jMax = jMin - 1;
 		}
+		//error("Region i %i to %i j %i to %i azimuth range %f to %f\n", iMin, iMax, jMin, jMax, azimuthMin, azimuthMax);
+		
 		/*
 		  Now loop over output grid
 		*/
@@ -146,6 +166,15 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 					// Get azimuth and range components from the offset field. Note these values come back as meters
 					da = interpAzOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
 					dr = interpRangeOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, thetaD, rSLPixSize, theta, &demError);
+					if (currentParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
+						ionCorrection = interpolateOffsetCorrection(&(currentParams->offsets.rOffCorrection), range, azimuth, -LARGEINT, 0.0);
+					else
+						ionCorrection = 0.0;
+					if (ionCorrection > -0.98 * LARGEINT)
+					{
+						//fprintf(stderr, "ionoCorr %f range offset %f\n", ionCorrection, dr);
+						dr -= ionCorrection;
+					}
 					/*
 					  If shelf mask, get mask value
 					*/

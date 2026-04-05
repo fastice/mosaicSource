@@ -44,6 +44,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp; /* Temp solutions */
 	float **scaleX, **scaleY, **scaleZ;							 /*  scale buffers */
 	float dRSLPixSize, aRSLPixSize;
+	float aIonCorrection, dIonCorrection;
+	float azimuthMin, azimuthMax;
 	float dum;
 	int32_t iMin, iMax, jMin, jMax; /* range in pixels over which to compute solutions */
 	int32_t aa, dd, nTotal;			/* Counters for asc/desc images and total numer of images*/
@@ -104,12 +106,16 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		  Setup conversions
 		 */
 		aRSLPixSize = aOffImage->rangePixelSize / aOffImage->nRangeLooks;
-		readRangeOrRangeOffsets(&(aParams->offsets), ASCENDING);
-		getRParams(&(aParams->offsets));
 		/*
 		  Setup conversion parameters
 		*/
 		aCp = setupGeoConversions(aOffImage, &dum, &aRSLPixSize, &aRe, &aReH, &aThetaC, &ddum1, &ddum2);
+		// This is going to read the full data take for the outer loop image.
+		fprintf(stderr, "iMin, iMax, jMin, jMax %i %i %i %i\n", iMin, iMax, jMin, jMax);
+		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, aOffImage, outputImage, &azimuthMin, &azimuthMax);
+		readRangeOrRangeOffsets(&(aParams->offsets), ASCENDING, azimuthMin, azimuthMax);
+		getRParams(&(aParams->offsets));
+		
 		/*
 		 **** SECOND LOOP ***
 		 */
@@ -120,8 +126,11 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		{
 			dd++;
 			tOffCenterD = dOffImage->julDay + dParams->nDays * 0.5;
+			fprintf(stderr,"\nSTOP top of inner loop %i %i %i\n", dOffImage->passType, aOffImage->passType, sepAscDesc);
+	fprintf(stderr, "dOffImage->crossFlag: %i %i\n", (dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE), dOffImage->crossFlag == FALSE);
 			if ((dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE) || dOffImage->crossFlag == FALSE)
 				continue;
+			//error("Could not process image %i",fabs(aOffImage->julDay - dOffImage->julDay) > timeThresh);
 			/*
 				Check images close enough in time
 			*/
@@ -132,6 +141,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			   Added this 7/31/2015 to skip over images with no overlap
 			*/
 			getRegion(dOffImage, &iMin, &iMax, &jMin, &jMax, outputImage);
+			fprintf(stderr, "iMin, iMax, jMin, jMax %i %i %i %i\n", iMin, iMax, jMin, jMax);
+			
 			if (iMin > iMax || jMin > jMax)
 				continue;
 			/*
@@ -155,12 +166,15 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			/*
 			  Read in descending image if needed (i.e., nozero intersect).
 			*/
-			readRangeOrRangeOffsets(&(dParams->offsets), DESCENDING);
+			getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, dOffImage, outputImage, &azimuthMin, &azimuthMax);
+			readRangeOrRangeOffsets(&(dParams->offsets), DESCENDING, azimuthMin, azimuthMax);
+			fprintf(stderr, "azimuth bounds %f %f\n", (double)azimuthMin, (double)azimuthMax);
+		
+			//error("STOP");
 			getRParams(&(dParams->offsets));
 			/*
 			  Loop over output grid and compute velocities
 			*/
-double tmp;
 			fprintf(stderr, "---- Asc %i / %i Des %i \n", aa, nTotal, dd);
 			Aset = FALSE;
 			for (i = iMin; i < iMax; i++)
@@ -193,7 +207,18 @@ double tmp;
 						/*  Interpolate range offsets */
 						dDelta = interpRangeOffset(drange, dAzimuth, &(dParams->offsets), dOffImage, dRange, dThetaD, dRSLPixSize, dTheta, &dDemError);
 						aDelta = interpRangeOffset(arange, aAzimuth, &(aParams->offsets), aOffImage, aRange, aThetaD, aRSLPixSize, aTheta, &aDemError);
-		 tmp = dDelta;
+						if (dParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
+							dIonCorrection = interpolateOffsetCorrection(&(dParams->offsets.rOffCorrection), drange, dAzimuth, -LARGEINT, 0.0);
+						else
+							dIonCorrection = 0.0;
+						if (dIonCorrection > -0.98 * LARGEINT)
+							dDelta -= dIonCorrection;
+						if (aParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
+							aIonCorrection = interpolateOffsetCorrection(&(aParams->offsets.rOffCorrection), arange, aAzimuth, -LARGEINT, 0.0);
+						else
+							aIonCorrection = 0.0;
+						if (aIonCorrection > -0.98 * LARGEINT)
+							aDelta -= aIonCorrection;
 					}
 					else
 					{
