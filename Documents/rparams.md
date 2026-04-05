@@ -75,11 +75,11 @@ polar-stereographic grid into the radar line-of-sight / along-track frame using 
 local satellite heading angle. The range-direction component (vyra) combined with the
 vertical velocity (vz) gives a displacement:
 
-```
-displacement = deltaT * (vyra * sin(ψ) − vz * cos(ψ))
-```
+$$
+\Delta r_\text{motion} = \Delta t \left( v_\text{ra} \sin\psi - v_z \cos\psi \right)
+$$
 
-where `ψ` is the local incidence angle and `deltaT = nDays / 365.25` years.
+where $\psi$ is the local incidence angle and $\Delta t = N_\text{days} / 365.25$ years.
 This displacement is subtracted from the observed range offset at each tiepoint,
 isolating the purely geometric (baseline) signal.
 
@@ -95,22 +95,24 @@ derivatives (dBn, dBp) at the image start and end times.
 The range offset at a tiepoint is related to the interferometric baseline through the
 linearised geometric model (Joughin et al., *J. Glaciol.*, 1996, Eq. 7):
 
-```
-Δr ≈ −Bn·sin(θ − θc) − Bp·cos(θ − θc) + B²/(2r) + const
-```
+$$
+\Delta r \approx -B_n \sin(\theta - \theta_c) - B_p \cos(\theta - \theta_c) + \frac{B^2}{2r} + c
+$$
 
-where `θ` is the local look angle, `θc` is the central look angle, `r` is the slant
-range, and `const` is a constant range bias. Known non-linear terms are precomputed
+where $\theta$ is the local look angle, $\theta_c$ is the central look angle, $r$ is the slant
+range, and $c$ is a constant range bias. Known non-linear terms are precomputed
 from the current baseline estimate and subtracted from the observations, keeping the
 inversion linear.
 
 The along-track baseline variation is modelled as a polynomial in normalised azimuth
-position `x ∈ [0, 1]`:
+position $x \in [0, 1]$:
 
-```
-Bn(x) = BnC + dBn·x [+ dBnQ·x²]
-Bp(x) = BpC + dBp·x [+ dBpQ·x²]
-```
+$$
+B_n(x) = B_{n0} + \delta B_n \, x + \delta B_{nQ} \, x^2
+$$
+$$
+B_p(x) = B_{p0} + \delta B_p \, x + \delta B_{pQ} \, x^2
+$$
 
 The system is solved by **Singular Value Decomposition (SVD)** least squares. Up to
 six parameters are solved simultaneously depending on the selected mode:
