@@ -263,7 +263,11 @@ static double areaAboutXY(double range, double azimuth, double x, double y, inpu
 		return rat;
 	/* This part is quite an inefficient way to bin ground samples contributing to the same range bin */
 	dx = 0.5;
-	recycle = TRUE; /* This will force the same normal for each calc, which should be fine over small neighborhood*/
+	/* Each neighbour recomputes look/plane normals from its own azimuth position.
+	   To revert to recycling the center-pixel normals (faster but less accurate over
+	   steep terrain), replace FALSE with recycle in the AbAg call below and restore:
+	       recycle = TRUE;
+	   here before the loop. */
 	Ab1 = 0.0;
 	for (i = -nx; i <= nx; i++)
 	{
@@ -285,7 +289,7 @@ static double areaAboutXY(double range, double azimuth, double x, double y, inpu
 				if (fracOverlap > 0)
 				{
 					shadow = -1;
-					AbAg(x1, y1, azimuth1, inputImage, outputImage, dem, &Ab1, &Ag1, &shadow, recycle);
+					AbAg(x1, y1, azimuth1, inputImage, outputImage, dem, &Ab1, &Ag1, &shadow, FALSE);
 					*Ab += Ab1 * fracOverlap;
 					*Ag += Ag1 * fracOverlap;
 				}

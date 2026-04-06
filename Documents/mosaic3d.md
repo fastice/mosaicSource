@@ -237,23 +237,100 @@ $$
 
 4. Applies tidal and submergence/emergence corrections on floating ice.
 5. Constructs the 2×2 geometric conversion matrix $\mathbf{A}$ from the two look
-   directions, and the surface-slope matrix $\mathbf{B}$ from the DEM:
+   directions, and the surface-slope correction matrix $\mathbf{B}$ from the DEM.
+6. Solves for $(v_x, v_y)$ and derives $v_z = v_x \partial z/\partial x + v_y \partial z/\partial y$.
+7. Propagates baseline covariance to a per-pixel phase error $\sigma_\phi$.
+
+#### Matrix A — Geometric Conversion (`computeA`)
+
+Define the following angles:
+
+| Symbol | Meaning |
+|--------|---------|
+| $H_A$, $H_D$ | Satellite heading angles (radians from north, CW) for ascending and descending images |
+| $\alpha = H_A - H_D$ | Heading difference between the two images |
+| $\phi = \text{atan2}(-y, -x)$ | Azimuth angle of the output pixel in polar-stereographic coordinates |
+| $\beta = \phi - H_A$ | Pixel azimuth angle relative to the ascending heading |
+
+The A matrix maps scaled phase measurements to horizontal velocity components:
 
 $$
-\begin{pmatrix} \phi_A \\ \phi_D \end{pmatrix} =
-\frac{4\pi}{\lambda} \frac{\Delta t}{365.25} \mathbf{A}
+\mathbf{A} = \frac{1}{\sin^2\!\alpha}
+\begin{pmatrix}
+\cos\beta - \cos\alpha\cos(\alpha+\beta) & \cos(\alpha+\beta) - \cos\alpha\cos\beta \\
+\sin\beta - \cos\alpha\sin(\alpha+\beta) & \sin(\alpha+\beta) - \cos\alpha\sin\beta
+\end{pmatrix}
+$$
+
+A minimum heading difference of $|\alpha| \geq 0.8$ rad ($\approx 46°$) is required for a
+well-conditioned solution; pixels where $|\alpha| < 0.8$ are skipped.
+
+#### Matrix B — Surface-Slope Correction (`computeB`)
+
+Surface slopes $\partial z/\partial x$ and $\partial z/\partial y$ are computed from the DEM
+by centred finite differences over a spacing of at least 90 m, and capped at $\pm 0.1$
+($\approx 5.7°$). The B matrix accounts for the vertical velocity component
+$v_z = v_x\,\partial z/\partial x + v_y\,\partial z/\partial y$ contributing to the
+line-of-sight phase through the $\cos\psi / \sin\psi$ projection:
+
+$$
+\mathbf{B} =
+\begin{pmatrix}
+\dfrac{\partial z/\partial x}{\tan\psi_A} & \dfrac{\partial z/\partial y}{\tan\psi_A} \\[8pt]
+\dfrac{\partial z/\partial x}{\tan\psi_D} & \dfrac{\partial z/\partial y}{\tan\psi_D}
+\end{pmatrix}
+$$
+
+where $\psi_A$, $\psi_D$ are the local incidence angles for the ascending and descending images.
+
+#### Full Inversion (`computeVxy`)
+
+Each phase is scaled to velocity units (m/yr):
+
+$$
+p_i = \frac{365.25}{\frac{4\pi}{\lambda_i}\,N_{\text{days},i}\,\sin\psi_i}\,\phi_i
+$$
+
+The forward model including the slope correction is:
+
+$$
+\begin{pmatrix} p_A \\ p_D \end{pmatrix} =
+\left(\mathbf{A}^{-1} - \mathbf{B}\right)
 \begin{pmatrix} v_x \\ v_y \end{pmatrix}
 $$
 
-6. Solves for $(v_x, v_y)$ and derives $v_z = v_x \partial z/\partial x + v_y \partial z/\partial y$.
-7. Propagates baseline covariance to a per-pixel phase error $\sigma_\phi$:
+which rearranges to the solution:
 
 $$
-\sigma_\phi^2 = \mathbf{v}^T \mathbf{C} \mathbf{v} + \min(\pi,\,\sigma_\text{tp})^2
+\begin{pmatrix} v_x \\ v_y \end{pmatrix} =
+\left(\mathbf{I} - \mathbf{A}\mathbf{B}\right)^{-1} \mathbf{A}
+\begin{pmatrix} p_A \\ p_D \end{pmatrix}
 $$
 
-where $\mathbf{C}$ is the 6×6 baseline parameter covariance matrix and $\sigma_\text{tp}$
-accounts for tiepoint noise.
+If $\det(\mathbf{I} - \mathbf{AB}) < 0.25$ (poorly conditioned due to extreme slopes), no
+solution is assigned.
+
+Error variances are propagated as the diagonal of the output covariance matrix:
+
+$$
+\sigma_{v_x}^2 = D_{00}^2\,\sigma_{p_A}^2 + D_{01}^2\,\sigma_{p_D}^2, \qquad
+\sigma_{v_y}^2 = D_{10}^2\,\sigma_{p_A}^2 + D_{11}^2\,\sigma_{p_D}^2
+$$
+
+where $\mathbf{D} = (\mathbf{I} - \mathbf{AB})^{-1}\mathbf{A}$.
+
+#### Phase Error (`computePhiZM3d`)
+
+The per-pixel phase error combines baseline parameter uncertainty (propagated through the
+6×6 covariance matrix $\mathbf{C}$) and tiepoint noise $\sigma_\text{tp}$:
+
+$$
+\sigma_\phi = \sqrt{\mathbf{v}^T \mathbf{C}\, \mathbf{v} + \min(\pi,\,\sigma_\text{tp})^2}
+$$
+
+where $\mathbf{v} = \frac{4\pi}{\lambda}(-\sin\theta_D,\,-\cos\theta_D,\,-x\sin\theta_D,\,-x\cos\theta_D,\,-x^2\sin\theta_D,\,-x^2\cos\theta_D)$
+is the Jacobian of the topographic phase with respect to the six baseline parameters
+$(B_n,\,B_p,\,\delta B_n,\,\delta B_p,\,\delta B_{nQ},\,\delta B_{pQ})$.
 
 ---
 
