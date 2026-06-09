@@ -6,10 +6,12 @@
 #include <time.h>
 #include <math.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"
 #include "mosaicSource/landsatMosaic/landSatMosaic.h"
 #include "gdalIO/gdalIO/grimpgdal.h"
+#include "ogr_srs_api.h"
 /*
   Mosaic several insar dems with altimetry dem.
 
@@ -30,11 +32,8 @@ static void removeOutOfBounds(outputImageStructure *outputImage, inputImageStruc
 static void findOutBounds(outputImageStructure *outputImage, inputImageStructure *ascImages, inputImageStructure *descImages,
 						  landSatImage *LSImages, int32_t *autoSize, int32_t writeBlank);
 static void mallocOutputImage(outputImageStructure *outputImage);
-static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFile, char **outFileBase, float *fl, char **irregFile,
-					 char **shelfMaskFile, double *tieThresh, char **extraTieFile, char **tideFile, int32_t *north, char **landSatFile,
-					 int32_t *threeDOffFlag, float *timeThresh, float *timeThreshPhase, char **date1, char **date2,
-					 referenceVelocity *refVel, int32_t *statsFlag, outputImageStructure *outputImage, int32_t *writeBlank,
-					 char **verticalCorrectionFile, int32_t *GTiff, int32_t *COG);
+static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
+					 referenceVelocity *refVel, outputImageStructure *outputImage);
 static void write3Doutput(outputImageStructure outputImage, char *outFileBase);
 static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg, char *date1,  char *date2);
 static int32_t writeMetaFile(inputImageStructure *image, outputImageStructure *outputImage, vhParams *params, char *outFileBase,
@@ -88,49 +87,42 @@ int main(int argc, char *argv[])
 	irregularData *irregDat, *irregTmp;
 	inputImageStructure *ascImages=NULL, *descImages=NULL, *images=NULL, *tmp; /* Lists of asc/desc and all  images */
 	double tieThresh;											/* Limiting value used for tiepoints */
-	char *demFile, *inputFile, *outFileBase;
+	mosaicArgs args;
 	char **phaseFiles, **geodatFiles, **baselineFiles;
 	float *weights, *nDays;
-	float timeThresh, timeThreshPhase;	 /* For mosaicking 3Offsets only use crossing pairs with this many days seperation */
-	float fl;							 /* Feathering length */
 	double minLSJD = HIGHJD, maxLSJD = 0; // Initial values
-	char *irregFile;					 /* File with irregularly spaced data for interpolation */
 	char **azParamsFiles, **offsetFiles; /* Az paramter and offest files */
 	char **rOffsetFiles, **rParamsFiles; /* Range offset file */
-	char *extraTieFile, *tideFile;		 /* tide file for tiepoints */
-	char *date1, *date2;				 /* Date range */
-	char *shelfMaskFile, *landSatFile;	 /* Shelf and landsat file names */
-	char *verticalCorrectionFile; // File for vertical correction and suffix, if any, to apply to phase, rBaseline, and baseline files.
 	int32_t i, j;								  /* LCV */
-	int32_t northFlag, threeDOffFlag, haveData; /* Flags */
+	int32_t haveData;
 	int32_t nAsc, nDesc, nFiles;			  /* Number of ascending/descending and all files */
 	int32_t offsetFlag = TRUE;				  /* Flag to indicate do both offset solution where needed, always true old option removed */
-	int32_t statsFlag, *crossFlags;
-	int32_t autoSize, writeBlank, count;
-	int32_t GTiff, COG;
+	int32_t *crossFlags;
+	int32_t autoSize, count;
 	const char *epsg=NULL;
 
 	GDALAllRegister();
+	if (getenv("OMP_NUM_THREADS") == NULL)
+		omp_set_num_threads(4);
 	/*
 	   Read command line args and compute filenames
 	*/
-	readArgs(argc, argv, &inputFile, &demFile, &outFileBase, &fl, &irregFile, &shelfMaskFile, &tieThresh,
-			 &extraTieFile, &tideFile, &northFlag, &landSatFile, &threeDOffFlag,
-			 &timeThresh, &timeThreshPhase, &date1, &date2, &refVel, &statsFlag, &outputImage, &writeBlank,
-			&verticalCorrectionFile, &GTiff, &COG);
+	readArgs(argc, argv, &args, &refVel, &outputImage);
+	outputImage.sigmaAThresh = args.sigmaAThresh;
 	/* Added August 2021 to set projection parameters from DEM */
-	readXYDEMGeoInfo(demFile, &dem, TRUE);
-	
+	readXYDEMGeoInfo(args.demFile, &dem, TRUE);
+
 	/* Removed no offset flag version */
-	processMosaicDate(&outputImage, date1, date2);
+	processMosaicDate(&outputImage, args.date1, args.date2);
 	/* Write to log */
-	logInputs3d(&outputImage, outFileBase, inputFile, demFile, irregFile, shelfMaskFile, extraTieFile, tideFile, verticalCorrectionFile, fl, statsFlag,
-				threeDOffFlag, tieThresh, &refVel);
+	logInputs3d(&outputImage, args.outFileBase, args.inputFile, args.demFile, args.irregFile, args.shelfMaskFile,
+				args.extraTieFile, args.tideFile, args.verticalCorrectionFile, args.fl, args.statsFlag,
+				args.threeDOffFlag, args.tieThresh, &refVel);
 	/*
 	  read inputfile
 	*/
-	getMVhInputFile(inputFile, &phaseFiles, &geodatFiles, &baselineFiles, &offsetFiles, &azParamsFiles, &rOffsetFiles, &rParamsFiles,
-					&outputImage, &nDays, &weights, &crossFlags, &nFiles, offsetFlag, outputImage.rOffsetFlag, threeDOffFlag);
+	getMVhInputFile(args.inputFile, &phaseFiles, &geodatFiles, &baselineFiles, &offsetFiles, &azParamsFiles, &rOffsetFiles, &rParamsFiles,
+					&outputImage, &nDays, &weights, &crossFlags, &nFiles, offsetFlag, outputImage.rOffsetFlag, args.threeDOffFlag);
 	if (outputImage.rOffsetFlag == TRUE)
 		fprintf(stderr, "*** USING RANGE/AZIMUTH OFFSETS in solution *** \n");
 	fprintf(outputImage.fpLog, ";\n; **** SOURCE DATA **** \n");
@@ -138,28 +130,28 @@ int main(int argc, char *argv[])
 	  Parse inputfiles and set everything up.
 	*/
 	setup3D(nFiles, phaseFiles, geodatFiles, baselineFiles, offsetFiles, azParamsFiles, rOffsetFiles, rParamsFiles, nDays, weights, crossFlags,
-			&ascImages, &descImages, &ascParams, &descParams, &nAsc, &nDesc, offsetFlag, outputImage.rOffsetFlag, threeDOffFlag,
+			&ascImages, &descImages, &ascParams, &descParams, &nAsc, &nDesc, offsetFlag, outputImage.rOffsetFlag, args.threeDOffFlag,
 			outputImage.fpLog, &outputImage);
 	logInputFiles3d(&outputImage, geodatFiles, phaseFiles, baselineFiles, rOffsetFiles, rParamsFiles, offsetFiles, azParamsFiles,
 					nDays, weights, crossFlags, nFiles, offsetFlag);
-	
-	fprintf(stderr, "%s %s\n", date1, date2); 
-	
+
+	fprintf(stderr, "%s %s\n", args.date1, args.date2);
+
 	/*
 	  Determine hemisphere
 	*/
-	get3DProj(ascImages, descImages, nAsc, nDesc, northFlag, &outputImage);
+	get3DProj(ascImages, descImages, nAsc, nDesc, args.north, &outputImage);
 	outputImage.slat = dem.stdLat;
 	/* Process landsat images */
 	LSImages = NULL;
-	if (landSatFile != NULL)
+	if (args.landSatFile != NULL)
 	{
-		LSImages = parseLSInputs(landSatFile, LSImages, outputImage.jd1, outputImage.jd2, outputImage.timeOverlapFlag, &minLSJD, &maxLSJD);
+		LSImages = parseLSInputs(args.landSatFile, LSImages, outputImage.jd1, outputImage.jd2, outputImage.timeOverlapFlag, &minLSJD, &maxLSJD);
 		fprintf(stderr, "min/max JD from Landsat %f  %f\n", minLSJD, maxLSJD);
 	}
 	/* Find bounding box */
 	fprintf(stderr, "nAsc/nDesc %i %i\n", nAsc, nDesc);
-	findOutBounds(&outputImage, ascImages, descImages, LSImages, &autoSize, writeBlank);
+	findOutBounds(&outputImage, ascImages, descImages, LSImages, &autoSize, args.writeBlank);
 	fprintf(stderr, "xSize=%d, ySize=%d\n",outputImage.xSize, outputImage.ySize );
 	/* Remove images that are outside output area */
 	removeOutOfBounds(&outputImage, &ascImages, &ascParams, &nAsc);
@@ -167,11 +159,11 @@ int main(int argc, char *argv[])
 	/*
 	  Read shelf mask
 	*/
-	if (shelfMaskFile != NULL)
+	if (args.shelfMaskFile != NULL)
 	{
 		fprintf(outputImage.fpLog, "; Starting reading Shelf mask file\n");
 		fflush(outputImage.fpLog);
-		readShelf(&outputImage, shelfMaskFile);
+		readShelf(&outputImage, args.shelfMaskFile);
 		fprintf(outputImage.fpLog, "; Finished reading Shelf mask file\n");
 		fflush(outputImage.fpLog);
 	}
@@ -180,11 +172,11 @@ int main(int argc, char *argv[])
 		outputImage.shelfMask = NULL;
 	}
 
-	if (verticalCorrectionFile != NULL)
+	if (args.verticalCorrectionFile != NULL)
 	{
 		fprintf(outputImage.fpLog, "; Starting reading vertical correction file\n");
 		fflush(outputImage.fpLog);
-		readXYDEM(verticalCorrectionFile, &verticalCorrection);
+		readXYDEM(args.verticalCorrectionFile, &verticalCorrection);
 		outputImage.verticalCorrection = &verticalCorrection;
 		fprintf(outputImage.fpLog, "; Finished reading vertical correction file\n");
 		fflush(outputImage.fpLog);
@@ -205,7 +197,7 @@ int main(int argc, char *argv[])
 	mallocOutputImage(&outputImage);
 	/* Consolodate lists */
 	consolodateLists(&images, &params, ascImages, descImages, ascParams, descParams, nAsc, nDesc);
- 	computeDateRange(&date1, &date2, &outputImage, images, params, minLSJD, maxLSJD);
+	computeDateRange(&args.date1, &args.date2, &outputImage, images, params, minLSJD, maxLSJD);
 	tmpP = params;
 	for (tmp = images; tmp != NULL; tmp = tmp->next, tmpP = tmpP->next)
 	{
@@ -218,8 +210,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "--\n");
 	}
 	//  Init and input DEM
-	fprintf(outputImage.fpLog, ";\n; About to Read XYDEM %s\n", demFile);
-	readXYDEM(demFile, &dem);
+	fprintf(outputImage.fpLog, ";\n; About to Read XYDEM %s\n", args.demFile);
+	readXYDEM(args.demFile, &dem);
 	for (tmpP = params; tmpP != NULL; tmpP = tmpP->next)
 		tmpP->xydem = dem;
 	fprintf(outputImage.fpLog, ";\n; Returned from readXYDEM\n");
@@ -230,33 +222,33 @@ int main(int argc, char *argv[])
 	  Step 0: Switched to first map since to accomdate discard of large dt.
 	  *******************************START Landsat mosaics******************************
 	  */
-	if (landSatFile != NULL && LSImages != NULL)
+	if (args.landSatFile != NULL && LSImages != NULL)
 	{
-		if (statsFlag == TRUE)
+		if (args.statsFlag == TRUE)
 			error("Landsat  incompatible with stats flag, which is for speckle tracked offsets only\n");
-		makeLandSatMosaic(LSImages, &outputImage, fl);
+		makeLandSatMosaic(LSImages, &outputImage, args.fl);
 	}
 	/*
 	  Step 0: Mosaic using ascending and descending data where possible.
 	*/
 	if ((nAsc + nDesc) > 0)
 	{
-		make3DMosaic(images, descImages, params, descParams, &dem, &outputImage, fl, outputImage.no3d, timeThreshPhase);
+		make3DMosaic(images, descImages, params, descParams, &dem, &outputImage, args.fl, outputImage.no3d, args.timeThreshPhase);
 	}
 	/*
 	  Step 1:
 	*/
-	if ((nAsc + nDesc) > 0 && threeDOffFlag == TRUE)
+	if ((nAsc + nDesc) > 0 && args.threeDOffFlag == TRUE)
 	{
-		make3DOffsets(images, params, &dem, &outputImage, fl, timeThresh);
-		fprintf(stderr, "End of 3d offsets %i\n", threeDOffFlag);
+		make3DOffsets(images, params, &dem, &outputImage, args.fl, args.timeThresh);
+		fprintf(stderr, "End of 3d offsets %i\n", args.threeDOffFlag);
 	}
 	/*
 	   Step 2: Make phase/az offset velocity
 	*/
 	if (outputImage.noVhFlag == FALSE && (nAsc + nDesc) > 0)
 	{
-		makeVhMosaic(images, params, &outputImage, fl);
+		makeVhMosaic(images, params, &outputImage, args.fl);
 	}
 	else
 	{
@@ -267,7 +259,7 @@ int main(int argc, char *argv[])
 	*/
 	if (outputImage.rOffsetFlag == TRUE && (nAsc + nDesc) > 0)
 	{
-		speckleTrackMosaic(images, params, &outputImage, fl, &refVel, statsFlag);
+		speckleTrackMosaic(images, params, &outputImage, args.fl, &refVel, args.statsFlag);
 	}
 	else
 	{
@@ -277,11 +269,11 @@ int main(int argc, char *argv[])
 	/*
 	  Step 6: Include irregularly interpolated data, if specified.
 	*/
-	if (irregFile != NULL)
+	if (args.irregFile != NULL)
 	{
-		fprintf(stderr, "*** incorporating irregularly gridded data from file %s :  ***\n\n", irregFile);
+		fprintf(stderr, "*** incorporating irregularly gridded data from file %s :  ***\n\n", args.irregFile);
 		irregDat = NULL;
-		parseIrregFile(irregFile, &irregDat);
+		parseIrregFile(args.irregFile, &irregDat);
 		for (irregTmp = irregDat; irregTmp != NULL; irregTmp = irregTmp->next)
 		{
 			fprintf(stderr, "|%s|\n", irregTmp->file);
@@ -289,13 +281,13 @@ int main(int argc, char *argv[])
 			irregTmp->maxArea = 75.;
 		}
 		getIrregData(irregDat);
-		addIrregData(irregDat, &outputImage, fl);
+		addIrregData(irregDat, &outputImage, args.fl);
 	}
 	/*
 	   write meta file
 	*/
-	haveData = writeMetaFile(images, &outputImage, params, outFileBase, demFile, writeBlank);
-	if (landSatFile != NULL)
+	haveData = writeMetaFile(images, &outputImage, params, args.outFileBase, args.demFile, args.writeBlank);
+	if (args.landSatFile != NULL)
 		haveData = TRUE;
 	/*
 	  Output result
@@ -304,16 +296,16 @@ int main(int argc, char *argv[])
 	{
 		if (haveData == TRUE || refVel.initMapFlag == TRUE)
 		{
-			if(COG == FALSE && GTiff == FALSE) {
-				write3Doutput(outputImage, outFileBase);
-			} 
-			else 
+			if(args.COG == FALSE && args.GTiff == FALSE) {
+				write3Doutput(outputImage, args.outFileBase);
+			}
+			else
 			{
 				char *driverType;
-				if(COG == TRUE) driverType = "COG"; else driverType = "GTiff";
-				write3DTiffOutput(outputImage, outFileBase, driverType, epsg, date1, date2);
+				if(args.COG == TRUE) driverType = "COG"; else driverType = "GTiff";
+				write3DTiffOutput(outputImage, args.outFileBase, driverType, epsg, args.date1, args.date2);
 			}
-			
+
 			remove("NoOutput_noDataInRange");
 		}
 		else
@@ -324,7 +316,7 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		writeTieFile(&outputImage, &dem, &verticalCorrection, outFileBase, tieThresh, extraTieFile, tideFile, autoSize);
+		writeTieFile(&outputImage, &dem, &verticalCorrection, args.outFileBase, args.tieThresh, args.extraTieFile, args.tideFile, autoSize);
 	}
 }
 
@@ -610,7 +602,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 						int32_t threeDOffFlag, double tieThresh, referenceVelocity *refVel)
 {
 	char *logFile;
-	logFile = (char *)malloc(1024);
+	logFile = (char *)malloc(strlen(outFileBase) + 16);
 	logFile[0] = '\0';
 	logFile = strcat(logFile, outFileBase);
 	logFile = strcat(logFile, ".log");
@@ -708,13 +700,110 @@ static void filterDT(outputImageStructure outputImage)
 		}
 }
 
+/* Write a multi-band VRT pointing to separate big-endian float32 binary files. */
+static void writeBinaryVRT(const char *vrtFile, const char **srcFiles,
+                            const char **bandDescriptions, int nBands,
+                            int xSize, int ySize, double *geoTransform,
+                            const char *epsg, float noDataValue)
+{
+	GDALDriverH driver = GDALGetDriverByName("VRT");
+	GDALDatasetH ds = GDALCreate(driver, vrtFile, xSize, ySize, 0, GDT_Unknown, NULL);
+	if (ds == NULL) {
+		fprintf(stderr, "writeBinaryVRT: failed to create %s\n", vrtFile);
+		return;
+	}
+	GDALSetGeoTransform(ds, geoTransform);
+	if (epsg != NULL) {
+		OGRSpatialReferenceH srs = OSRNewSpatialReference(NULL);
+		if (OSRImportFromEPSG(srs, atoi(epsg)) == OGRERR_NONE) {
+			char *wkt = NULL;
+			OSRExportToWkt(srs, &wkt);
+			GDALSetProjection(ds, wkt);
+			CPLFree(wkt);
+		}
+		OSRDestroySpatialReference(srs);
+	}
+	for (int i = 0; i < nBands; i++) {
+		char fileOpt[2048];
+		sprintf(fileOpt, "SourceFilename=%s", extract_filename((char *)srcFiles[i]));
+		char *options[] = {fileOpt, "relativeToVRT=1", "subclass=VRTRawRasterBand",
+		                   "BYTEORDER=MSB", NULL};
+		GDALAddBand(ds, GDT_Float32, options);
+		GDALRasterBandH band = GDALGetRasterBand(ds, i + 1);
+		GDALSetDescription(band, bandDescriptions[i]);
+		GDALSetRasterNoDataValue(band, noDataValue);
+	}
+	GDALClose(ds);
+}
+
+/* Write VRT sidecars alongside the flat-binary output files. */
+static void write3DFlatVRTs(outputImageStructure outputImage, char *outFileBase,
+                             const char *outFileVx, const char *outFileVy,
+                             const char *outFileVz,
+                             const char *outFileEx, const char *outFileEy)
+{
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	double geoTransform[6];
+	const float noDataValue = -2.0e9;
+	char *vrtFile;
+	const char *vxDesc, *vyDesc, *vzDesc, *exDesc, *eyDesc;
+
+	computeGeoTransform(geoTransform, outputImage.originX, outputImage.originY,
+	                    outputImage.xSize, outputImage.ySize,
+	                    outputImage.deltaX, outputImage.deltaY);
+	const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);
+
+	if (outputImage.outputRAFlag) {
+		vxDesc = "vr"; vyDesc = "va";
+		exDesc = "er"; eyDesc = "ea";
+	} else {
+		vxDesc = "vx"; vyDesc = "vy";
+		exDesc = "ex"; eyDesc = "ey";
+	}
+	vzDesc = outputImage.timeOverlapFlag ? "dT" : "vz";
+
+	/* stem.vrt: vx + vy as two named bands */
+	vrtFile = appendSuffix(outFileBase, ".vrt", (char *)malloc(strlen(outFileBase) + 5));
+	const char *velFiles[] = {outFileVx, outFileVy};
+	const char *velDescs[] = {vxDesc, vyDesc};
+	writeBinaryVRT(vrtFile, velFiles, velDescs, 2,
+	               outputImage.xSize, outputImage.ySize, geoTransform, epsg, noDataValue);
+	free(vrtFile);
+
+	/* stem.vz.vrt or stem.dT.vrt */
+	const char *vzSuffix = outputImage.timeOverlapFlag ? ".dT.vrt" : ".vz.vrt";
+	vrtFile = appendSuffix(outFileBase, (char *)vzSuffix, (char *)malloc(strlen(outFileBase) + 8));
+	const char *vzFiles[] = {outFileVz};
+	const char *vzDescs[] = {vzDesc};
+	writeBinaryVRT(vrtFile, vzFiles, vzDescs, 1,
+	               outputImage.xSize, outputImage.ySize, geoTransform, epsg, noDataValue);
+	free(vrtFile);
+
+	/* stem.err.vrt: ex + ey as two named bands */
+	vrtFile = appendSuffix(outFileBase, ".err.vrt", (char *)malloc(strlen(outFileBase) + 9));
+	const char *errFiles[] = {outFileEx, outFileEy};
+	const char *errDescs[] = {exDesc, eyDesc};
+	writeBinaryVRT(vrtFile, errFiles, errDescs, 2,
+	               outputImage.xSize, outputImage.ySize, geoTransform, epsg, noDataValue);
+	free(vrtFile);
+}
+
 static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 {
 	char *outFileVx, *outFileVy, *outFileVz; /* Output files */
 	char *outFileEx, *outFileEy;
 	/* Output file names velocity */
-	outFileVx = appendSuffix(outFileBase, ".vx", (char *)malloc(strlen(outFileBase) + 4));
-	outFileVy = appendSuffix(outFileBase, ".vy", (char *)malloc(strlen(outFileBase) + 4));
+	if (outputImage.outputRAFlag)
+	{
+		outFileVx = appendSuffix(outFileBase, ".vr", (char *)malloc(strlen(outFileBase) + 4));
+		outFileVy = appendSuffix(outFileBase, ".va", (char *)malloc(strlen(outFileBase) + 4));
+	}
+	else
+	{
+		outFileVx = appendSuffix(outFileBase, ".vx", (char *)malloc(strlen(outFileBase) + 4));
+		outFileVy = appendSuffix(outFileBase, ".vy", (char *)malloc(strlen(outFileBase) + 4));
+	}
 	if (outputImage.timeOverlapFlag == FALSE)
 	{
 		outFileVz = appendSuffix(outFileBase, ".vz", (char *)malloc(strlen(outFileBase) + 4));
@@ -723,8 +812,16 @@ static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 	{
 		outFileVz = appendSuffix(outFileBase, ".dT", (char *)malloc(strlen(outFileBase) + 4));
 	}
-	outFileEx = appendSuffix(outFileBase, ".ex", (char *)malloc(strlen(outFileBase) + 4));
-	outFileEy = appendSuffix(outFileBase, ".ey", (char *)malloc(strlen(outFileBase) + 4));
+	if (outputImage.outputRAFlag)
+	{
+		outFileEx = appendSuffix(outFileBase, ".er", (char *)malloc(strlen(outFileBase) + 4));
+		outFileEy = appendSuffix(outFileBase, ".ea", (char *)malloc(strlen(outFileBase) + 4));
+	}
+	else
+	{
+		outFileEx = appendSuffix(outFileBase, ".ex", (char *)malloc(strlen(outFileBase) + 4));
+		outFileEy = appendSuffix(outFileBase, ".ey", (char *)malloc(strlen(outFileBase) + 4));
+	}
 	// convert error variance to sigma
 	toSigma(outputImage);
 	//  Fileter by dT if timeOverlap
@@ -751,6 +848,7 @@ static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 	outputGeocodedImage(outputImage, outFileEy);
 	free(outputImage.image[0]);
 	free(outputImage.image);
+	write3DFlatVRTs(outputImage, outFileBase, outFileVx, outFileVy, outFileVz, outFileEx, outFileEy);
 }
 
 
@@ -762,8 +860,16 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 	double geoTransform[6];
 	float noDataValues[5] = {-2.0e9, -2.0e9, -2.0e9, -2.0e9, -2.0e9};
 	/* Output file names velocity */
-	outFileVx = appendSuffix(outFileBase, ".vx.tif", (char *)malloc(strlen(outFileBase) + 8));
-	outFileVy = appendSuffix(outFileBase, ".vy.tif", (char *)malloc(strlen(outFileBase) + 8));
+	if (outputImage.outputRAFlag)
+	{
+		outFileVx = appendSuffix(outFileBase, ".vr.tif", (char *)malloc(strlen(outFileBase) + 8));
+		outFileVy = appendSuffix(outFileBase, ".va.tif", (char *)malloc(strlen(outFileBase) + 8));
+	}
+	else
+	{
+		outFileVx = appendSuffix(outFileBase, ".vx.tif", (char *)malloc(strlen(outFileBase) + 8));
+		outFileVy = appendSuffix(outFileBase, ".vy.tif", (char *)malloc(strlen(outFileBase) + 8));
+	}
 	if (outputImage.timeOverlapFlag == FALSE)
 	{
 		outFileVz = appendSuffix(outFileBase, ".vz.tif", (char *)malloc(strlen(outFileBase) + 8));
@@ -772,8 +878,16 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 	{
 		outFileVz = appendSuffix(outFileBase, ".dT.tif", (char *)malloc(strlen(outFileBase) + 8));
 	}
-	outFileEx = appendSuffix(outFileBase, ".ex.tif", (char *)malloc(strlen(outFileBase) + 8));
-	outFileEy = appendSuffix(outFileBase, ".ey.tif", (char *)malloc(strlen(outFileBase) + 8));
+	if (outputImage.outputRAFlag)
+	{
+		outFileEx = appendSuffix(outFileBase, ".er.tif", (char *)malloc(strlen(outFileBase) + 8));
+		outFileEy = appendSuffix(outFileBase, ".ea.tif", (char *)malloc(strlen(outFileBase) + 8));
+	}
+	else
+	{
+		outFileEx = appendSuffix(outFileBase, ".ex.tif", (char *)malloc(strlen(outFileBase) + 8));
+		outFileEy = appendSuffix(outFileBase, ".ey.tif", (char *)malloc(strlen(outFileBase) + 8));
+	}
 	// convert error variance to sigma
 	toSigma(outputImage);
 	//  Fileter by dT if timeOverlap
@@ -980,10 +1094,8 @@ static int32_t writeMetaFile(inputImageStructure *image, outputImageStructure *o
 	return (haveData);
 }
 
-static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFile, char **outFileBase, float *fl, char **irregFile, char **shelfMaskFile,
-					 double *tieThresh, char **extraTieFile, char **tideFile, int32_t *north, char **landSatFile, int32_t *threeDOffFlag, float *timeThresh, float *timeThreshPhase,
-					 char **date1, char **date2, referenceVelocity *refVel, int32_t *statsFlag, outputImageStructure *outputImage, int32_t *writeBlank, char **verticalCorrectionFile,
-					 int32_t *GTiff, int32_t *COG)
+static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
+					 referenceVelocity *refVel, outputImageStructure *outputImage)
 {
 	extern int32_t sepAscDesc;
 	char *argString;
@@ -1006,32 +1118,34 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 	refVel->clipThresh = 100000;
 	refVel->initMapFlag = FALSE;
 	refVel->velFile = NULL;
-	*date1 = NULL;
-	*date2 = NULL;
+	args->date1 = NULL;
+	args->date2 = NULL;
 	noTide = FALSE;
 	outputImage->makeTies = FALSE;
-	*irregFile = NULL;
+	args->irregFile = NULL;
 	rOffsetFlag = FALSE;
-	*shelfMaskFile = NULL;
-	*extraTieFile = NULL;
-	*landSatFile = NULL;
+	args->shelfMaskFile = NULL;
+	args->extraTieFile = NULL;
+	args->landSatFile = NULL;
 	noVhFlag = FALSE;
 	timeOverlapFlag = FALSE;
 	no3d = FALSE;
-	*threeDOffFlag = FALSE;
-	*tieThresh = 100.0; /* Limit on velocity for tie points */
-	*fl = 0.0;
-	*tideFile = NULL;
-	*north = FALSE;
-	*timeThresh = 12;
-	*timeThreshPhase = 548; /* Allow pairing with in 1.5 years */
-	*writeBlank = FALSE;
+	args->threeDOffFlag = FALSE;
+	args->tieThresh = 100.0; /* Limit on velocity for tie points */
+	args->fl = 0.0;
+	args->tideFile = NULL;
+	args->north = FALSE;
+	args->timeThresh = 12;
+	args->timeThreshPhase = 548; /* Allow pairing with in 1.5 years */
+	args->sigmaAThresh = 1000.0;
+	args->writeBlank = FALSE;
 	vzFlag = VZDEFAULT;
-	*statsFlag = FALSE;
-	*verticalCorrectionFile = NULL;
+	args->statsFlag = FALSE;
+	args->verticalCorrectionFile = NULL;
 	verticalCorrectionSuffix = NULL;
-	*COG = FALSE;
-	*GTiff = FALSE;
+	args->COG = FALSE;
+	args->GTiff = FALSE;
+	args->outputRAFlag = FALSE;
 	/* Added this flag to sort ignore crossing orbits or like asc/desc types May 6 2014 */
 	sepAscDesc = TRUE;
 	deltaB = DELTABNONE;
@@ -1046,7 +1160,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		else if (strstr(argString, "xyDEM") != NULL)
 			fprintf(stderr, "xyDEM flag obsolete - xydem is the default");
 		else if (strstr(argString, "writeBlank") != NULL)
-			*writeBlank = TRUE;
+			args->writeBlank = TRUE;
 		else if (strstr(argString, "rOffsets") != NULL)
 			rOffsetFlag = TRUE;
 		else if (strstr(argString, "offsets") != NULL)
@@ -1058,31 +1172,36 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		else if (strstr(argString, "timeOverlap") != NULL)
 			timeOverlapFlag = TRUE;
 		else if (strstr(argString, "stats") != NULL)
-			*statsFlag = TRUE;
+			args->statsFlag = TRUE;
 		else if (strstr(argString, "COG") != NULL)
-			*COG = TRUE;
+			args->COG = TRUE;
 		else if (strstr(argString, "GTiff") != NULL)
-			*GTiff = TRUE;
+			args->GTiff = TRUE;
 		else if (strstr(argString, "vzFlag") != NULL)
 		{
 			if (sscanf(argv[i + 1], "%i\n", &vzFlag) != 1)
 				usage();
 			i++;
 		}
+		else if (strstr(argString, "sigmaAThresh") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &args->sigmaAThresh);
+			i++;
+		}
 		else if (strstr(argString, "tieThresh") != NULL)
 		{
-			if (sscanf(argv[i + 1], "%lf\n", tieThresh) != 1)
+			if (sscanf(argv[i + 1], "%lf\n", &args->tieThresh) != 1)
 				usage();
 			i++;
 		}
 		else if (strstr(argString, "extraTies") != NULL)
 		{
-			*extraTieFile = argv[i + 1];
+			args->extraTieFile = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "tideFile") != NULL)
 		{
-			*tideFile = argv[i + 1];
+			args->tideFile = argv[i + 1];
 			i++;
 		} // Make sure this goes before shorter verticalCorrection
 		else if (strstr(argString, "verticalCorrectionSuffix") != NULL)
@@ -1092,27 +1211,27 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		}
 		else if (strstr(argString, "verticalCorrection") != NULL)
 		{
-			*verticalCorrectionFile = argv[i + 1];
+			args->verticalCorrectionFile = argv[i + 1];
 			i++;
-		}	
+		}
 		else if (strstr(argString, "fl") != NULL)
 		{
-			sscanf(argv[i + 1], "%f", fl);
+			sscanf(argv[i + 1], "%f", &args->fl);
 			i++;
 		}
 		else if (strstr(argString, "timeThresh") != NULL)
 		{
-			sscanf(argv[i + 1], "%f", timeThresh);
+			sscanf(argv[i + 1], "%f", &args->timeThresh);
 			i++;
 		}
 		else if (strstr(argString, "timePhaseThresh") != NULL)
 		{
-			sscanf(argv[i + 1], "%f", timeThreshPhase);
+			sscanf(argv[i + 1], "%f", &args->timeThreshPhase);
 			i++;
 		}
 		else if (strstr(argString, "irreg") != NULL)
 		{
-			*irregFile = argv[i + 1];
+			args->irregFile = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "noVh") != NULL)
@@ -1125,7 +1244,7 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		}
 		else if (strstr(argString, "3dOff") != NULL)
 		{
-			*threeDOffFlag = TRUE;
+			args->threeDOffFlag = TRUE;
 		}
 		else if (strstr(argString, "noSepAscDesc") != NULL)
 		{
@@ -1143,13 +1262,17 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		{
 			deltaB = DELTABCONST;
 		}
+		else if (strstr(argString, "outputRA") != NULL)
+		{
+			args->outputRAFlag = TRUE;
+		}
 		else if (strstr(argString, "north") != NULL)
 		{
-			*north = TRUE;
+			args->north = TRUE;
 		}
 		else if (strstr(argString, "landSat") != NULL)
 		{
-			*landSatFile = argv[i + 1];
+			args->landSatFile = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "refVel") != NULL)
@@ -1166,51 +1289,68 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 		}
 		else if (strstr(argString, "shelfMask") != NULL)
 		{
-			*shelfMaskFile = argv[i + 1];
+			args->shelfMaskFile = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "date1") != NULL)
 		{
-			*date1 = argv[i + 1];
+			args->date1 = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "date2") != NULL)
 		{
-			*date2 = argv[i + 1];
+			args->date2 = argv[i + 1];
 			i++;
+		}
+		else if (strstr(argString, "ompThreads") != NULL)
+		{
+			int32_t nThreads = 0;
+			if (i + 1 < argc && argv[i + 1][0] != '-' && argv[i + 1][0] != '\0')
+			{
+				sscanf(argv[i + 1], "%d", &nThreads);
+				i++;
+			}
+			if (nThreads > 0)
+			{
+				omp_set_num_threads(nThreads);
+				fprintf(stderr, "\033[1;3;34mompThreads set to %d\033[0m\n", nThreads);
+			}
+			else
+				fprintf(stderr, "\033[1;3;34mompThreads using default (%d)\033[0m\n", omp_get_max_threads());
 		}
 		else
 			usage();
 	}
 	if (refVel->initMapFlag == TRUE && refVel->velFile == NULL)
 		error("initMap set but no reference velocity provided\n");
-	if (*statsFlag == TRUE)
+	if (args->statsFlag == TRUE)
 	{
 		fprintf(stderr, "setting flags to force speckletracking only since in computeError or stats mode");
 		no3d = TRUE;
-		*threeDOffFlag = FALSE;
+		args->threeDOffFlag = FALSE;
 		noVhFlag = TRUE;
 		rOffsetFlag = TRUE;
 	}
-	if (*statsFlag == TRUE)
+	if (args->statsFlag == TRUE)
 	{
 		printf("stats and timeOverlap flags incompatible, setting timeOverlap flag to False");
 		timeOverlapFlag = FALSE;
 	}
-	if(*COG == TRUE && *GTiff == TRUE)
+	if (args->COG == TRUE && args->GTiff == TRUE)
 	{
 		error("Select COG or GTiff but not both");
 	}
 	/* Must have az offsets to do range offsets */
-	*inputFile = argv[argc - 3];
-	*demFile = argv[argc - 2];
-	*outFileBase = argv[argc - 1];
+	args->inputFile = argv[argc - 3];
+	args->demFile = argv[argc - 2];
+	args->outFileBase = argv[argc - 1];
 	outputImage->noVhFlag = noVhFlag;
 	outputImage->no3d = no3d;
 	outputImage->rOffsetFlag = rOffsetFlag;
 	outputImage->noTide = noTide;
 	outputImage->vzFlag = vzFlag;
 	outputImage->deltaB = deltaB;
+	outputImage->outputRAFlag = args->outputRAFlag;
 	outputImage->timeOverlapFlag = timeOverlapFlag;
 	outputImage->verticalCorrectionSuffix = verticalCorrectionSuffix;
 	return;
@@ -1218,12 +1358,12 @@ static void readArgs(int32_t argc, char *argv[], char **inputFile, char **demFil
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
 		  " \t-verticalCorrection vcFile -verticalCorrectionSuffix suffix -no3d -3dOff -deltaBQ -deltaBC -noVh -landSat landSatList  -refVel refVelFile -initMap -clipThresh clipThresh -lsClip clipVal  \\",
-		  " \t-shelfMask shelfMask -fl fl  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide \\",
+		  " \t-shelfMask shelfMask -fl fl  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide -ompThreads N \\",
 		  " \tinputFile demFile outPutImage\n",
 		  " where :",
 		  "\tnorth =\t\t\t Force northern hemisphere",
@@ -1257,11 +1397,13 @@ static void usage()
 		  "\tirregFile =\t\t File with list of irregular input data",
 		  "\tvzFlag =\t\t Used for changing output in vertical channel 0 for default (vz correction), 1 horizontal 1/sin(psi), 2 for 1/vertical cos(psi), 3 flag for LOS scaled to m/yr, 4 inc angle",
 		  "\tstats =\t\t compute unweight mean vx, and vy and standard dev of the inputs (ex,ey) and number of points (vz) - works only for speckleTrack",
+		  "\toutputRA =\t\t Output range (vr/er) and azimuth (va/ea) components instead of rotating to map vx/vy",
 		  "\tnoSepAscDesc =\t\t For 3d ignore asc/desc and use heading, default use asc/desc",
 		  "\tnoTide =\t\t Don't compute value if on shelf",
+	  "\tompThreads N =\t\t Set OpenMP thread count (default 4, or OMP_NUM_THREADS if set in shell)",
 		  "\tinputFile =\t\t File with input params, dem and geodat filenames",
 		  "\tdemFile =\t\t File with nonInsar dem",
-		  "\toutputImage =\t\t Root of output image (e.g., mosaicOffsets)\033[0m");
+		  "\toutputImage =\t\t Root of output image (e.g., mosaicOffsets)");
 }
 
 /*
@@ -1541,14 +1683,9 @@ static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructu
 	/*
 	  Open vx file
 	*/
-	if (vxFile == NULL)
-		error("*** readVelMosaic: Error opening %s ***\n", vxFile);
 	fp = openInputFile(vxFile);
 	fseek(fp, (nx * yoff * sizeof(float)), SEEK_SET);
 	tail = max(nx - (xoff + refVel->nx), 0);
-
-	if (fp == NULL)
-		error("*** readVelMosaic: Error opening %s ***\n", vxFile);
 	for (i = 0; i < refVel->ny; i++)
 	{
 		tmp1 = &(tmp[i * refVel->nx]);
@@ -1566,12 +1703,8 @@ static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructu
 	/*
 	  Open vy file
 	*/
-	if (vyFile == NULL)
-		error("*** readVel: Error opening %s ***\n", vyFile);
 	fp = openInputFile(vyFile);
 	fseek(fp, (nx * yoff * sizeof(float)), SEEK_SET);
-	if (fp == NULL)
-		error("*** readVel: Error opening %s ***\n", vyFile);
 	for (i = 0; i < refVel->ny; i++)
 	{
 		tmp1 = &(tmp[i * refVel->nx]);
@@ -1604,14 +1737,9 @@ static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructu
 		/*
 		  Open ex file
 		*/
-		if (exFile == NULL)
-			error("*** readVelMosaic: Error opening %s ***\n", exFile);
 		fp = openInputFile(exFile);
 		fseek(fp, (nx * yoff * sizeof(float)), SEEK_SET);
 		tail = max(nx - (xoff + refVel->nx), 0);
-
-		if (fp == NULL)
-			error("*** readVelMosaic: Error opening %s ***\n", exFile);
 		for (i = 0; i < refVel->ny; i++)
 		{
 			tmp1 = &(tmp[i * refVel->nx]);
@@ -1629,13 +1757,9 @@ static void readReferenceVelMosaic(referenceVelocity *refVel, outputImageStructu
 		/*
 		  Open ey file
 		*/
-		if (eyFile == NULL)
-			error("*** readVelMosaic: Error opening %s ***\n", eyFile);
 		fp = openInputFile(eyFile);
 		fseek(fp, (nx * yoff * sizeof(float)), SEEK_SET);
 		tail = max(nx - (xoff + refVel->nx), 0);
-		if (fp == NULL)
-			error("*** readVelMosaic: Error opening %s ***\n", eyFile);
 		for (i = 0; i < refVel->ny; i++)
 		{
 			tmp1 = &(tmp[i * refVel->nx]);
