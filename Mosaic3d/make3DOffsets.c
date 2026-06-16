@@ -2,11 +2,22 @@
 #include "string.h"
 #include <math.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
 /*
-  Compute velocities from range/range offsets data
+  Compute velocities from range/range offsets data.
+
+  Ionosphere correction:
+    If rparams recorded a ;* offsetCorrectionFile line in the baseline file,
+    readOffsets loads the named GeoTIFF (written by estimateIonosphere.py on
+    the native ROFF grid in SLC pixels) into offsets.rOffCorrection.  The
+    correction file is linked to range.offsets.vrt via the VRT metadata key
+    ionosphereRangeOffsetCorrection, stamped there by SetupNISAR.py.
+    At each output pixel the correction is interpolated in SLC pixel coords
+    and subtracted from the metre-domain range offset (correction × SLC pixel
+    size in metres).
 */
 void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem, outputImageStructure *outputImage, float fl, float timeThresh)
 {
@@ -86,6 +97,13 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	*/
 	aa = 0;
 	tCenter = (outputImage->jd1 + outputImage->jd2 + 1.) * 0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
+	int nthreads = omp_get_max_threads();
+	inputImageStructure *localAImgs = (inputImageStructure *)malloc(
+		(size_t)nthreads * sizeof(inputImageStructure));
+	inputImageStructure *localDImgs = (inputImageStructure *)malloc(
+		(size_t)nthreads * sizeof(inputImageStructure));
+	if (localAImgs == NULL || localDImgs == NULL)
+		error("make3DOffsets: malloc failed for per-thread image copies\n");
 	for (aOffImage = allImages; aOffImage != NULL; aOffImage = aOffImage->next, aParams = aParams->next)
 	{
 		aa++;
@@ -100,8 +118,10 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			Check if in output area
 		*/
 		getRegion(aOffImage, &iMin, &iMax, &jMin, &jMax, outputImage);
+		//error("STOP top of outer loop %i %i %i %i\n",iMin, iMax,jMin, jMax);
 		if (iMin > iMax || jMin > jMax)
 			continue;
+		fprintf(stderr,"\033[1;34maOffImage->rangeFile %s\033[0m\n", aParams->offsets.rFile);
 		/*
 		  Setup conversions
 		 */
@@ -113,8 +133,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		// This is going to read the full data take for the outer loop image.
 		fprintf(stderr, "iMin, iMax, jMin, jMax %i %i %i %i\n", iMin, iMax, jMin, jMax);
 		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, aOffImage, outputImage, &azimuthMin, &azimuthMax);
-		readRangeOrRangeOffsets(&(aParams->offsets), ASCENDING, azimuthMin, azimuthMax);
 		getRParams(&(aParams->offsets));
+		readRangeOrRangeOffsets(&(aParams->offsets), ASCENDING, azimuthMin, azimuthMax);
 		
 		/*
 		 **** SECOND LOOP ***
@@ -127,7 +147,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			dd++;
 			tOffCenterD = dOffImage->julDay + dParams->nDays * 0.5;
 			fprintf(stderr,"\nSTOP top of inner loop %i %i %i\n", dOffImage->passType, aOffImage->passType, sepAscDesc);
-	fprintf(stderr, "dOffImage->crossFlag: %i %i\n", (dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE), dOffImage->crossFlag == FALSE);
+	fprintf(stderr, "dOffImage->crossFlag: %i %i\n",
+		 (dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE), dOffImage->crossFlag == FALSE);
 			if ((dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE) || dOffImage->crossFlag == FALSE)
 				continue;
 			//error("Could not process image %i",fabs(aOffImage->julDay - dOffImage->julDay) > timeThresh);
@@ -167,168 +188,195 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			  Read in descending image if needed (i.e., nozero intersect).
 			*/
 			getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, dOffImage, outputImage, &azimuthMin, &azimuthMax);
+			getRParams(&(dParams->offsets));
 			readRangeOrRangeOffsets(&(dParams->offsets), DESCENDING, azimuthMin, azimuthMax);
 			fprintf(stderr, "azimuth bounds %f %f\n", (double)azimuthMin, (double)azimuthMax);
 		
 			//error("STOP");
-			getRParams(&(dParams->offsets));
+			
 			/*
 			  Loop over output grid and compute velocities
 			*/
-			fprintf(stderr, "---- Asc %i / %i Des %i \n", aa, nTotal, dd);
-			Aset = FALSE;
-			for (i = iMin; i < iMax; i++)
+			fprintf(stderr, "---- Asc %i / %i Des %i iMin: %i iMax: %i jMin: %i jMax: %i\n", aa, nTotal, dd, iMin, iMax, jMin, jMax);
+			/* Prime svInitBnBp in serial before threads race on bnS/bpS malloc */
+			if (aParams->offsets.deltaB != DELTABNONE) {
+				double bnS, bpS;
+				svInterpBnBp(aOffImage, &(aParams->offsets), 0.0, &bnS, &bpS);
+				svInterpBnBp(dOffImage, &(dParams->offsets), 0.0, &bnS, &bpS);
+			}
 			{
-				y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
-				for (j = jMin; j < jMax; j++)
+				int t;
+				for (t = 0; t < nthreads; t++) { localAImgs[t] = *aOffImage; localDImgs[t] = *dOffImage; }
+			}
+#pragma omp parallel \
+			private(j, x, y, lat, lon, zWGS84, \
+			        aZSp, dZSp, arange, drange, aAzimuth, dAzimuth, \
+			        aDelta, dDelta, aReH, dReH, aRange, dRange, \
+			        aTheta, dTheta, aThetaD, dThetaD, aPsi, dPsi, \
+			        aSig2Base, dSig2Base, aSigmaR, dSigmaR, \
+			        aDemError, dDemError, aIonCorrection, dIonCorrection, \
+			        aP, dP, aPe, dPe, vx, vy, vz, scX, scY, \
+			        dzdx, dzdy, dzdtSubmergence, deltaOffCenter, sMask, validData)
+			{
+				int myThread = omp_get_thread_num();
+				inputImageStructure *myAImg = &localAImgs[myThread];
+				inputImageStructure *myDImg = &localDImgs[myThread];
+				double A[2][2], B[2][2];
+				int32_t threadAset = FALSE;
+#pragma omp for schedule(dynamic, 8)
+				for (i = iMin; i < iMax; i++)
 				{
-					/*
-					  Convert x/y stereographic coords to lat/lon
-					*/
-					x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
-					zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
-					validData = FALSE;
-					/*
-					   Process points where elevation is known
-					*/
-					if (zWGS84 > MINELEVATION)
+					y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+					for (j = jMin; j < jMax; j++)
 					{
-						/*  Convert elevations to spherical reference	*/
-						aZSp = sphericalElev(zWGS84, lat, aRe);
-						dZSp = sphericalElev(zWGS84, lat, dRe);
 						/*
-						  Compute range azimuth positions
+						  Convert x/y stereographic coords to lat/lon
 						*/
-						llToImageNew(lat, lon, zWGS84, &arange, &aAzimuth, aOffImage);
-						geometryInfo(aCp, aOffImage, aAzimuth, arange, aZSp, aThetaC, &aReH, &aRange, &aTheta, &aThetaD, &aPsi, aZSp);
-						llToImageNew(lat, lon, zWGS84, &drange, &dAzimuth, dOffImage);
-						geometryInfo(dCp, dOffImage, dAzimuth, drange, dZSp, dThetaC, &dReH, &dRange, &dTheta, &dThetaD, &dPsi, dZSp);
-						/*  Interpolate range offsets */
-						dDelta = interpRangeOffset(drange, dAzimuth, &(dParams->offsets), dOffImage, dRange, dThetaD, dRSLPixSize, dTheta, &dDemError);
-						aDelta = interpRangeOffset(arange, aAzimuth, &(aParams->offsets), aOffImage, aRange, aThetaD, aRSLPixSize, aTheta, &aDemError);
-						if (dParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
-							dIonCorrection = interpolateOffsetCorrection(&(dParams->offsets.rOffCorrection), drange, dAzimuth, -LARGEINT, 0.0);
+						x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
+						xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+						zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
+						validData = FALSE;
+						/*
+						   Process points where elevation is known
+						*/
+						if (zWGS84 > MINELEVATION)
+						{
+							/*  Convert elevations to spherical reference	*/
+							aZSp = sphericalElev(zWGS84, lat, aRe);
+							dZSp = sphericalElev(zWGS84, lat, dRe);
+							/*
+							  Compute range azimuth positions
+							*/
+							llToImageNew(lat, lon, zWGS84, &arange, &aAzimuth, myAImg);
+							geometryInfo(aCp, myAImg, aAzimuth, arange, aZSp, aThetaC, &aReH, &aRange, &aTheta, &aThetaD, &aPsi, aZSp);
+							llToImageNew(lat, lon, zWGS84, &drange, &dAzimuth, myDImg);
+							geometryInfo(dCp, myDImg, dAzimuth, drange, dZSp, dThetaC, &dReH, &dRange, &dTheta, &dThetaD, &dPsi, dZSp);
+							/*  Interpolate range offsets */
+							dDelta = interpRangeOffsetInMeters(drange, dAzimuth, &(dParams->offsets), myDImg, dRange, dThetaD, dRSLPixSize, dTheta, &dDemError);
+							aDelta = interpRangeOffsetInMeters(arange, aAzimuth, &(aParams->offsets), myAImg, aRange, aThetaD, aRSLPixSize, aTheta, &aDemError);
+							{
+								double dRangeSLC, dAzimuthSLC;
+								computeSLCFromMLCoords(myDImg, drange, dAzimuth, &dRangeSLC, &dAzimuthSLC);
+								if (dParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
+									dIonCorrection = interpolateOffsetIonCorrectionInPixels(&(dParams->offsets.rOffCorrection), dRangeSLC, dAzimuthSLC, -LARGEINT, 0.0);
+								else
+									dIonCorrection = 0.0;
+							}
+							if (dIonCorrection > -0.98 * LARGEINT && dDelta > -LARGEINT)
+								dDelta += dIonCorrection * dRSLPixSize;
+							{
+								double aRangeSLC, aAzimuthSLC;
+								computeSLCFromMLCoords(myAImg, arange, aAzimuth, &aRangeSLC, &aAzimuthSLC);
+								if (aParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
+									aIonCorrection = interpolateOffsetIonCorrectionInPixels(&(aParams->offsets.rOffCorrection), aRangeSLC, aAzimuthSLC, -LARGEINT, 0.0);
+								else
+									aIonCorrection = 0.0;
+							}
+							if (aIonCorrection > -0.98 * LARGEINT && aDelta > -LARGEINT)
+								aDelta += aIonCorrection * aRSLPixSize;
+						}
 						else
-							dIonCorrection = 0.0;
-						if (dIonCorrection > -0.98 * LARGEINT)
-							dDelta -= dIonCorrection;
-						if (aParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
-							aIonCorrection = interpolateOffsetCorrection(&(aParams->offsets.rOffCorrection), arange, aAzimuth, -LARGEINT, 0.0);
-						else
-							aIonCorrection = 0.0;
-						if (aIonCorrection > -0.98 * LARGEINT)
-							aDelta -= aIonCorrection;
-					}
-					else
-					{
-						aDelta = -LARGEINT;
-						dDelta = -LARGEINT;
-					} /* End if (z >... */
-					/*
-					  If shelf mask, get mask value
-					*/
-					sMask = GROUNDED;
-					if (shelfMask != NULL)
-						sMask = getShelfMask(shelfMask, x, y);
-					if (sMask == NOSOLUTION)
-					{
-						aDelta = -LARGEINT;
-						dDelta = -LARGEINT;
-					};
-					/*
-					  If there is valid offsets data from both images then compute velocity
-					*/
-					if (aDelta > (-LARGEINT + 1) && dDelta > (-LARGEINT + 1) && zWGS84 > MINELEVATION && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
-					{
+						{
+							aDelta = -LARGEINT;
+							dDelta = -LARGEINT;
+						} /* End if (z >... */
 						/*
-						  Compute error due to baseline
+						  If shelf mask, get mask value
 						*/
-						aSig2Base = computeSig2Base(sin(aThetaD), cos(aThetaD), aAzimuth, aOffImage, &(aParams->offsets));
-						dSig2Base = computeSig2Base(sin(dThetaD), cos(dThetaD), dAzimuth, dOffImage, &(dParams->offsets));
-						aSigmaR = interpRangeSigma(arange, aAzimuth, &(aParams->offsets), aOffImage, aRange, aThetaD, aRSLPixSize);
-						dSigmaR = interpRangeSigma(drange, dAzimuth, &(dParams->offsets), dOffImage, dRange, dThetaD, dRSLPixSize);
-						aSigmaR = sqrt(aSigmaR * aSigmaR + aDemError * aDemError + aSig2Base);
-						dSigmaR = sqrt(dSigmaR * dSigmaR + dDemError * dDemError + dSig2Base);
+						sMask = GROUNDED;
+						if (shelfMask != NULL)
+							sMask = getShelfMask(shelfMask, x, y);
+						if (sMask == NOSOLUTION)
+						{
+							aDelta = -LARGEINT;
+							dDelta = -LARGEINT;
+						};
 						/*
-						  Tide corrections
+						  If there is valid offsets data from both images then compute velocity
 						*/
-						if (sMask == SHELF)
+						if (aDelta > (-LARGEINT + 1) && dDelta > (-LARGEINT + 1) && zWGS84 > MINELEVATION && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
 						{
-							/* Interp tide errors, set twok (last param) as 1.0 for offsets */
-							interpTideError(&aSigmaR, aOffImage, aParams, x, y, aPsi, 1.0);
-							interpTideError(&dSigmaR, dOffImage, dParams, x, y, dPsi, 1.0);
-							aDelta -= -aOffImage->tideCorrection * cos(aPsi) * (double)aParams->nDays / 365.25;
-							dDelta -= -dOffImage->tideCorrection * cos(dPsi) * (double)dParams->nDays / 365.25;
-						} /* ENd if(smask... */
-						if (vCorrect != NULL)
-						{
-							dzdtSubmergence = interpVCorrect(x, y, vCorrect);
-							aDelta -= -dzdtSubmergence * cos(aPsi) * (double)aParams->nDays / 365.25;
-							dDelta -= -dzdtSubmergence * cos(dPsi) * (double)dParams->nDays / 365.25;
-							/* fprintf(stderr,"%f\n", dzdtSubmergence); */
-						}
-						/*  Update A every set of 10 pixels.  Use Aset to force computation on first calc. */
-						if (((i % 3) == 0 || (j % 3) == 0) || Aset == FALSE)
-						{
-							computeA(lat, lon, x, y, aOffImage, dOffImage, A);
-							Aset = TRUE;
-						}
-						/*
-						  Only pursue solution if sufficient difference  in angles for 3d solution
-						*/
-						if (A[0][0] != -LARGEINT)
-						{
-							/*  Compute B (note B is really C in the TGARS paper	*/
-							computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
-							/*  Scale offsets for velocity computation (scale for m/yr)	*/
-							aP = 365.25 * aDelta / ((double)(aParams->nDays) * sin(aPsi));
-							dP = 365.25 * dDelta / ((double)(dParams->nDays) * sin(dPsi));
-							aPe = 365.25 * aSigmaR / (aParams->nDays * sin(aPsi));
-							dPe = 365.25 * dSigmaR / (dParams->nDays * sin(dPsi));
-							/*  Compute velocity */
-							computeVxy(aP, dP, aPe, dPe, A, B, &vx, &vy, &scX, &scY);
-							/*  Compute vertical velocity	*/
-							vz = vx * dzdx + vy * dzdy;
-							/*  Update output arrays */
-							vxTmp[i][j] = vx * scX;
-							vyTmp[i][j] = vy * scY;
-							validData = TRUE;
-							if (outputImage->makeTies == TRUE)
+							/*
+							  Compute error due to baseline
+							*/
+							aSig2Base = computeSig2Base(sin(aThetaD), cos(aThetaD), aAzimuth, myAImg, &(aParams->offsets));
+							dSig2Base = computeSig2Base(sin(dThetaD), cos(dThetaD), dAzimuth, myDImg, &(dParams->offsets));
+							aSigmaR = interpRangeSigma(arange, aAzimuth, &(aParams->offsets), myAImg, aRange, aThetaD, aRSLPixSize);
+							dSigmaR = interpRangeSigma(drange, dAzimuth, &(dParams->offsets), myDImg, dRange, dThetaD, dRSLPixSize);
+							aSigmaR = sqrt(aSigmaR * aSigmaR + aDemError * aDemError + aSig2Base);
+							dSigmaR = sqrt(dSigmaR * dSigmaR + dDemError * dDemError + dSig2Base);
+							/*
+							  Tide corrections
+							*/
+							if (sMask == SHELF)
 							{
-								vzTmp[i][j] = vz;
-							}
-							else if (outputImage->timeOverlapFlag == TRUE)
+								/* Interp tide errors, set twok (last param) as 1.0 for offsets */
+								interpTideError(&aSigmaR, myAImg, aParams, x, y, aPsi, 1.0);
+								interpTideError(&dSigmaR, myDImg, dParams, x, y, dPsi, 1.0);
+								aDelta -= -myAImg->tideCorrection * cos(aPsi) * (double)aParams->nDays / 365.25;
+								dDelta -= -myDImg->tideCorrection * cos(dPsi) * (double)dParams->nDays / 365.25;
+							} /* ENd if(smask... */
+							if (vCorrect != NULL)
 							{
-								/* For lack of better option, use the average of the two data takes */
-								deltaOffCenter = 0.5 * (tOffCenterA + tOffCenterD - 2.0 * tCenter);
-								vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
+								dzdtSubmergence = interpVCorrect(x, y, vCorrect);
+								aDelta -= -dzdtSubmergence * cos(aPsi) * (double)aParams->nDays / 365.25;
+								dDelta -= -dzdtSubmergence * cos(dPsi) * (double)dParams->nDays / 365.25;
 							}
-							else
+							/*  Update A every 3rd pixel; threadAset forces computation on each thread's first valid pixel */
+							if (((i % 3) == 0 || (j % 3) == 0) || threadAset == FALSE)
 							{
-								vzTmp[i][j] = vz;
+								computeA(lat, lon, x, y, myAImg, myDImg, A);
+								threadAset = TRUE;
 							}
-					//**if(sqrt(vx*vx + vy*vy) > 18000) {
-					//**	fprintf(stderr, "%s %s\n", aParams->offsets.file, dParams->offsets.rFile);
-					//** */	fprintf(stderr, "%f %f %f %f %f %f %f %f %f\n", aP, dP, aPe, dPe, dDelta, dRange, dAzimuth, -dzdtSubmergence * cos(dPsi) * (double)dParams->nDays / 365.25, tmp);
-					//** */	error("STO");
-					//** */}
-							sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
-							syTmp[i][j] = scY;
-							fScale[i][j] = 1.0; /* Value for zero feathering */
+							/*
+							  Only pursue solution if sufficient difference in angles for 3d solution
+							*/
+							if (A[0][0] != -LARGEINT)
+							{
+								/*  Compute B (note B is really C in the TGARS paper	*/
+								computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
+								/*  Scale offsets for velocity computation (scale for m/yr)	*/
+								aP = 365.25 * aDelta / ((double)(aParams->nDays) * sin(aPsi));
+								dP = 365.25 * dDelta / ((double)(dParams->nDays) * sin(dPsi));
+								aPe = 365.25 * aSigmaR / (aParams->nDays * sin(aPsi));
+								dPe = 365.25 * dSigmaR / (dParams->nDays * sin(dPsi));
+								/*  Compute velocity */
+								computeVxy(aP, dP, aPe, dPe, A, B, &vx, &vy, &scX, &scY);
+								/*  Compute vertical velocity	*/
+								vz = vx * dzdx + vy * dzdy;
+								/*  Update output arrays */
+								vxTmp[i][j] = vx * scX;
+								vyTmp[i][j] = vy * scY;
+								validData = TRUE;
+								if (outputImage->makeTies == TRUE)
+								{
+									vzTmp[i][j] = vz;
+								}
+								else if (outputImage->timeOverlapFlag == TRUE)
+								{
+									/* For lack of better option, use the average of the two data takes */
+									deltaOffCenter = 0.5 * (tOffCenterA + tOffCenterD - 2.0 * tCenter);
+									vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
+								}
+								else
+								{
+									vzTmp[i][j] = vz;
+								}
+								sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
+								syTmp[i][j] = scY;
+								fScale[i][j] = 1.0; /* Value for zero feathering */
+							}
 						}
-					}
-					if (validData == FALSE)
-					{
-						vxTmp[i][j] = (float)-LARGEINT;
-						fScale[i][j] = 0.0;
-					}
-				} /* j loop */
-				if ((i % 100) == 0)
-				{
-					fprintf(stderr, "-- %i %f %f %f %f  thetas %f %f\n", i, A[0][0], A[0][1], A[1][0], A[1][1], aTheta * RTOD, dTheta * RTOD );
-				}
-			} /* i loop */
+						if (validData == FALSE)
+						{
+							vxTmp[i][j] = (float)-LARGEINT;
+							fScale[i][j] = 0.0;
+						}
+					} /* j loop */
+					if ((i % 100) == 0)
+						fprintf(stderr, "--+ %i\n", i);
+				} /* i loop */
+			} /* End omp parallel */
 			/*
 			  Compute scale array for feathering.
 			*/
@@ -349,6 +397,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 							  scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, FALSE);
 		} /* End desc loop */
 	}	  /* End asc loop */
+	free(localAImgs);
+	free(localDImgs);
 	/**************************END OF MAIN LOOP ******************************/
 	fprintf(stderr, "Out of main loop\n");
 	/*

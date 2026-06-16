@@ -19,7 +19,7 @@ void getState(double myTime, inputImageStructure *inputImage, double *xs, double
   Adapted from asf code by Shusun Li.
 
 */
-static double xs, ys, zs, vsx, vsy, vsz;
+static __thread double xs, ys, zs, vsx, vsy, vsz;
 double groundRangeToLLNew(double groundRange, double azimuth, double *lat, double *lon, inputImageStructure *inputImage, int32_t recycle)
 {
 	conversionDataStructure *cp;

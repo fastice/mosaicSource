@@ -25,6 +25,51 @@ void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase)
 		for (j = 1; j <= 6; j++)
 			params->C[i][j] = 0;
 	params->sigma = PI; /* Default value */
+	params->applyFlatEarth = 0;
+	/*
+	  YAML baseline file (extension .yaml): flat-earth correction, no topo term.
+	*/
+	{
+		size_t blen = strlen(baselineFile);
+		if (blen > 5 && strcmp(baselineFile + blen - 5, ".yaml") == 0)
+		{
+			FILE *yfp = fopen(baselineFile, "r");
+			if (yfp == NULL)
+				error("getBaseline: cannot open YAML file %s", baselineFile);
+			params->Bn = 0.0; params->Bp = 0.0;
+			params->dBn = 0.0; params->dBp = 0.0;
+			params->dBnQ = 0.0; params->dBpQ = 0.0;
+			int inC = 0, ci = 0;
+			while (fgets(line, 256, yfp))
+			{
+				if      (sscanf(line, "nDays: %lf",  &params->nDays)  == 1) { inC = 0; }
+				else if (sscanf(line, "sigma: %lf",  &params->sigma)  == 1) { inC = 0; }
+				else if (sscanf(line, "Bn: %lf",     &params->Bn)     == 1) { inC = 0; }
+				else if (sscanf(line, "Bp: %lf",     &params->Bp)     == 1) { inC = 0; }
+				else if (sscanf(line, "dBn: %lf",    &params->dBn)    == 1) { inC = 0; }
+				else if (sscanf(line, "dBp: %lf",    &params->dBp)    == 1) { inC = 0; }
+				else if (sscanf(line, "dBnQ: %lf",   &params->dBnQ)   == 1) { inC = 0; }
+				else if (sscanf(line, "dBpQ: %lf",   &params->dBpQ)   == 1) { inC = 0; }
+				else if (strncmp(line, "applyFlatEarth: true", 20) == 0)
+					{ params->applyFlatEarth = 1; inC = 0; }
+				else if (strncmp(line, "C:", 2) == 0)
+					{ inC = 1; ci = 0; }
+				else if (inC && strstr(line, "- [") != NULL && ci < 6)
+				{
+					char *p = strstr(line, "[");
+					if (p)
+						sscanf(p + 1, "%lf, %lf, %lf, %lf, %lf, %lf",
+							   &params->C[ci+1][1], &params->C[ci+1][2],
+							   &params->C[ci+1][3], &params->C[ci+1][4],
+							   &params->C[ci+1][5], &params->C[ci+1][6]);
+					ci++;
+				}
+				else { inC = 0; }
+			}
+			fclose(yfp);
+			return;
+		}
+	}
 	if (strstr(baselineFile, "nobaseline") != NULL || noPhase == TRUE)
 	{
 		/* No baseline used for this solution so return */

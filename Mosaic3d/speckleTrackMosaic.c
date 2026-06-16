@@ -2,6 +2,7 @@
 #include "string.h"
 #include <math.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
@@ -16,7 +17,17 @@ static double now()
 
 static int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel);
 /*
-  Pure speckle trackign solution;
+  Pure speckle tracking solution.
+
+  Ionosphere correction:
+    If rparams recorded a ;* offsetCorrectionFile line in the baseline file,
+    readOffsets loads the named GeoTIFF (written by estimateIonosphere.py on
+    the native ROFF grid in SLC pixels) into offsets.rOffCorrection.  The
+    correction file is linked to range.offsets.vrt via the VRT metadata key
+    ionosphereRangeOffsetCorrection, stamped there by SetupNISAR.py.
+    At each output pixel the correction is interpolated in SLC pixel coords
+    and subtracted from the metre-domain range offset (correction × SLC pixel
+    size in metres).
 */
 void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputImageStructure *outputImage, float fl,
 						referenceVelocity *refVel, int statsFlag)
@@ -89,12 +100,18 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 	count = 1;
 	currentParams = params;
 	tCenter = (outputImage->jd1 + outputImage->jd2 + 1.) * 0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
+	int nthreads = omp_get_max_threads();
+	inputImageStructure *localImgs = (inputImageStructure *)malloc(
+		(size_t)nthreads * sizeof(inputImageStructure));
+	if (localImgs == NULL)
+		error("speckleTrackMosaic: malloc failed for per-thread image copies\n");
 	for (currentImage = images; currentImage != NULL; currentImage = currentImage->next)
-	{
+	{   fprintf(stderr, "Adding image %i of %i: %s\n", count, total, currentParams->offsets.file);
 		/* Compute central time, and delta from nominal*/
 		tOffCenter = currentImage->julDay + currentParams->nDays * 0.5;
 		deltaOffCenter = tOffCenter - tCenter;
 		/* Error check weight */
+	
 		if (fabs(currentImage->weight - 1.0) > 0.01 && outputImage->timeOverlapFlag == FALSE)
 			error("non unity weight, but overlap flag not set\n");
 		if (currentParams->offsets.rFile == NULL || currentImage->weight < 0.00001)
@@ -124,222 +141,259 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 			readOffsetDataAndParams(&(currentParams->offsets), azimuthMin, azimuthMax);
 			double t1 = now();
 			fprintf(stderr, "Time read offsets: %f seconds\n", t1-t0);
+			/* Prime lazy-init routines in the serial section so threads never race on
+			   shared workspace (uRows/uBuffer for svInitAzParams; bnS/bpS malloc in
+			   svInitBnBp). After these calls azInit==TRUE and bnS/bpS are allocated. */
+			if (currentParams->offsets.deltaB != DELTABNONE) {
+				double bnS, bpS;
+				svAzOffset(currentImage, &(currentParams->offsets), 0.0, 0.0);
+				svInterpBnBp(currentImage, &(currentParams->offsets), 0.0, &bnS, &bpS);
+			}
 		}
 		else
 		{
 			iMax = iMin - 1;
 			jMax = jMin - 1;
 		}
-		//error("Region i %i to %i j %i to %i azimuth range %f to %f\n", iMin, iMax, jMin, jMax, azimuthMin, azimuthMax);
-		
+		if(currentParams->offsets.sigmaAresidual > outputImage->sigmaAThresh)
+		{
+			fprintf(stderr, "Skipping sigmaAresidual > sigmaAThresh: %f > %f\n", 
+				currentParams->offsets.sigmaAresidual, outputImage->sigmaAThresh);
+			currentParams = currentParams->next;
+			continue;
+		}
 		/*
 		  Now loop over output grid
 		*/
 		da = 0.0;
-		for (i = iMin; i < iMax; i++)
+		/* Refresh per-thread copies with current image's warm-start state. */
 		{
-			if ((i % 100) == 0) {
-				fprintf(stderr, "-- %i  %f \n", i, currentImage->weight);
-			}
-			y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
-			for (j = jMin; j < jMax; j++)
 			{
-				/*
-				  Convert x/y stereographic coords to lat/lon
-				*/
-				x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
-				/*
-				  Get slope and elevation
-				*/
-				xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, currentImage);
-				validData = FALSE;	
-				//fprintf(stderr, "i %i j %i x %f y %f lat %f lon %f zSp %f da %f dr %f dzda %f dzdr %f\n", i, j, x, y, lat, lon, zSp, da, dr, dzda, dzdr);
-				if (zSp > (MINELEVATION + 1) && zSp < 9999.)
-				{ /* If valid z ....*/
-					// Get range azimuth coords 
-					//fprintf(stderr, ".");
-					llToImageNew(lat, lon, zWGS84, &range, &azimuth, currentImage);
-					/* Note use theta c fixed, which is referenced to baseline */
-					geometryInfo(cP, currentImage, azimuth, range, zSp, thetaC, &ReH, &Range, &theta, &thetaD, &psi, zSp);
-					cotanpsi = 1.0 / tan(psi);
-					// Get azimuth and range components from the offset field. Note these values come back as meters
-					da = interpAzOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
-					dr = interpRangeOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, thetaD, rSLPixSize, theta, &demError);
-					if (currentParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
-						ionCorrection = interpolateOffsetCorrection(&(currentParams->offsets.rOffCorrection), range, azimuth, -LARGEINT, 0.0);
-					else
-						ionCorrection = 0.0;
-					if (ionCorrection > -0.98 * LARGEINT)
-					{
-						//fprintf(stderr, "ionoCorr %f range offset %f\n", ionCorrection, dr);
-						dr -= ionCorrection;
+				int t;
+				for (t = 0; t < nthreads; t++)
+					localImgs[t] = *currentImage;
+			}
+#pragma omp parallel \
+			private(j, x, y, lat, lon, zSp, zWGS84, dzda, dzdr, \
+			        range, azimuth, Range, theta, thetaD, psi, cotanpsi, ReH, \
+			        hAngle, va, vr, xyAngle, scaleDr, \
+			        sigmaA, sigmaR, sig2Base, sig2Off, demError, \
+			        vx, vy, vz, dzdtSubmergence, dzdx, dzdy, \
+			        ex, ey, er, ea, scX, scY, \
+			        da, dr, ionCorrection, sMask, noData, validData)
+			{
+				inputImageStructure *myImg = &localImgs[omp_get_thread_num()];
+#pragma omp for schedule(dynamic, 8)
+				for (i = iMin; i < iMax; i++)
+				{
+					if ((i % 100) == 0) {
+						fprintf(stderr, "-- %i  %f \n", i, myImg->weight);
 					}
-					/*
-					  If shelf mask, get mask value
-					*/
-					sMask = GROUNDED;
-					if (shelfMask != NULL)
-						sMask = getShelfMask(shelfMask, x, y);
-					if (sMask == NOSOLUTION)
+					y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+					for (j = jMin; j < jMax; j++)
 					{
-						da = -LARGEINT;
-						dr = -LARGEINT;
-					};
-					/*
-					  Process only good  points
-					*/
-					//fprintf(stderr, "da %f dr %f sMask %i\n", da, dr, sMask);
-
-					if (fabs(dr) < 13.0E4 && fabs(da) < 10.0e4 && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
-					{
-						//fprintf(stderr,"+");
-						/* Compute sigma for velocity error estimate. Note that the sigmas come back as meters;
-						/* Moved inside of if statement 3/1/16 */
-						sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
-						sig2Off = computeSig2AzParam(sin(theta), cos(theta), azimuth, Range, currentImage, &(currentParams->offsets));
-						sigmaA = sqrt(sigmaA * sigmaA + sig2Off);
-						sigmaR = interpRangeSigma(range, azimuth, &(currentParams->offsets), currentImage, Range, thetaD, rSLPixSize);
-						sig2Base = computeSig2Base(sin(thetaD), cos(thetaD), azimuth, currentImage, &(currentParams->offsets));
-						sigmaR = sqrt(sigmaR * sigmaR + demError * demError + sig2Base);
 						/*
-						  SHELF MASK CORRECTION HERE
+						  Convert x/y stereographic coords to lat/lon
 						*/
-						dr -= shelfMaskCorrection(currentImage, currentParams, sMask, x, y, psi, &sigmaR);
-						if (vCorrect != NULL)
-						{
-							dzdtSubmergence = interpVCorrect(x, y, vCorrect);
-							dr -= -dzdtSubmergence * cos(psi) * (double)currentParams->nDays / 365.25;
-						}
+						x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
+						xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
 						/*
-						   Compute velocity
+						  Get slope and elevation
 						*/
-						hAngle = computeHeading(lat, lon, 0., currentImage, cP);
-						/*
-						   Compute flow direction in xy coords from dem and angle of x from north
-						*/
-						computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
-						/*
-						  Note va for left sign flip done in azOffset
-						*/
-						scaleDr = (365.25 / (double)currentParams->nDays) * (1.0 / sin(psi));
-						va = da * (365.25 / (double)currentParams->nDays);
-						/*
-						   Turn off slope correction for shelf to avoid shelf front or rift artifacts for now this is the default (as of 10/13/17)
-						   slopes on shelves, should be small (especially relative to the 3% quoted error.
-						*/
-						if (sMask == SHELF)
-						{
-							vr = (dr * scaleDr + va * cotanpsi * 0.0) / (1.0 - cotanpsi * 0.0);
-						}
-						else
-						{
-							vr = (dr * scaleDr + va * cotanpsi * dzda) / (1.0 - cotanpsi * dzdr);
-						}
-						ea = sigmaA * (365.25 / (double)currentParams->nDays);
-						/* If pixel already done and azimuth offsets used,
-						   assume azimuth offsets have already been used so multiply sqrt(2)
-						   to avoid double averaging.
-						   This only applies if phase is being used too.
-						*/
-						if (outputImage->noVhFlag == FALSE && vXimage[i][j] > (-LARGEINT + 1))
-							ea *= 1.41421;
-						er = sigmaR * scaleDr;
-						/*
-						   Rotate velocity back to xy coordinates
-						*/
-						rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
-						rotateFlowDirectionToXY(dzdr, dzda, &dzdx, &dzdy, xyAngle, hAngle);
-
-			//fprintf(stderr, "i %i j %i x %f y %f lat %f lon %f zSp %f da %f dr %f vx %f vy %f vz %f er %f ea %f\n", i, j, x, y, lat, lon, zSp, da, dr, vx, vy, vz, er, ea);	
-						/*
-						   Clip data
-						*/
-						noData = FALSE;
-						if (refVel->clipFlag == TRUE)
-							noData = clipVel(x, y, vx, vy, refVel);
-						/* NOTE THIS RETURNS VARIANCES */
-						errorsToXY(er, ea, &ex, &ey, xyAngle, hAngle);
-						/*
-						  Compute vertical velocity
-						*/
-						vz = vx * dzdx + vy * dzdy;
-
-						/*vx=dzdx; vy=dzdy;*/
-						if (noData == FALSE)
-						{
-							currentImage->used = TRUE;
-							if (statsFlag == FALSE)
+						xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, myImg);
+						validData = FALSE;
+						if (zSp > (MINELEVATION + 1) && zSp < 9999.)
+						{ /* If valid z ....*/
+							llToImageNew(lat, lon, zWGS84, &range, &azimuth, myImg);
+							/* Note use theta c fixed, which is referenced to baseline */
+							geometryInfo(cP, myImg, azimuth, range, zSp, thetaC, &ReH, &Range, &theta, &thetaD, &psi, zSp);
+							cotanpsi = 1.0 / tan(psi);
+							// Get azimuth and range components from the offset field. Note these values come back as meters
+							da = interpAzOffset(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
+							dr = interpRangeOffsetInMeters(range, azimuth, &(currentParams->offsets), myImg, Range, thetaD, rSLPixSize, theta, &demError);
+							if (currentParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
 							{
-								scX = 1.0 / (ex);
-								scY = 1.0 / (ey);
+								double rangeSLC, azimuthSLC;
+								computeSLCFromMLCoords(myImg, range, azimuth, &rangeSLC, &azimuthSLC);
+								ionCorrection = interpolateOffsetIonCorrectionInPixels(&(currentParams->offsets.rOffCorrection),
+																					   rangeSLC, azimuthSLC, -LARGEINT, 0.0);
 							}
 							else
+								ionCorrection = 0.0;
+							if (ionCorrection > -0.98 * LARGEINT)
 							{
-								scX = 1.0;
-								scY = 1.0;
+								dr += ionCorrection * rSLPixSize;
 							}
-							vxTmp[i][j] = (float)vx * scX;
-							vyTmp[i][j] = (float)vy * scY;
-							fScale[i][j] = 1; /* Value for zero feathering */
-							validData = TRUE;
 							/*
-							   If overlap flag = true, then use the vz buff for deltaT
+							  If shelf mask, get mask value
 							*/
-							if (outputImage->makeTies == TRUE)
+							sMask = GROUNDED;
+							if (shelfMask != NULL)
+								sMask = getShelfMask(shelfMask, x, y);
+							if (sMask == NOSOLUTION)
 							{
-								vzTmp[i][j] = vz;
-							}
-							else if (outputImage->timeOverlapFlag == TRUE)
+								da = -LARGEINT;
+								dr = -LARGEINT;
+							};
+							/*
+							  Process only good  points
+							*/
+							if (fabs(dr) < 13.0E4 && fabs(da) < 10.0e4 && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
 							{
-								vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
-							}
-							else if (statsFlag == FALSE)
-							{
-								if (outputImage->vzFlag == VZDEFAULT)
-									vzTmp[i][j] = (float)vz; /* vz ; */
-								else if (outputImage->vzFlag == VZHORIZONTAL)
+								/* Compute sigma for velocity error estimate. Note that the sigmas come back as meters;
+								/* Moved inside of if statement 3/1/16 */
+								sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
+								sig2Off = computeSig2AzParam(sin(theta), cos(theta), azimuth, Range, myImg, &(currentParams->offsets));
+								sigmaA = sqrt(sigmaA * sigmaA + sig2Off);
+								sigmaR = interpRangeSigma(range, azimuth, &(currentParams->offsets), myImg, Range, thetaD, rSLPixSize);
+								sig2Base = computeSig2Base(sin(thetaD), cos(thetaD), azimuth, myImg, &(currentParams->offsets));
+								sigmaR = sqrt(sigmaR * sigmaR + demError * demError + sig2Base);
+								/*
+								  SHELF MASK CORRECTION HERE
+								*/
+								dr -= shelfMaskCorrection(myImg, currentParams, sMask, x, y, psi, &sigmaR);
+								if (vCorrect != NULL)
 								{
-									vzTmp[i][j] = (float)(dr * scaleDr);
-								} /* scaled by sin(psi) for h */
-								else if (outputImage->vzFlag == VZVERTICAL)
+									dzdtSubmergence = interpVCorrect(x, y, vCorrect);
+									dr -= -dzdtSubmergence * cos(psi) * (double)currentParams->nDays / 365.25;
+								}
+								/*
+								   Compute velocity
+								*/
+								hAngle = computeHeading(lat, lon, 0., myImg, cP);
+								/*
+								   Compute flow direction in xy coords from dem and angle of x from north
+								*/
+								computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
+								/*
+								  Note va for left sign flip done in azOffset
+								*/
+								scaleDr = (365.25 / (double)currentParams->nDays) * (1.0 / sin(psi));
+								va = da * (365.25 / (double)currentParams->nDays);
+								/*
+								   Turn off slope correction for shelf to avoid shelf front or rift artifacts for now this is the default (as of 10/13/17)
+								   slopes on shelves, should be small (especially relative to the 3% quoted error.
+								*/
+								if (sMask == SHELF)
 								{
-									vzTmp[i][j] = (float)(dr * scaleDr * sin(psi) / cos(psi));
-								} /* undo h by * sin, then make vert /cos */
-								else if (outputImage->vzFlag == VZLOS)
+									vr = (dr * scaleDr + va * cotanpsi * 0.0) / (1.0 - cotanpsi * 0.0);
+								}
+								else
 								{
-									vzTmp[i][j] = (float)(dr * scaleDr * sin(psi));
-								} /* undo h by * sin */
-								else if (outputImage->vzFlag == VZINC)
+									vr = (dr * scaleDr + va * cotanpsi * dzda) / (1.0 - cotanpsi * dzdr);
+								}
+								ea = sigmaA * (365.25 / (double)currentParams->nDays);
+								/* If pixel already done and azimuth offsets used,
+								   assume azimuth offsets have already been used so multiply sqrt(2)
+								   to avoid double averaging.
+								   This only applies if phase is being used too.
+								*/
+								if (outputImage->noVhFlag == FALSE && vXimage[i][j] > (-LARGEINT + 1))
+									ea *= 1.41421;
+								er = sigmaR * scaleDr;
+								/*
+								   Rotate velocity to xy coordinates, or keep as range/azimuth
+								*/
+								if (outputImage->outputRAFlag)
 								{
-									vzTmp[i][j] = (float)psi * RTOD;
-								} /* undo h by * sin */
-							}
-							else
-							{
-								vzTmp[i][j] = 1.0;
-							}
-							sxTmp[i][j] = scX;
-							syTmp[i][j] = scY;
+									vx = vr;
+									vy = va;
+									dzdx = dzdr;
+									dzdy = dzda;
+									ex = er * er;
+									ey = ea * ea;
+								}
+								else
+								{
+									rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
+									rotateFlowDirectionToXY(dzdr, dzda, &dzdx, &dzdy, xyAngle, hAngle);
+									/* NOTE THIS RETURNS VARIANCES */
+									errorsToXY(er, ea, &ex, &ey, xyAngle, hAngle);
+								}
+								/*
+								   Clip data
+								*/
+								noData = FALSE;
+								if (refVel->clipFlag == TRUE)
+									noData = clipVel(x, y, vx, vy, refVel);
+								/*
+								  Compute vertical velocity
+								*/
+								vz = vx * dzdx + vy * dzdy;
+
+								/*vx=dzdx; vy=dzdy;*/
+								if (noData == FALSE)
+								{
+									currentImage->used = TRUE;
+									if (statsFlag == FALSE)
+									{
+										scX = 1.0 / (ex);
+										scY = 1.0 / (ey);
+									}
+									else
+									{
+										scX = 1.0;
+										scY = 1.0;
+									}
+									vxTmp[i][j] = (float)vx * scX;
+									vyTmp[i][j] = (float)vy * scY;
+									fScale[i][j] = 1; /* Value for zero feathering */
+									validData = TRUE;
+									/*
+									   If overlap flag = true, then use the vz buff for deltaT
+									*/
+									if (outputImage->makeTies == TRUE)
+									{
+										vzTmp[i][j] = vz;
+									}
+									else if (outputImage->timeOverlapFlag == TRUE)
+									{
+										vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
+									}
+									else if (statsFlag == FALSE)
+									{
+										if (outputImage->vzFlag == VZDEFAULT)
+											vzTmp[i][j] = (float)vz; /* vz ; */
+										else if (outputImage->vzFlag == VZHORIZONTAL)
+										{
+											vzTmp[i][j] = (float)(dr * scaleDr);
+										} /* scaled by sin(psi) for h */
+										else if (outputImage->vzFlag == VZVERTICAL)
+										{
+											vzTmp[i][j] = (float)(dr * scaleDr * sin(psi) / cos(psi));
+										} /* undo h by * sin, then make vert /cos */
+										else if (outputImage->vzFlag == VZLOS)
+										{
+											vzTmp[i][j] = (float)(dr * scaleDr * sin(psi));
+										} /* undo h by * sin */
+										else if (outputImage->vzFlag == VZINC)
+										{
+											vzTmp[i][j] = (float)psi * RTOD;
+										} /* undo h by * sin */
+									}
+									else
+									{
+										vzTmp[i][j] = 1.0;
+									}
+									sxTmp[i][j] = scX;
+									syTmp[i][j] = scY;
+								}
+							} /* end fabs(dr) < 13.0E4 && fabs(da)... */
+							/* Write incidence angle for all valid-elevation pixels */
+							if (outputImage->vzFlag == VZINC)
+								vzTmp[i][j] = (float)psi * RTOD;
+						} /* end if valid z */
+						/* Mark as no data if not valid data */
+						if (validData == FALSE)
+						{
+							vxTmp[i][j] = (float)-LARGEINT;
+							fScale[i][j] = 0.0;
 						}
-					} /* end fabs(dr) < 13.0E4 && fabs(da)... */
-				}
-				if (outputImage->vzFlag == VZINC)
-				{
-					vzTmp[i][j] = (float)psi * RTOD;
-				} /* inc angle everywhere */ /* end valid z */
-				/* Mark as no data if not valid data */
-				if (validData == FALSE)
-				{
-					if (outputImage->vzFlag == VZINC)
-					{
-						vzTmp[i][j] = (float)psi * RTOD;
-					} /* inc angle everywhere */ /* end valid z */
-					vxTmp[i][j] = (float)-LARGEINT;
-					fScale[i][j] = 0.0;
-				}
-			} /* j loop */
-		}	  /* i loop */
+					} /* j loop */
+				}	  /* i loop */
+			} /* End omp parallel */
+		}
+
 		/*
 		  Compute scale array for feathering.
 		*/
@@ -353,6 +407,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 		/*  Update image pointer to move to  next image*/
 		currentParams = currentParams->next;
 	} /* End image loop */
+	free(localImgs);
 	/*   ********************END OF MAIN LOOP *****************************
 		Adjust scale
 	*/

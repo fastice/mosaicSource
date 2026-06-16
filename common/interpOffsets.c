@@ -2,11 +2,25 @@
 #include "common.h"
 
 /*
-	   This file contains interpAzOffsets, interpAzSigma, interpRangeOffsets, interpRangeSigma, which are used to interpolate the offsets fields.
+	   This file contains interpAzOffsets, interpAzSigma, interpRangeOffsetInMeters, interpRangeSigma, which are used to interpolate the offsets fields.
 */
 
 static void computeCoordsForInterp(inputImageStructure *inputImage, Offsets *offsets, double range, double azimuth,
 								   double *rangeOff, double *azimuthOff, double *imageLength, double *normAzimuth);
+
+/*
+   Convert multi-look range/azimuth pixel coordinates to SLC pixel coordinates.
+   range, azimuth : multi-look image coordinates
+   *slcRange, *slcAzimuth : SLC pixel coordinates (center of first ML pixel convention)
+*/
+void computeSLCFromMLCoords(inputImageStructure *inputImage, double range, double azimuth,
+                            double *slcRange, double *slcAzimuth)
+{
+    double rgFirstCenter = (inputImage->nRangeLooks - 1) * 0.5;
+    double azFirstCenter = (inputImage->nAzimuthLooks - 1) * 0.5;
+    *slcRange   = rgFirstCenter + range   * inputImage->nRangeLooks;
+    *slcAzimuth = azFirstCenter + azimuth * inputImage->nAzimuthLooks;
+}
 
 #define MAXSIG 0.2
 /*
@@ -98,7 +112,7 @@ float interpAzSigma(double range, double azimuth, Offsets *offsets, inputImageSt
 /*
    Interpolate range offset  map for velocity generation and apply baseline/geometry corrections
 */
-float interpRangeOffset(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage,
+float interpRangeOffsetInMeters(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage,
 						double Range, double thetaD, float rSLPixSize, double theta, double *demError)
 {
 	float result;
@@ -178,16 +192,11 @@ float interpRangeSigma(double range, double azimuth, Offsets *offsets, inputImag
 static void computeCoordsForInterp(inputImageStructure *inputImage, Offsets *offsets, double range, double azimuth,
 								   double *rangeOff, double *azimuthOff, double *imageLength, double *normAzimuth)
 {
-	/*
-	  Compute azimuth in image coord stuff
-	*/
-	double azFirstCenter, rgFirstCenter; /* SL coordinate of the center of the first multi-look pixel */
-	/* added 10/30/2013 to fix azimuth problem -((inputImage->nAzimuthLooks-1)*0.5)  . */
-	rgFirstCenter = (inputImage->nRangeLooks - 1) * 0.5;
-	azFirstCenter = (inputImage->nAzimuthLooks - 1) * 0.5;
+	double slcRange, slcAzimuth;
+	computeSLCFromMLCoords(inputImage, range, azimuth, &slcRange, &slcAzimuth);
 	*imageLength = (double)inputImage->azimuthSize;
 	*normAzimuth = (azimuth - 0.5 * (*imageLength)) / (*imageLength);
-	*rangeOff = (rgFirstCenter + range * inputImage->nRangeLooks - offsets->rO) / offsets->deltaR;
-	*azimuthOff = (azFirstCenter + azimuth * inputImage->nAzimuthLooks - offsets->aO) / offsets->deltaA;
+	*rangeOff   = (slcRange   - offsets->rO) / offsets->deltaR;
+	*azimuthOff = (slcAzimuth - offsets->aO) / offsets->deltaA;
 	return;
 }

@@ -1,6 +1,36 @@
 #define HIGHJD 1.e7
 #define LOWJD 0.0
 
+typedef struct {
+	/* positional args */
+	char *inputFile;
+	char *demFile;
+	char *outFileBase;
+	/* optional file args */
+	char *irregFile;
+	char *shelfMaskFile;
+	char *extraTieFile;
+	char *tideFile;
+	char *landSatFile;
+	char *verticalCorrectionFile;
+	char *date1;
+	char *date2;
+	/* numeric args */
+	float fl;
+	float timeThresh;
+	float timeThreshPhase;
+	double sigmaAThresh;
+	double tieThresh;
+	/* flag args */
+	int32_t north;
+	int32_t threeDOffFlag;
+	int32_t statsFlag;
+	int32_t writeBlank;
+	int32_t GTiff;
+	int32_t COG;
+	int32_t outputRAFlag;
+} mosaicArgs;
+
 /*#include "geotiff/xtiffio.h"    for TIFF */
 /*#include "geotiff/geotiffio.h"  for GeoTIFF */
 

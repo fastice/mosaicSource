@@ -9,6 +9,7 @@
 #include "gdalIO/gdalIO/grimpgdal.h"
 #include "gdal.h"
 #include "ogr_srs_api.h"
+#include <omp.h>
 
 #define PSISAVE 2
 #define GAMMACORSAVE 4
@@ -61,6 +62,11 @@ int32_t hybridZ = -1;
 int32_t noPower = -1;
 int32_t rsatFineCal = FALSE;
 int32_t S1Cal = FALSE;
+int32_t useSubPixelRTC = FALSE;
+int32_t linearSubPixelRTC = FALSE;   /* use Jacobian range/az interpolation within sub-pixel grid */
+int32_t jacobianSubPixelRTC = FALSE; /* use |J|-weighted sub-pixel accumulation for SLC input */
+int32_t maskLayover = FALSE;         /* suppress layover pixels (return MINS1DB) in all sub-pixel RTC flavors */
+int32_t geoMosaicMode = GEOMOSAIC_AVERAGE; /* 0=weighted avg, 1=min, 2=max */
 //char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 1234;		/* Kluge to maintain backwards compat 9/13/06 */
 //float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
@@ -93,6 +99,8 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
+	if (getenv("OMP_NUM_THREADS") == NULL)
+		omp_set_num_threads(10);
 	GDALAllRegister();
 	smoothBuf = NULL;
 	readArgs(argc, argv, &inputFile, &demFile, &outFile, &fl, &removePad, &nearestDate, &noPower,
@@ -316,10 +324,10 @@ static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStruct
 		error("Malloc failed for image buffer of size %lu\n", outputImage->xSize * outputImage->ySize * sizeof(float));
 
 	buf1s = (float *)malloc((size_t)(outputImage->xSize * outputImage->ySize * sizeof(float)));
-	if (buf1 != NULL)
+	if (buf1s != NULL)
 		fprintf(stderr, "Malloced %lu scale buffer \n", outputImage->xSize * outputImage->ySize * sizeof(float));
 	else
-		error("Malloc failed for scale buffer of size %i\n", outputImage->xSize * outputImage->ySize * sizeof(float));
+		error("Malloc failed for scale buffer of size %lu\n", (size_t)outputImage->xSize * outputImage->ySize * sizeof(float));
 	fprintf(stderr, "mallocing buf2 %f MB\n", outputImage->xSize * outputImage->ySize * sizeof(float) / 1e6);
 	for (i = 0; i < outputImage->ySize; i++)
 	{
@@ -476,7 +484,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	int32_t doy[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 333};
 	int32_t i, n;
 
-	if (argc < 4 || argc > 28)
+	if (argc < 4 || argc > 30)
 	{
 		fprintf(stderr, "To many/few args %i", argc);
 		usage();
@@ -624,11 +632,52 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 			sscanf(argv[i + 1], "%lf", &byteScaleParams.scale);
 			i++;
 		}
+		else if (strstr(argString, "ompThreads") != NULL)
+		{
+			int32_t nThreads;
+			sscanf(argv[i + 1], "%d", &nThreads);
+			omp_set_num_threads(nThreads);
+			i++;
+		}
+		else if (strstr(argString, "jacobianSubPixelRTC") != NULL)
+		{
+			extern int32_t useSubPixelRTC;
+			extern int32_t jacobianSubPixelRTC;
+			useSubPixelRTC = TRUE;
+			jacobianSubPixelRTC = TRUE;
+		}
+		else if (strstr(argString, "maskLayover") != NULL)
+		{
+			extern int32_t maskLayover;
+			maskLayover = TRUE;
+		}
+		else if (strstr(argString, "linearSubPixelRTC") != NULL)
+		{
+			extern int32_t useSubPixelRTC;
+			extern int32_t linearSubPixelRTC;
+			useSubPixelRTC = TRUE;
+			linearSubPixelRTC = TRUE;
+		}
+		else if (strstr(argString, "subPixelRTC") != NULL)
+		{
+			extern int32_t useSubPixelRTC;
+			useSubPixelRTC = TRUE;
+		}
+		else if (strstr(argString, "min") != NULL)
+		{
+			extern int32_t geoMosaicMode;
+			geoMosaicMode = GEOMOSAIC_MIN;
+		}
+		else if (strstr(argString, "max") != NULL)
+		{
+			extern int32_t geoMosaicMode;
+			geoMosaicMode = GEOMOSAIC_MAX;
+		}
 		else
 		{
 			fprintf(stderr, "\n\narg %s not parsed \n\n", argString);
 			usage();
-		} 	
+		}
 		
 	}
 	if (strlen(stringbuf) > 8)
@@ -672,7 +721,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		fprintf(stderr,"\nbyte scale only works with tiff output\n");
 		usage();
 	}
-	if (hybridZ > 0 && nearestDate < 0)
+	if (*hybridZ > 0 && *nearestDate < 0)
 		error("hybrid Z requires a nearest date ");
 	*inputFile = argv[argc - 3];
 	*demFile = argv[argc - 2];
@@ -765,11 +814,12 @@ static void parseBetaNought(inputImageStructure *inputImage)
 
 static void usage()
 {
-	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
 		  "mosaic images*",
 		  "Usage:", " \033[1mgeomosaic -rsatFineCal -S1Cal -noPower -noData -descending -ascending -nearestDate "
-					"YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL -smoothOut"
-					"smoothOut -fl fl -removePad pad -xyDEM \\",
+					"YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL -smoothOut "
+					"smoothOut -fl fl -removePad pad -xyDEM \\ \n\t-ompThreads N -subPixelRTC -linearSubPixelRTC "
+					"-jacobianSubPixelRTC -maskLayover \\",
 		  "\tinputFile Demfile outPutImage\033[0m",
 		  "where\n",
 		   "\tGTiff =\t\t\t Save to geotiff files will add .tif extension if not present",
@@ -793,6 +843,11 @@ static void usage()
 		  "\tS1Cal  	          	 = set to output calibrated S1 Data",
 		  "\tS1Psi  	          	 = if S1Cal set, also output inc angle (outputImage.inc)",
 		  "\tS1GammaCorr      = if S1Cal set, also output gamma correction (outputImage.gammacorr)",
+		  "\tompThreads N      	 = set OpenMP thread count (default 10, or OMP_NUM_THREADS if set in shell)",
+		  "\tsubPixelRTC       	 = use sub-pixel RTC: sample input at output_res/input_res grid for consistent power+area accumulation (S1Cal only)",
+		  "\tlinearSubPixelRTC 	 = implies subPixelRTC; replace per-sub-pixel llToImageNew solves with a 3-point Jacobian + linear interpolation (~10-100x faster sub-pixel loop)",
+		  "\tjacobianSubPixelRTC	 = implies subPixelRTC; |J|-weighted sub-pixel accumulation; suppresses gamma0 in pure layover",
+		  "\tmaskLayover              = with any subPixelRTC flavor: suppress pixels where the Jacobian sign indicates layover (output MINS1DB); jacobianSubPixelRTC also masks partial layover",
 		  "\tremovePad         	 = remove first pad lines from first and last col",
 		  "\txyDEM              	 = smoothDem is XY type with xyDEM.geodat file",
 		  "\tinputFile          	 = file with input params, dem and geodat filenames",

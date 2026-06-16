@@ -4,13 +4,14 @@
 #include "tiePoints.h"
 #include <stdlib.h>
 #include <math.h>
+#include "gdal.h"
 
 double interpolatePhase(double range, double azimuth, unwrapPhaseStructure phaseImage);
 /*
    Input phase image and extract phases for tiepoint locations.
 */
 void getPhases(char *phaseFile, tiePointsStructure *tiePoints,
-               inputImageStructure inputImage)
+               inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose)
 {
     FILE *fp;
     unwrapPhaseStructure phaseImage;
@@ -24,26 +25,45 @@ void getPhases(char *phaseFile, tiePointsStructure *tiePoints,
     phaseImage.rangeSize = inputImage.rangeSize;
     phaseImage.azimuthSize = inputImage.azimuthSize;
     /*
-        Input image
+        Input image — use GDAL for .vrt/.tif, raw freadBS otherwise.
     */
-    fp = openInputFile(phaseFile);
-    for (i = 0; i < inputImage.azimuthSize; i++)
-        freadBS(phaseImage.phase[i], inputImage.rangeSize, sizeof(float), fp, FLOAT32FLAG);
+    if (strstr(phaseFile, ".vrt") != NULL || strstr(phaseFile, ".tif") != NULL)
+    {
+        GDALDatasetH hDS = GDALOpen(phaseFile, GA_ReadOnly);
+        if (hDS == NULL)
+            error("getPhases: GDALOpen failed for %s\n", phaseFile);
+        GDALRasterBandH hBand = GDALGetRasterBand(hDS, 1);
+        for (i = 0; i < inputImage.azimuthSize; i++)
+        {
+            if (GDALRasterIO(hBand, GF_Read, 0, i, inputImage.rangeSize, 1,
+                             phaseImage.phase[i], inputImage.rangeSize, 1,
+                             GDT_Float32, 0, 0) != CE_None)
+                error("getPhases: GDALRasterIO failed at line %d of %s\n", i, phaseFile);
+        }
+        GDALClose(hDS);
+    }
+    else
+    {
+        fp = openInputFile(phaseFile);
+        for (i = 0; i < inputImage.azimuthSize; i++)
+            freadBS(phaseImage.phase[i], inputImage.rangeSize, sizeof(float), fp, FLOAT32FLAG);
+    }
     /*
         Interpolate phases.
     */
-    fprintf(stdout, ";;\n;;Tiepoints row column elevation\n;;\n");
+    if (!yamlOutput && verbose)
+        fprintf(stdout, ";;\n;;Tiepoints row column elevation\n;;\n");
     for (i = 0; i < tiePoints->npts; i++)
     {
-
         tiePoints->phase[i] = interpolatePhase(tiePoints->r[i], tiePoints->a[i], phaseImage);
-        if (tiePoints->phase[i] > (-LARGEINT + 10))
+        if (!yamlOutput && verbose && tiePoints->phase[i] > (-LARGEINT + 10))
             fprintf(stdout, "; %i  %i  %f %f\n",
                     (int)(tiePoints->r[i] + 0.5), (int)(tiePoints->a[i] + 0.5), tiePoints->z[i], tiePoints->phase[i]);
     }
     for (i = 0; i < inputImage.azimuthSize; i++)
         free(phaseImage.phase[i]);
-    fprintf(stdout, ";&\n");
+    if (!yamlOutput && verbose)
+        fprintf(stdout, ";&\n");
     return;
 }
 

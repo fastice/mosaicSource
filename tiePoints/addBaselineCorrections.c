@@ -8,7 +8,7 @@
     Add baseline corrections that were removed in the unwrapped image to
     tiepoint32_t phases.
 */
-void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, inputImageStructure inputImage)
+void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose)
 {
     FILE *fp;
     conversionDataStructure *cP;
@@ -63,7 +63,7 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
         if (sscanf(line, "%lf%lf%lf%lf", &Bn1, &Bp1, &dBn1, &omegaA1) != 4)
             error("%s  %i",
                   "addBaselineCorrections -- Missing baseline params at line:", lineCount);
-        fprintf(stderr, "Using noRamp option. Cos(thetad) correction applied\n");
+        if (verbose) fprintf(stderr, "Using noRamp option. Cos(thetad) correction applied\n");
     }
     else if (tiePoints->dBpFlag == TRUE)
     {
@@ -80,13 +80,13 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
             if (sscanf(line, "%lf%lf%lf%lf", &Bn1, &Bp1, &dBn1, &dBp1) != 4)
                 error("%s  %i",
                       "addBaselineCorrections -- Missing baseline params at line:", lineCount);
-            fprintf(stderr, "Using dBp option. Bp updated along track\n");
+            if (verbose) fprintf(stderr, "Using dBp option. Bp updated along track\n");
         }
         else
         {
             sscanf(line, "%lf%lf%lf%lf%lf%lf",
                    &Bn1, &Bp1, &dBn1, &dBp1, &dBnQ1, &dBpQ1);
-            fprintf(stderr, "Using QUADRATIC Baseline option.\n");
+            if (verbose) fprintf(stderr, "Using QUADRATIC Baseline option.\n");
         }
     }
     else
@@ -94,7 +94,7 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
         if (sscanf(line, "%lf%lf%lf", &Bn1, &Bp1, &dBn1) != 3)
             error("%s  %i",
                   "addBaselineCorrections -- Missing baseline params at line:", lineCount);
-        fprintf(stderr, "Using simple linear azmuth phase ramp, OmegaA\n");
+        if (verbose) fprintf(stderr, "Using simple linear azmuth phase ramp, OmegaA\n");
     }
 
     lineCount = getDataString(fp, lineCount, line, &eod);
@@ -109,7 +109,7 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
         if (sscanf(line, "%lf%lf%lf%lf", &Bn2, &Bp2, &dBn2, &omegaA2) != 4)
             error("%s  %i",
                   "addBaselineCorrections -- Missing baseline params at line:", lineCount);
-        fprintf(stderr, "Using noRamp option. Cos(thetad) correction applied\n");
+        if (verbose) fprintf(stderr, "Using noRamp option. Cos(thetad) correction applied\n");
     }
     else if (tiePoints->dBpFlag == TRUE)
     {
@@ -126,13 +126,13 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
             if (sscanf(line, "%lf%lf%lf%lf", &Bn2, &Bp2, &dBn2, &dBp2) != 4)
                 error("%s  %i",
                       "addBaselineCorrections -- Missing baseline params at line:", lineCount);
-            fprintf(stderr, "Using dBp option. Bp updated along track\n");
+            if (verbose) fprintf(stderr, "Using dBp option. Bp updated along track\n");
         }
         else
         {
             sscanf(line, "%lf%lf%lf%lf%lf%lf",
                    &Bn2, &Bp2, &dBn2, &dBp2, &dBnQ2, &dBpQ2);
-            fprintf(stderr, "Using QUADRATIC Baseline option.\n");
+            if (verbose) fprintf(stderr, "Using QUADRATIC Baseline option.\n");
         }
     }
     else
@@ -140,28 +140,47 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
         if (sscanf(line, "%lf%lf%lf", &Bn2, &Bp2, &dBn2) != 3)
             error("%s  %i",
                   "addBaselineCorrections -- Missing baseline params at line:", lineCount);
-        fprintf(stderr, "Using simple linear azmuth phase ramp, OmegaA\n");
+        if (verbose) fprintf(stderr, "Using simple linear azmuth phase ramp, OmegaA\n");
     }
     /*
         Ouput baseline parms
     */
-    if (tiePoints->dBpFlag == TRUE)
-        fprintf(stderr, "; dBp flag set\n");
-    if (tiePoints->noRamp == TRUE)
-        fprintf(stderr, "; noRamp flag set\n");
-    fprintf(stdout, ";\n; Number of lines of baseline data\n;\n 3\n");
-    fprintf(stdout, ";\n; First flattening baseline\n;\n");
-    if (tiePoints->dBpFlag == TRUE)
-    {
-        fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, dBp1);
-        fprintf(stdout, ";\n; Second flattening baseline\n;\n");
-        fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn2, Bp2, dBn2, dBp2);
+    if (verbose) {
+        if (tiePoints->dBpFlag == TRUE)
+            fprintf(stderr, "; dBp flag set\n");
+        if (tiePoints->noRamp == TRUE)
+            fprintf(stderr, "; noRamp flag set\n");
     }
-    else
-    {
-        fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, omegaA1);
-        fprintf(stdout, ";\n; Second flattening baseline\n;\n");
-        fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn2, Bp2, dBn2, omegaA2);
+    if (yamlOutput) {
+        fprintf(stdout, "Bn1: %.4f  # meters\n",  Bn1);
+        fprintf(stdout, "Bp1: %.4f  # meters\n",  Bp1);
+        fprintf(stdout, "dBn1: %.4f  # meters/pixel\n", dBn1);
+        if (tiePoints->dBpFlag == TRUE)
+            fprintf(stdout, "dBp1: %.7f  # meters/pixel\n", dBp1);
+        else
+            fprintf(stdout, "omegaA1: %.7f  # radians/pixel\n", omegaA1);
+        fprintf(stdout, "Bn2: %.4f  # meters\n",  Bn2);
+        fprintf(stdout, "Bp2: %.4f  # meters\n",  Bp2);
+        fprintf(stdout, "dBn2: %.4f  # meters/pixel\n", dBn2);
+        if (tiePoints->dBpFlag == TRUE)
+            fprintf(stdout, "dBp2: %.7f  # meters/pixel\n", dBp2);
+        else
+            fprintf(stdout, "omegaA2: %.7f  # radians/pixel\n", omegaA2);
+    } else {
+        fprintf(stdout, ";\n; Number of lines of baseline data\n;\n 3\n");
+        fprintf(stdout, ";\n; First flattening baseline\n;\n");
+        if (tiePoints->dBpFlag == TRUE)
+        {
+            fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, dBp1);
+            fprintf(stdout, ";\n; Second flattening baseline\n;\n");
+            fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn2, Bp2, dBn2, dBp2);
+        }
+        else
+        {
+            fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, omegaA1);
+            fprintf(stdout, ";\n; Second flattening baseline\n;\n");
+            fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn2, Bp2, dBn2, omegaA2);
+        }
     }
     /*
        Virtual baseline
@@ -251,5 +270,5 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
         */
         tiePoints->delta[i] = delta;
     }
-    fprintf(stderr, "leaving addBaselineCorrections.c\n");
+    if (verbose) fprintf(stderr, "leaving addBaselineCorrections.c\n");
 }

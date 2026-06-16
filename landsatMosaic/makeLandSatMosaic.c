@@ -2,6 +2,7 @@
 #include "string.h"
 #include <math.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 /*#include "mosaicSource/mosaic3D_p/mosaic3d.h"*/
@@ -177,10 +178,15 @@ void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage
 				pX[k] = currentImage->fitResult.pX[k];
 				pY[k] = currentImage->fitResult.pY[k];
 			}
+#pragma omp parallel private(j, x, y, lat, lon, offx, offy, sx, sy, \
+			sigx2, sigy2, sx2, sy2, vx, vy, ex, ey, scX, scY, \
+			latscale, sMask)
+			{
+#pragma omp for schedule(dynamic, 8)
 			for (i = iMin; i < iMax; i++)
 			{
 				if ((i % 100) == 0)
-					fprintf(stderr, "-- %i \n", i);
+					fprintf(stderr, "--+ %i \n", i);
 				y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
 				for (j = jMin; j < jMax; j++)
 				{
@@ -245,6 +251,7 @@ void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage
 					}
 				} /* j loop */
 			}	  /* i loop */
+			} /* End omp parallel */
 			/*
 			  Compute scale array for feathering.
 			*/

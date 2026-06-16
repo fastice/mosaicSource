@@ -173,6 +173,7 @@ static int32_t parseStateVectorsGeojson(OGRFeatureH myFeature, inputImageStructu
 		// fprintf(stderr, "%i %s %s %i %lf %lf\n", i, svTag(i, "Pos"), svTag(i, "Vel"), sv->nState, sv->x[i], sv->vz[i]);
 		sv->times[i] = sv->t0 + (i - 1) * sv->deltaT;
 	}
+	return 0;
 }
 
 static void updateDeltaT(inputImageStructure *inputImage, int32_t julDayInt, double deltaTCorrect) {

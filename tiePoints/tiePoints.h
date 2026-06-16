@@ -4,17 +4,17 @@
 /*
    Input phase image and extract phases for tiepoint locations.
 */
-void getPhases(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage);
+void getPhases(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose);
 /*
     Add baseline corrections that were removed in the unwrapped image to
     tiepoint phases.
 */
-void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, inputImageStructure inputImage);
+void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose);
 /*
    Estimate baseline parameters.
 */
-void computeBaseline(tiePointsStructure *tiePoints, inputImageStructure inputImage);
+void computeBaseline(tiePointsStructure *tiePoints, inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose);
 /*
    Compute motion corrections
 */
-void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints);
+void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints, int32_t verbose);

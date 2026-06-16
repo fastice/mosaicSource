@@ -3,6 +3,7 @@
 #include <math.h>
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
+#include <omp.h>
 #include "mosaicSource/common/common.h"
 
 float *offBuf1, *offBuf2, **offBuf1a, **offBuf1b;
@@ -90,6 +91,11 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 	/*
 	  Loop over  images
 	*/
+	int nthreads = omp_get_max_threads();
+	inputImageStructure *localImgs = (inputImageStructure *)malloc(
+		(size_t)nthreads * sizeof(inputImageStructure));
+	if (localImgs == NULL)
+		error("makeVhMosaic: malloc failed for per-thread image copies\n");
 	currentParams = params;
 	tCenter = (outputImage->jd1 + outputImage->jd2 + 1.) * 0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
 	count = 1;
@@ -143,161 +149,191 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 		  Now loop over output grid
 		*/
 		fprintf(stderr, "%i %i %i %i\n", iMin, iMax, jMin, jMax);
-		for (i = iMin; i < iMax; i++)
+		if (currentParams->offsets.deltaB != DELTABNONE)
 		{
-			if ((i % 100) == 0)
-				fprintf(stderr, "-- %i\n", i);
-			y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
-			for (j = jMin; j < jMax; j++)
+			double bnS, bpS;
+			svAzOffset(currentImage, &(currentParams->offsets), 0.0, 0.0);
+			svInterpBnBp(currentImage, &(currentParams->offsets), 0.0, &bnS, &bpS);
+		}
+		{ int t; for (t = 0; t < nthreads; t++) localImgs[t] = *currentImage; }
+#pragma omp parallel private(j, x, y, lat, lon, zSp, zWGS84, dzda, dzdr, \
+		range, azimuth, Range, theta, thetaD, psi, cotanpsi, ReH, \
+		hAngle, phase, phiZ, phaseError, delta, scalePhase, \
+		sigmaR, sigmaA, va, vr, vz, da, xyAngle, dzdtSubmergence, \
+		sMask, er, ea, ex, ey, scX, scY, vx, vy, validData)
+		{
+			inputImageStructure *myImg = &localImgs[omp_get_thread_num()];
+			vr = 0.0;
+#pragma omp for schedule(dynamic, 8)
+			for (i = iMin; i < iMax; i++)
 			{
-				/*
-				  Convert x/y stereographic coords to lat/lon
-				*/
-				x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
-				/*
-				  Get slope and elevation
-				*/
-				xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, currentImage);
-				validData = FALSE;
-				if (zSp > (MINELEVATION + 1) && zSp < 9999.)
-				{ /* If valid z ....*/
+				if ((i % 100) == 0)
+					fprintf(stderr, "--+ %i\n", i);
+				y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+				for (j = jMin; j < jMax; j++)
+				{
 					/*
-					   Compute phase for topography.
+					  Convert x/y stereographic coords to lat/lon
 					*/
-					llToImageNew(lat, lon, zWGS84, &range, &azimuth, currentImage);
-					interpPhaseImage(currentImage, range, azimuth, &phase);
+					x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
+					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
 					/*
-					  If shelf mask, get mask value
+					  Get slope and elevation
 					*/
-					sMask = GROUNDED;
-					if (shelfMask != NULL)
-						sMask = getShelfMask(shelfMask, x, y);
-					if (sMask == NOSOLUTION)
-					{
-						phase = -LARGEINT;
-					};
-					/*
-					  Process only good phase points
-					*/
-					if (phase > -2.0E7 && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
-					{
-						/* Compute look angles,ReH, and Range*/
-						geometryInfo(cP, currentImage, azimuth, range, zSp, thetaC, &ReH, &Range, &theta, &thetaD, &psi, zSp);
+					xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, myImg);
+					validData = FALSE;
+					if (zSp > (MINELEVATION + 1) && zSp < 9999.)
+					{ /* If valid z ....*/
 						/*
-						   Compute phase due to topography and correct phase
+						   Compute phase for topography.
 						*/
-						computePhiZ(&phiZ, azimuth, currentParams, currentImage, thetaD, Range, ReH, ReHfixed, Re, thetaCfixedReH, &phaseError);
-						phase = phase - phiZ;
+						llToImageNew(lat, lon, zWGS84, &range, &azimuth, myImg);
+						interpPhaseImage(myImg, range, azimuth, &phase);
 						/*
-						  Shelf correction if mask indicates
+						  If shelf mask, get mask value
 						*/
-						if (sMask == SHELF)
-							interpTideError(&phaseError, currentImage, currentParams, x, y, psi, twok);
-						/*
-						   Convert phase to delta
-						*/
-						scalePhase = (365.25 / (double)(currentParams->nDays * twok * sin(psi)));
-						delta = phase * scalePhase; /* m/yr */
-						if (vCorrect != NULL)
+						sMask = GROUNDED;
+						if (shelfMask != NULL)
+							sMask = getShelfMask(shelfMask, x, y);
+						if (sMask == NOSOLUTION)
 						{
-							dzdtSubmergence = interpVCorrect(x, y, vCorrect);
-							delta -= -dzdtSubmergence * cos(psi); /* (double)currentParams->nDays/365.25;*/
-						}
-						sigmaR = phaseError * scalePhase;
+							phase = -LARGEINT;
+						};
 						/*
-						   Compute angle between range direction and north and xy angle
+						  Process only good phase points
 						*/
-						hAngle = computeHeading(lat, lon, 0, currentImage, cP);
-						computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
-						/*
-							Get azimuth component from the offset field.
-						*/
-						if (currentParams->offsetFlag == TRUE)
+						if (phase > -2.0E7 && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
 						{
-							da = interpAzOffset(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
-							sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), currentImage, Range, theta, azSLPixSize);
-						}
-						else
-						{
-							da = 0;
-							sigmaA = 1;
-						} /* This mode is for debugging to get line of site phase */
-						/*
-						  Note va for left sign flip done in interpAzOffset
-						*/
-						va = da * (365.25 / (double)currentParams->nDays);
-						/*
-						   zero slope correction for small vel since vertical vel is < than noise
-						   And assume really large slopes are bad >.1
-						*/
-						if ((fabs(vr) < 10.0 && fabs(va) < 10.0))
-						{
-							dzda = 0.0;
-							dzdr = 0.0;
-						}
-						cotanpsi = 1.0 / tan(psi);
-						vr = (delta + va * cotanpsi * dzda) / (1.0 - cotanpsi * dzdr);
-						vz = va * dzda + vr * dzdr;
-						/*
-						  if good date continue
-						*/
-						if (da > (-LARGEINT + 1))
-						{
+							/* Compute look angles,ReH, and Range*/
+							geometryInfo(cP, myImg, azimuth, range, zSp, thetaC, &ReH, &Range, &theta, &thetaD, &psi, zSp);
 							/*
-							   Rotate velocity back to xy coordinates
+							   Compute phase due to topography and correct phase
 							*/
-							rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
-							ea = sigmaA * (365.25 / (double)currentParams->nDays);
+							if (currentParams->applyFlatEarth)
+								computePhiFlatEarth(&phiZ, azimuth, currentParams, myImg, Range, ReHfixed, Re, thetaCfixedReH, &phaseError);
+							else
+								computePhiZ(&phiZ, azimuth, currentParams, myImg, thetaD, Range, ReH, ReHfixed, Re, thetaCfixedReH, &phaseError);
+							phase = phase - phiZ;
 							/*
-							   Weight error by sqrt(2) to avoid double avging when speckle track solution   done (if done).
+							  Shelf correction if mask indicates
 							*/
-							if (outputImage->rOffsetFlag == TRUE)
-								ea *= 1.41421;
-							er = sigmaR;
-							/* NOTE THIS RETURNS VARIANCES */
-							errorsToXY(er, ea, &ex, &ey, xyAngle, hAngle);
-							scX = 1.0 / ex;
-							scY = 1.0 / ey;
-							vxTmp[i][j] = (float)vx * scX;
-							vyTmp[i][j] = (float)vy * scY;
-							validData = TRUE;
-							if (outputImage->makeTies == TRUE)
+							if (sMask == SHELF)
+								interpTideError(&phaseError, myImg, currentParams, x, y, psi, twok);
+							/*
+							   Convert phase to delta
+							*/
+							scalePhase = (365.25 / (double)(currentParams->nDays * twok * sin(psi)));
+							delta = phase * scalePhase; /* m/yr */
+							if (vCorrect != NULL)
 							{
-								vzTmp[i][j] = vz;
+								dzdtSubmergence = interpVCorrect(x, y, vCorrect);
+								delta -= -dzdtSubmergence * cos(psi); /* (double)currentParams->nDays/365.25;*/
 							}
-							else if (outputImage->timeOverlapFlag == TRUE)
+							sigmaR = phaseError * scalePhase;
+							/*
+							   Compute angle between range direction and north and xy angle
+							*/
+							hAngle = computeHeading(lat, lon, 0, myImg, cP);
+							computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
+							/*
+								Get azimuth component from the offset field.
+							*/
+							if (currentParams->offsetFlag == TRUE)
 							{
-								vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
+								da = interpAzOffset(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
+								sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
 							}
 							else
 							{
-								if (outputImage->vzFlag == VZDEFAULT)
-									vzTmp[i][j] = (float)phase;
-								else if (outputImage->vzFlag == VZHORIZONTAL)
-									vzTmp[i][j] = (float)delta;
-								else if (outputImage->vzFlag == VZVERTICAL)
-									vzTmp[i][j] = (float)delta * sin(psi) / cos(psi); /* undo h by * sin, then make vert /cos */
+								da = 0;
+								sigmaA = 1;
+							} /* This mode is for debugging to get line of site phase */
+							/*
+							  Note va for left sign flip done in interpAzOffset
+							*/
+							va = da * (365.25 / (double)currentParams->nDays);
+							/*
+							   zero slope correction for small vel since vertical vel is < than noise
+							   And assume really large slopes are bad >.1
+							*/
+							if ((fabs(vr) < 10.0 && fabs(va) < 10.0))
+							{
+								dzda = 0.0;
+								dzdr = 0.0;
 							}
-							sxTmp[i][j] = scX;
-							syTmp[i][j] = scY;
-							fScale[i][j] = 1.0; /* Value for zero feathering */
-							currentImage->used = TRUE;
+							cotanpsi = 1.0 / tan(psi);
+							vr = (delta + va * cotanpsi * dzda) / (1.0 - cotanpsi * dzdr);
+							vz = va * dzda + vr * dzdr;
+							/*
+							  if good date continue
+							*/
+							if (da > (-LARGEINT + 1))
+							{
+								/*
+								   Rotate velocity to xy coordinates, or keep as range/azimuth
+								*/
+								ea = sigmaA * (365.25 / (double)currentParams->nDays);
+								/*
+								   Weight error by sqrt(2) to avoid double avging when speckle track solution   done (if done).
+								*/
+								if (outputImage->rOffsetFlag == TRUE)
+									ea *= 1.41421;
+								er = sigmaR;
+								if (outputImage->outputRAFlag)
+								{
+									vx = vr;
+									vy = va;
+									ex = er * er;
+									ey = ea * ea;
+								}
+								else
+								{
+									rotateFlowDirectionToXY(vr, va, &vx, &vy, xyAngle, hAngle);
+									/* NOTE THIS RETURNS VARIANCES */
+									errorsToXY(er, ea, &ex, &ey, xyAngle, hAngle);
+								}
+								scX = 1.0 / ex;
+								scY = 1.0 / ey;
+								vxTmp[i][j] = (float)vx * scX;
+								vyTmp[i][j] = (float)vy * scY;
+								validData = TRUE;
+								if (outputImage->makeTies == TRUE)
+								{
+									vzTmp[i][j] = vz;
+								}
+								else if (outputImage->timeOverlapFlag == TRUE)
+								{
+									vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
+								}
+								else
+								{
+									if (outputImage->vzFlag == VZDEFAULT)
+										vzTmp[i][j] = (float)phase;
+									else if (outputImage->vzFlag == VZHORIZONTAL)
+										vzTmp[i][j] = (float)delta;
+									else if (outputImage->vzFlag == VZVERTICAL)
+										vzTmp[i][j] = (float)delta * sin(psi) / cos(psi); /* undo h by * sin, then make vert /cos */
+								}
+								sxTmp[i][j] = scX;
+								syTmp[i][j] = scY;
+								fScale[i][j] = 1.0; /* Value for zero feathering */
+								currentImage->used = TRUE;
+							}
 						}
 					}
-				}
-				else
-				{ /* End if valid z ...*/
-					vxTmp[i][j] = (float)-LARGEINT;
-					fScale[i][j] = 0.0;
-				} /* end else valid z */
-				if (validData == FALSE)
-				{
-					vxTmp[i][j] = (float)-LARGEINT;
-					fScale[i][j] = 0.0;
-				}
-			} /* j loop */
-		}	  /* i loop */
+					else
+					{ /* End if valid z ...*/
+						vxTmp[i][j] = (float)-LARGEINT;
+						fScale[i][j] = 0.0;
+					} /* end else valid z */
+					if (validData == FALSE)
+					{
+						vxTmp[i][j] = (float)-LARGEINT;
+						fScale[i][j] = 0.0;
+					}
+				} /* j loop */
+			}	  /* i loop */
+		} /* End omp parallel */
 		/*
 		  Compute scale array for feathering.
 		*/
@@ -309,6 +345,7 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 		redoNormalization(currentImage->weight, outputImage, iMin, iMax, jMin, jMax, vXimage, vYimage, vZimage, errorX, errorY,
 						  scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, FALSE);
 	} /* End asc loop */
+	free(localImgs);
 	/**************************END OF MAIN LOOP ******************************/
 	endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, FALSE);
 	fprintf(outputImage->fpLog, ";\n; Returning from makeVhMosaic(.c)\n");

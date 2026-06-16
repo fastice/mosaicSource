@@ -50,10 +50,12 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
    Read the offset data and paramter files
  */
 void readOffsetDataAndParams(Offsets *offsets, float azimuthMin, float azimuthMax)
-{
+{	
+	getRParams(offsets);
+	fprintf(stderr, "Reading ionosphere correction file: {%s}\n", offsets->rOffCorrection.correctionFile);
+	
 	readBothOffsets(offsets, azimuthMin, azimuthMax);
 	getAzParams(offsets);
-	getRParams(offsets);
 	fprintf(stderr, "Offsets and parameters read\n");
 	if (offsets->deltaB != DELTABNONE && offsets->geo2 == NULL)
 		error("offsets deltaB set but no second geodat for %s\n", offsets->rFile);
@@ -144,7 +146,7 @@ void readOffsetParams(char *datFile, Offsets *offsets, int32_t merge)
 	double sigmaS, sigmaR;
 	char line[1024], *tmp;
 	char file1[512], file2[512], *path, buf[2048];
-	int32_t lineCount, eod;
+	int32_t lineCount = 0, eod;
 	int32_t nRead;
 	/* See if vrt exits */
 	buf[0] = '\0';
@@ -310,6 +312,40 @@ void getRParams(Offsets *offsets)
 	offsets->dBnQ = dBnQ;
 	offsets->dBpQ = dBpQ;
 
+	/*
+	  Scan all remaining lines (including after '&') for a ;* offsetCorrectionFile entry.
+	  Format: ;* offsetCorrectionFile <path>
+	  Only stores the path — caller is responsible for loading the data.
+	*/
+	offsets->rOffCorrection.correctionFile[0] = '\0';
+	{
+		char sc_line[256], *tmp2;
+		while (fgets(sc_line, sizeof(sc_line), fp) != NULL)
+		{
+			/* Must start with ';' and contain '*' to be a special line */
+			if (sc_line[0] != ';') continue;
+			if (strchr(sc_line, '*') == NULL) continue;
+			tmp2 = strstr(sc_line, "offsetCorrectionFile");
+			if (tmp2 != NULL)
+			{
+				tmp2 += strlen("offsetCorrectionFile");
+				while (*tmp2 == ' ' || *tmp2 == '\t') tmp2++;
+				strncpy(offsets->rOffCorrection.correctionFile, tmp2,
+				        sizeof(offsets->rOffCorrection.correctionFile) - 1);
+				offsets->rOffCorrection.correctionFile[sizeof(offsets->rOffCorrection.correctionFile) - 1] = '\0';
+				/* strip trailing whitespace/newline */
+				int32_t len = strlen(offsets->rOffCorrection.correctionFile);
+				while (len > 0 && (offsets->rOffCorrection.correctionFile[len-1] == '\n' ||
+				                   offsets->rOffCorrection.correctionFile[len-1] == '\r' ||
+				                   offsets->rOffCorrection.correctionFile[len-1] == ' '))
+					offsets->rOffCorrection.correctionFile[--len] = '\0';
+				fprintf(stderr, "getRParams: found offsetCorrectionFile %s\n",
+				        offsets->rOffCorrection.correctionFile);
+				break; /* found it, no need to continue */
+			}
+		}
+	}
+
 	//fprintf(stderr, "bn %f %f %f bp %f %f %f off %f\n", offsets->bn, offsets->dBn,
 	//	offsets->dBnQ, offsets->bp, offsets->dBp, offsets->dBpQ, offsets->rConst);
 	//error("STOP %s\n", paramFile);
@@ -379,6 +415,7 @@ void initOffParams(Offsets *offsets){
 	offsets->geo1 = NULL;
 	offsets->geo2 = NULL;
 	offsets->rOffCorrection.rangeOffsetCorrection = NULL;
+	offsets->rOffCorrection.correctionFile[0] = '\0';
 }
 
 static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_t band, char *path)
@@ -551,8 +588,14 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float az
 	fprintf(stderr, "vrtFile %s\n", vrtFile);
 	//vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
 	if (vrtFile != NULL)
-	{	// Zero params
+	{	// Zero params — but preserve any correctionFile pre-set by caller
+		char savedCorrFile2[2048];
+		strncpy(savedCorrFile2, offsets->rOffCorrection.correctionFile, sizeof(savedCorrFile2) - 1);
+		savedCorrFile2[sizeof(savedCorrFile2) - 1] = '\0';
 		initOffParams(offsets);
+		if (savedCorrFile2[0] != '\0')
+			strncpy(offsets->rOffCorrection.correctionFile, savedCorrFile2,
+			        sizeof(offsets->rOffCorrection.correctionFile));
 		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
@@ -599,20 +642,41 @@ static void checkForIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets, int
 	dictNode *metaData = NULL;
 	char ionospherePath[2048];
 	char tmp[2048];
-	int band = 1;
-	//GDALRasterBandH hBand = GDALGetRasterBand(hDS, band);
+
+	/* Only load if correctionFile was pre-filled (either by getRParams reading a baseline
+	   that recorded it, or by getROffsets peeking at the VRT before readRangeOffsets).
+	   This preserves consistency: if the baseline was estimated without correction,
+	   we don't retroactively apply one. */
+	//error("XXX: checkForIonosphereCorrection not fully implemented yet %s\n", offsets->rOffCorrection.correctionFile);
+	if (offsets->rOffCorrection.correctionFile[0] == '\0')
+		return;
 
 	readDataSetMetaData(hDS, &metaData);
-	char *ionsphereCorrection = get_value(metaData, "ionosphereRangeOffsetCorrection");
-	if (ionsphereCorrection == NULL)
-		return;
+	char *ionosphereCorrection = get_value(metaData, "ionosphereRangeOffsetCorrection");
+	fprintf(stderr, "Ionosphere correction file: %s\n", ionosphereCorrection);
+	
+	/* Baseline specified a file but VRT metadata has none */
+	if (ionosphereCorrection == NULL)
+		error("checkForIonosphereCorrection: baseline file specifies offsetCorrectionFile '%s' "
+		      "but VRT has no ionosphereRangeOffsetCorrection entry\n",
+		      offsets->rOffCorrection.correctionFile);
+
+	/* Compare basenames only */
+	strncpy(tmp, offsets->rOffCorrection.correctionFile, sizeof(tmp) - 1);
+	char *baselineBase = basename(tmp);
+	if (strcmp(baselineBase, ionosphereCorrection) != 0)
+		error("checkForIonosphereCorrection: baseline offsetCorrectionFile basename '%s' "
+		      "does not match VRT ionosphereRangeOffsetCorrection '%s'\n",
+		      baselineBase, ionosphereCorrection);
+
+	/* Names match — build full path and load */
 	strncpy(tmp, offsets->rFile, sizeof(tmp) - 1);
-	snprintf(ionospherePath, sizeof(ionospherePath), "%s/%s", dirname(tmp), ionsphereCorrection);
-	if (access(ionospherePath, F_OK) == 0)
-	{
-		fprintf(stderr, "Found ionospheric correction file %s\n", ionospherePath);
-		readOffsetCorrection(ionospherePath, offsets, bufferMode);
-	}
+	snprintf(ionospherePath, sizeof(ionospherePath), "%s/%s", dirname(tmp), ionosphereCorrection);
+	if (access(ionospherePath, F_OK) != 0)
+		error("checkForIonosphereCorrection: correction file not found: %s\n", ionospherePath);
+	fprintf(stderr, "checkForIonosphereCorrection: loading %s\n", ionospherePath);
+	//error("STOP: ionospheric correction loading not implemented yet\n");
+	readOffsetCorrection(ionospherePath, offsets, bufferMode);
 }
 
 /*
@@ -633,8 +697,14 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors, float azimuthMin,
 		vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
 	fprintf(stderr, "vrtFile %s\n", vrtFile);
 	if (vrtFile != NULL)
-	{	// Zero parameters
+	{	// Zero parameters — but preserve any correctionFile pre-set by caller
+		char savedCorrFile[2048];
+		strncpy(savedCorrFile, offsets->rOffCorrection.correctionFile, sizeof(savedCorrFile) - 1);
+		savedCorrFile[sizeof(savedCorrFile) - 1] = '\0';
 		initOffParams(offsets);
+		if (savedCorrFile[0] != '\0')
+			strncpy(offsets->rOffCorrection.correctionFile, savedCorrFile,
+			        sizeof(offsets->rOffCorrection.correctionFile));
 		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
@@ -648,7 +718,6 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors, float azimuthMin,
 		fprintf(stderr, "Checking for ionospheric correction\n");
 		checkForIonosphereCorrection(hDS, offsets, RANGEBUFF);
 		//fprintf(stderr, "%s\n", offsets->rFile);
-		//error("STOP HERE");
 		fprintf(stderr, "Range offsets read from VRT\n");
 		// Check  if intermediate product that needs SE correction
 		// This is kluge, which should only be invoked if creating velocity_nocull product from intermediate offset products.
@@ -662,10 +731,11 @@ void readRangeOffsets(Offsets *offsets, int32_t includeErrors, float azimuthMin,
 			// Apply SE correction to range offsets
 			for(int i=0; i < ySize; i++)
 			{
-				for(int j=0; j < xSize; j++) 
+				for(int j=0; j < xSize; j++)
 				{
-					offsets->dr[i][j] -= offsets->SECorrection[i][j];
-				}		
+					if(offsets->dr[i][j] > -LARGEINT)
+						offsets->dr[i][j] -= offsets->SECorrection[i][j];
+				}
 			}
 		} 
 		GDALClose(hDS);
@@ -816,14 +886,20 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthM
 	char *eFileR, *file;
 	GDALDatasetH hDS;
 	int bufferMode;
-	// Zero parameters
+	// Zero parameters — but preserve any correctionFile pre-set by caller
+	char savedCorrFile3[2048];
+	strncpy(savedCorrFile3, offsets->rOffCorrection.correctionFile, sizeof(savedCorrFile3) - 1);
+	savedCorrFile3[sizeof(savedCorrFile3) - 1] = '\0';
 	initOffParams(offsets);
+	if (savedCorrFile3[0] != '\0')
+		strncpy(offsets->rOffCorrection.correctionFile, savedCorrFile3,
+		        sizeof(offsets->rOffCorrection.correctionFile));
 	if (has_suffix(offsets->rFile, ".vrt") == TRUE)
 		vrtFile = strcpy(vrtBuffer, offsets->rFile);
 	else
 		vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
 	//fprintf(stderr, "vrtFile %s\n", vrtFile);
-	//vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer); 
+	//vrtFile = checkForOffsetsVrt(offsets->rFile, vrtBuffer);
 	if (vrtFile != NULL)
 	{
 		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
@@ -833,6 +909,7 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthM
 		if (orbitType == ASCENDING) readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF, azimuthMin, azimuthMax);
 		else readGDALOffsets(hDS, offsets, RANGEBUFF, azimuthMin, azimuthMax);
 		readGDALOffsets(hDS, offsets, RANGEERRORBUFF, azimuthMin, azimuthMax);
+		fprintf(stderr, "********** %s\n", offsets->rOffCorrection.correctionFile);
 		checkForIonosphereCorrection(hDS, offsets,
 									orbitType == ASCENDING ? RANGEUSEAZIMUTHBUFF : RANGEBUFF);
 		GDALClose(hDS);

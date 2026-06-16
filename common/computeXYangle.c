@@ -18,6 +18,14 @@ void computeXYangle(double lat, double lon, double *xyAngle, xyDEM xydem)
     return;
 }
 
+void computeXYangleXY(double x, double y, double *xyAngle)
+{
+    extern int32_t HemiSphere;
+    *xyAngle = atan2(-y, -x);
+    if (HemiSphere == SOUTH)
+        *xyAngle += PI;
+}
+
 /*
     Compute angle relative to north or south - need to supply stdLat
 */

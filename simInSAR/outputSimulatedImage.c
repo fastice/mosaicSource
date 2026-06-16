@@ -15,6 +15,29 @@
 })
 
 
+/* Write a flat row-major buffer to GeoTIFF with pixel-coord geotransform.
+   No vertical flip: row 0 of the buffer becomes the top row of the tif.
+   This matches the convention used by writeSingleVRT and other GrIMP tiff
+   outputs (GT y-step = +1). makeTiffVRT builds the .ll.vrt by hand (not via
+   GDALBuildVRT, which rejects "positive NS resolution" rasters), so this
+   convention is fine here. */
+static void writeFlatTiff(const char *filename, const void *flatData,
+                          int32_t width, int32_t height, GDALDataType dataType,
+                          float noDataValue, dictNode *metaData)
+{
+    double pixGT[6] = {-0.5, 1., 0., -0.5, 0., 1.};
+    const char *options[] = {"COMPRESS=DEFLATE", NULL};
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
+    GDALDatasetH ds = GDALCreate(driver, filename, width, height, 1, dataType, (char **)options);
+    GDALSetGeoTransform(ds, pixGT);
+    GDALRasterBandH band = GDALGetRasterBand(ds, 1);
+    GDALSetRasterNoDataValue(band, noDataValue);
+    GDALRasterIO(band, GF_Write, 0, 0, width, height, (void *)flatData, width, height, dataType, 0, 0);
+    if (metaData != NULL)
+        writeDataSetMetaData(ds, metaData);
+    GDALClose(ds);
+}
+
 static void popuplateMeta(dictNode **metaData, sceneStructure scene) {
 	insert_node(metaData, "r0", STR_BUFF("%i", (int) (scene.rO * scene.I.nRangeLooks)));
 	insert_node(metaData, "a0", STR_BUFF("%i", (int) (scene.aO * scene.I.nAzimuthLooks)));
@@ -22,8 +45,12 @@ static void popuplateMeta(dictNode **metaData, sceneStructure scene) {
 	insert_node(metaData, "deltaA", STR_BUFF("%i",  (int)(scene.dA * scene.I.nAzimuthLooks)));
 	insert_node(metaData, "sigmaRange", STR_BUFF("%f", 0.0));
 	insert_node(metaData, "sigmaStreaks", STR_BUFF("%f", 0.0));
+	insert_node(metaData, "lambda", STR_BUFF("%f", scene.I.par.lambda));
+	insert_node(metaData, "dT", STR_BUFF("%f", scene.dT));
+	if (scene.verticalCorrectionFile != NULL)
+		insert_node(metaData, "verticalCorrection", STR_BUFF("%s", scene.verticalCorrectionFile));
 }
-static void outputLL(sceneStructure scene, char *outputFile) 
+static void outputLL(sceneStructure scene, char *outputFile)
 {
 	dictNode *metaData = NULL;
 	FILE *imageFP;
@@ -35,9 +62,33 @@ static void outputLL(sceneStructure scene, char *outputFile)
 	char *bandFiles[2] = {buf1, buf2};
 	GDALDataType dataTypes[2] = {GDT_Float64, GDT_Float64};
 	int32_t i, k;
+	popuplateMeta(&metaData, scene);
+	if (scene.tiffFlag) {
+		/* GeoTIFF path: write .lat.tif + .lon.tif, then .ll.vrt via makeTiffVRT */
+		char tifBuf1[2048], tifBuf2[2048];
+		const char *tifFiles[2];
+		char *tifSuffixes[2] = {".lat.tif", ".lon.tif"};
+		char *tifBufs[2] = {tifBuf1, tifBuf2};
+		float noDataArr[2] = {-2.e9f, -2.e9f};
+		size_t nPx = (size_t)scene.aSize * scene.rSize;
+		double *flat = (double *)malloc(nPx * sizeof(double));
+		if (flat == NULL) error("outputLL: malloc failed for tif buffer\n");
+		for (k = 0; k < 2; k++) {
+			for (i = 0; i < scene.aSize; i++)
+				memcpy(flat + (size_t)i * scene.rSize, images[k][i], scene.rSize * sizeof(double));
+			tifFiles[k] = appendSuffix(outputFile, tifSuffixes[k], tifBufs[k]);
+			fprintf(stderr, "writing tif %s\n", tifFiles[k]);
+			writeFlatTiff(tifFiles[k], flat, scene.rSize, scene.aSize, GDT_Float64, -2.e9f, metaData);
+		}
+		free(flat);
+		file = STR_BUFF("%s.ll.vrt", outputFile);
+		makeTiffVRT(file, tifFiles, 2, noDataArr, metaData);
+		free(file);
+		return;
+	}
 	for(k=0; k < 2; k++) {
 		file = appendSuffix(outputFile, suffixes[k], bandFiles[k]);
-		fprintf(stderr, "writing %s\n", buf1);
+		fprintf(stderr, "writing %s\n", file);
 		imageFP = fopen(file, "w");
 		for (i = 0; i < scene.aSize; i++)
 		{
@@ -45,9 +96,8 @@ static void outputLL(sceneStructure scene, char *outputFile)
 		}
 		fclose(imageFP);
 	}
-	file = STR_BUFF("%s.ll.vrt", outputFile); 
+	file = STR_BUFF("%s.ll.vrt", outputFile);
 	if(scene.byteOrder == MSB) byteSwapOption = "ByteOrder=MSB"; else byteSwapOption = "ByteOrder=LSB";
-	popuplateMeta(&metaData, scene);
 	writeSingleVRT(scene.rSize, scene.aSize, metaData, file, bandFiles, bandNames, dataTypes, byteSwapOption, -2.0e9, 2);
 }
 
@@ -112,9 +162,8 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 	// Now write VRT
 	fileVRT = STR_BUFF("%s.vrt", file); 
 	// fileVRT = appendSuffix(file, ".vrt", buf2);
-	if(scene.saveLLFlag == TRUE || scene.toLLFlag)
-		popuplateMeta(&metaData, scene);
-	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, -2.e9, 1);	
+	popuplateMeta(&metaData, scene);
+	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, byteSwapOption, -2.e9, 1);
 }
 
 /*

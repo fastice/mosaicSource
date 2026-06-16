@@ -92,6 +92,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
 			common/$(MACHTYPE)-$(OSTYPE)/buffers.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \
+			common/$(MACHTYPE)-$(OSTYPE)/computePhiFlatEarth.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computePhiZ.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
@@ -178,9 +179,9 @@ testgeo:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0; \
 			cd $(PROGDIR); \
 		); done
-		g++ $(MEM) $(CCFLAGS1) $(NOPIE) \
+		g++ $(MEM) $(CCFLAGS1) $(NOPIE) -fopenmp \
                 $(TESTGEO) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
-				-lm  $(GDAL) -o $(BINDIR)/testgeo  -L/usr/lib 	
+				-lm  $(GDAL) -o $(BINDIR)/testgeo  -L/usr/lib
 
 OFFSETVRT =	offsetVRT/$(MACHTYPE)-$(OSTYPE)/offsetVRT.o
 OFFSETVRTDIRS =	offsetVRT $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib  $(PROGDIR)/mosaicSource/common
@@ -192,9 +193,9 @@ offsetvrt:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0; \
 			cd $(PROGDIR); \
 		); done
-		g++ $(MEM) $(CCFLAGS1) $(NOPIE) \
+		g++ $(MEM) $(CCFLAGS1) $(NOPIE) -fopenmp \
                 $(OFFSETVRT) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
-                -lm  $(GDAL) -o $(BINDIR)/offsetvrt  -L/usr/lib 	
+                -lm  $(GDAL) -o $(BINDIR)/offsetvrt  -L/usr/lib
 #********************************************************************************
 #********************************** mosaic3d ************************************
 #********************************************************************************
@@ -216,7 +217,7 @@ mosaic3d:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 $(MOSAIC3D1)   $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE) $(LANDSATCODE) $(GDALIO) \
                 -lm $(GDAL) -o $(BINDIR)/mosaic3d Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaic3d.o
 
@@ -228,7 +229,8 @@ SIMINSAR =	simInSAR/$(MACHTYPE)-$(OSTYPE)/parseSceneFile.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/simInSARimage.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/outputSimulatedImage.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getDisplacement.o \
-                simInSAR/$(MACHTYPE)-$(OSTYPE)/getSlantRangeDEM.o
+                simInSAR/$(MACHTYPE)-$(OSTYPE)/getSlantRangeDEM.o \
+                simInSAR/$(MACHTYPE)-$(OSTYPE)/simInSARBaselineFromSV.o
 
 SIMINSARDIRS =	simInSAR  common  $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
@@ -239,7 +241,7 @@ siminsar:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/siminsar.o $(SIMINSAR) $(COMMON)  $(TRIANGLE) $(STANDARD) $(RECIPES) $(GDALIO) \
 				-lm $(GDAL) -o $(BINDIR)/siminsar
 
@@ -261,7 +263,7 @@ rparams:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 rParams/$(MACHTYPE)-$(OSTYPE)/rparams.o $(RPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
                 -lm  $(GDAL) -o $(BINDIR)/rparams
 
@@ -282,7 +284,7 @@ azparams:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 azParams/$(MACHTYPE)-$(OSTYPE)/azparams.o $(AZPARAMS)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO) \
                 -lm  $(GDAL) -o $(BINDIR)/azparams
 #********************************************************************************
@@ -298,7 +300,7 @@ computebaseline:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 computeBaseline/$(MACHTYPE)-$(OSTYPE)/computebaseline.o   $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
                 -lm  $(GDAL) -o $(BINDIR)/computebaseline
 
@@ -317,7 +319,7 @@ coarsereg:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 coarseReg/$(MACHTYPE)-$(OSTYPE)/coarsereg.o $(COARSEREG)  $(COMMON) $(STANDARD) $(RECIPES) $(TRIANGLE) $(GDALIO)  \
                 -lm $(GDAL) -o $(BINDIR)/coarsereg
 
@@ -340,7 +342,7 @@ tiepoints:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 tiePoints/$(MACHTYPE)-$(OSTYPE)/tiepoints.o $(TIEPOINTS) $(STANDARD) $(TRIANGLE) $(RECIPES)  $(COMMON) $(GDALIO) \
 		-lm $(GDAL) -o $(BINDIR)/tiepoints
 
@@ -357,7 +359,7 @@ lltora:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH)  PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-	        g++ $(MEM) LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) $(GDALIO) \
+	        g++ $(MEM) -fopenmp LLtoRA/$(MACHTYPE)-$(OSTYPE)/lltora.o   $(STANDARD) $(RECIPES)  $(COMMON) $(TRIANGLE) $(GDALIO) \
                       -lm $(GDAL) -o $(BINDIR)/lltora
 
 #********************************************************************************
@@ -377,7 +379,7 @@ getlocc:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1) \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
                 getLocC/$(MACHTYPE)-$(OSTYPE)/getlocc.o $(GETLOCC) $(COMMON) $(TRIANGLE) $(STANDARD) $(RECIPES) $(GDALIO) \
                  -lm $(GDAL) -o  $(BINDIR)/getlocc
 
@@ -387,7 +389,11 @@ getlocc:
 #********************************************************************************
 
 GEOMOSAIC =	geoMosaic/$(MACHTYPE)-$(OSTYPE)/makeGeoMosaic.o \
-                geoMosaic/$(MACHTYPE)-$(OSTYPE)/processInputFileGeo.o
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/processInputFileGeo.o \
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/subpixelRTC.o \
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/linearSubpixelRTC.o \
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/jacobianSubpixelRTC.o \
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/readComplexAsPower.o
 
 GEOMOSAICDIRS =	geoMosaic common landsatMosaic $(PROGDIR)/gdalIO/gdalIO $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 
@@ -398,7 +404,7 @@ geomosaic:
 			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0;  \
 			cd $(PROGDIR)/mosaicSource; \
 		); done
-		g++ $(MEM) $(CCFLAGS1)  \
+		g++ $(MEM) $(CCFLAGS1) -fopenmp \
 		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) $(GDALIO) \
 		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o  \
                 -lm $(GDAL) -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o

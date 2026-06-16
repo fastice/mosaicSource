@@ -5,6 +5,7 @@
 #include "geomosaic.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
+#include <omp.h>
 
 /* from lsmosaic, but only need this */
 double xyscale(double latctr, int32_t proj);
@@ -22,7 +23,7 @@ static void logSigma(float **image, int32_t xSize, int32_t ySize);
 static void mallocTmpBuffers(float ***imageTmp, float ***scaleTmp, outputImageStructure *outputImage,
 							 float ***psiBuf, float ***psiBufTmp, float ***gBuf, float ***gBufTmp);
 static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDate, int32_t smoothL, int32_t yMin, int32_t yMax);
-static float applyCorrections(float *value, inputImageStructure *inputImage, double range, double azimuth, double h);
+float applyCorrections(float *value, inputImageStructure *inputImage, double range, double azimuth, double h);
 static void geoMosaicScaling(inputImageStructure *inputImage, float **image, float **imageTmp, float **psiBuf,
 							 float **psiBufTmp, float **gBuf, float **gBufTmp,
 							 float **scale, float **scaleTmp, void *dem, outputImageStructure *outputImage, int32_t orbitPriority,
@@ -133,13 +134,15 @@ static double threeDArea(double x1[4], double y1[4], double z1[4])
 }
 
 static double nrx, nry, nrz, nsx, nsy, nsz, nlx, nly, nlz;
+#pragma omp threadprivate(nrx, nry, nrz, nsx, nsy, nsz, nlx, nly, nlz)
 
 /*
   For PS (x,y) point, corresponding to azimuth, compute projection of the pixel around it onto the beta, and gamma
   planes. Return Ab, Ag
 */
-static void AbAg(double x, double y, double azimuth, inputImageStructure *inputImage,
-				 outputImageStructure *outputImage, void *dem, double *Ab, double *Ag, double *shadow, int32_t recycle)
+void AbAg(double x, double y, double azimuth, inputImageStructure *inputImage,
+				 outputImageStructure *outputImage, void *dem, double *Ab, double *Ag, 
+				 double *shadow, int32_t recycle)
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
@@ -230,7 +233,7 @@ static double boxOverlap(double range0, double azimuth0, double range1, double a
 		return 0.0;
 	dr = min(r12 - r01, r02 - r11);
 	da = min(a12 - a01, a02 - a11);
-	return max(dr / (4 * dx * dx), 0); /* never should compute a negative, but just in case */
+	return max(dr * da / (4 * dx * dx), 0); /* never should compute a negative, but just in case */
 }
 
 /*
@@ -341,6 +344,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	extern int32_t rsatFineCal;
 	extern int32_t noPower;
 	extern int32_t S1Cal;
+	extern int32_t useSubPixelRTC;
 	double psiE;
 	float **scale, **psiBuf, **psiBufTmp, **gBufTmp, **gBuf;
 	FILE *fp;
@@ -401,72 +405,124 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 		  Loop over output grid
 		*/
 		fprintf(stderr, "%s\n", imageFiles[i]);
-		for (i1 = iMin; i1 < iMax; i1++)
+		/* Each thread gets its own copy of inputImage[i] so that llToImageNew's
+		   warm-start write to lastTime stays private and avoids cache-line
+		   invalidation across all cores. */
 		{
-			if ((i1 % 100) == 0) fprintf(stderr, "-- %i %f\n", i1, hWGS);
-			for (j1 = jMin; j1 < jMax; j1++)
+			int nthreads = omp_get_max_threads();
+			inputImageStructure *localImgs = (inputImageStructure *)malloc(
+				(size_t)nthreads * sizeof(inputImageStructure));
+			if (localImgs == NULL)
+				error("makeGeoMosaic: malloc failed for per-thread image copies\n");
 			{
-				recycle = FALSE;
-				shadow = FALSE;
-				/*
-				   This loop allows or overampling the result by computing multiple values about x and y.
-				   In practice it doesn't help much, is slow, and should therefore be avoided.
-				*/
-				y = (outputImage.originY + i1 * outputImage.deltaY) * MTOKM;
-				x = (outputImage.originX + j1 * outputImage.deltaX) * MTOKM;
-				/*
-				  Convert x/y stereographic coords to lat/lon
-				*/
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage.slat);
-				/*
-				  Get height for given lat/lon
-				*/
-				h = getXYHeight(lat, lon, dem, inputImage[i].cpAll.Re, SPHERICAL);
-				hWGS = sphericalToWGSElev(h, lat, inputImage[i].cpAll.Re);
-				/*
-				  Convert lat/lon to image coordinates
-				*/
-				llToImageNew(lat, lon, hWGS, &range, &azimuth, &(inputImage[i]));
-				/*
-				  Interpolate image
-				*/
-				value = interpolatePowerInputImage(inputImage[i], range, azimuth);
-				psiE = applyCorrections(&value, &(inputImage[i]), range, azimuth, h) * invNAvg;
-				/*
-				   RTC corrections for Sentinel.
-				*/
-				if ((S1Cal & TRUE) == TRUE)
+				int t;
+				for (t = 0; t < nthreads; t++)
+					localImgs[t] = inputImage[i];
+			}
+#pragma omp parallel \
+			    private(j1, x, y, lat, lon, h, hWGS, range, azimuth, \
+			            value, psiE, shadow, recycle, Ab, Ag, AbCum, AgCum, test)
+			{
+				inputImageStructure *myImg = &localImgs[omp_get_thread_num()];
+#pragma omp for schedule(dynamic, 8)
+				for (i1 = iMin; i1 < iMax; i1++)
 				{
-					if (areaAboutXY(range, azimuth, x, y, &(inputImage[i]), &outputImage, dem,
-									value, &test, recycle, &Ab, &Ag) < -0.001)
-						shadow = TRUE;
-					AbCum = Ab;
-					AgCum = Ag;
-					recycle = TRUE;
-				}
-				if (value > 0)
-				{
-					psiBufTmp[i1][j1] = psiE;
-					/* Note the sin(psiE) undoes the psiE for sigma nought */
-					if (shadow == FALSE && (S1Cal & TRUE) == TRUE)
+					if ((i1 % 100) == 0) fprintf(stderr, "-- %i\n", i1);
+					for (j1 = jMin; j1 < jMax; j1++)
 					{
-						gBufTmp[i1][j1] = 10.0 * log10((AbCum / AgCum) / sin(psiE * DTOR));
-						gBufTmp[i1][j1] = round(gBufTmp[i1][j1] * 100.) / 100.;
-						gBufTmp[i1][j1] = min(max(gBufTmp[i1][j1], -29.9), 20.0);
-					}
-					else
-						gBufTmp[i1][j1] = -30.0; /* Negative value indicates shadow */
-				}
-				else
-					value = -LARGEINT;
-				/* Scaling */
-				imageTmp[i1][j1] = value;
-				if (value > 0 || (noPower > 0 && value > inputImage->noData))
-				{
-					scaleTmp[i1][j1] = 1;
-				}
-			} /* End j1 */
-		}	  /* End i1 */
+						recycle = FALSE;
+						shadow = FALSE;
+						/*
+						   This loop allows or overampling the result by computing multiple values about x and y.
+						   In practice it doesn't help much, is slow, and should therefore be avoided.
+						*/
+						y = (outputImage.originY + i1 * outputImage.deltaY) * MTOKM;
+						x = (outputImage.originX + j1 * outputImage.deltaX) * MTOKM;
+						/*
+						  Convert x/y stereographic coords to lat/lon
+						*/
+						extern int32_t linearSubPixelRTC;
+						if (!linearSubPixelRTC)
+						{
+							xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage.slat);
+							/*
+							  Get height for given lat/lon
+							*/
+							h = getXYHeight(lat, lon, dem, myImg->cpAll.Re, SPHERICAL);
+							hWGS = sphericalToWGSElev(h, lat, myImg->cpAll.Re);
+							/*
+							  Convert lat/lon to image coordinates
+							*/
+							llToImageNew(lat, lon, hWGS, &range, &azimuth, myImg);
+						}
+						/*
+						  Interpolate image
+						*/
+						if (useSubPixelRTC && (S1Cal & TRUE) == TRUE)
+						{
+							float  powerVal;
+							double AbAcc, AgAcc;
+							float  psiAcc;
+							extern int32_t jacobianSubPixelRTC;
+							extern int32_t linearSubPixelRTC;
+							if ((jacobianSubPixelRTC
+									? subPixelGammaRTCJacobian(x, y, myImg, &outputImage, dem,
+															   &powerVal, &AbAcc, &AgAcc, &psiAcc)
+								 : linearSubPixelRTC
+									? subPixelGammaRTCLinear(x, y, myImg, &outputImage, dem,
+															 &powerVal, &AbAcc, &AgAcc, &psiAcc)
+									: subPixelGammaRTC(x, y, myImg, &outputImage, dem,
+													   &powerVal, &AbAcc, &AgAcc, &psiAcc)))
+								shadow = TRUE;
+							value = powerVal;
+							psiE  = psiAcc;
+							AbCum = AbAcc;
+							AgCum = AgAcc;
+						}
+						else
+						{
+							value = interpolatePowerInputImage(*myImg, range, azimuth);
+							psiE = applyCorrections(&value, myImg, range, azimuth, h) * invNAvg;
+							/*
+							   RTC corrections for Sentinel.
+							*/
+							if ((S1Cal & TRUE) == TRUE)
+							{
+								if (areaAboutXY(range, azimuth, x, y, myImg, &outputImage, dem,
+												value, &test, recycle, &Ab, &Ag) < -0.001)
+									shadow = TRUE;
+								AbCum = Ab;
+								AgCum = Ag;
+								recycle = TRUE;
+							}
+						}
+						if (value > 0)
+						{
+							psiBufTmp[i1][j1] = psiE;
+							/* Note the sin(psiE) undoes the psiE for sigma nought */
+							if (shadow == FALSE && (S1Cal & TRUE) == TRUE)
+							{
+								double sinPsi = sin(psiE * DTOR);
+								gBufTmp[i1][j1] = (sinPsi > 1e-6) ? 10.0 * log10((AbCum / AgCum) / sinPsi) : MINS1DB;
+								gBufTmp[i1][j1] = round(gBufTmp[i1][j1] * 100.) / 100.;
+								gBufTmp[i1][j1] = min(max(gBufTmp[i1][j1], -29.9), 35.0);
+							}
+							else
+								gBufTmp[i1][j1] = -30.0; /* Negative value indicates shadow */
+						}
+						else
+							value = -LARGEINT;
+						/* Scaling */
+						imageTmp[i1][j1] = value;
+						if (value > 0 || (noPower > 0 && value > myImg->noData))
+						{
+							scaleTmp[i1][j1] = 1;
+						}
+					} /* End j1 */
+				}	  /* End i1 */
+			} /* End omp parallel */
+			free(localImgs);
+		}
 		/*
 		  Compute scale array for feathering.
 		*/
@@ -526,6 +582,7 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 	extern int32_t hybridZ;
 	extern int32_t nearestDate;
 	extern int32_t noPower;
+	extern int32_t geoMosaicMode;
 	double x, y, hWGS;
 	double lat, lon;
 	int32_t i1, j1;
@@ -545,9 +602,27 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 				hWGS = hybridZ - 1; /* This will force skip */
 
 			if (imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage->noData))
-			{ /* Points with valid datat */
+			{ /* Points with valid data */
+				if (geoMosaicMode == GEOMOSAIC_MIN || geoMosaicMode == GEOMOSAIC_MAX)
+				{ /* pixel-wise min or max across all inputs */
+					float candidate = imageTmp[i1][j1] * scaleTmp[i1][j1];
+					if (scale[i1][j1] <= 0)
+					{ /* first valid pixel at this location */
+						image[i1][j1] = candidate;
+						scale[i1][j1] = 1;
+						psiBuf[i1][j1] = psiBufTmp[i1][j1];
+						gBuf[i1][j1] = gBufTmp[i1][j1];
+					}
+					else if ((geoMosaicMode == GEOMOSAIC_MIN && candidate < image[i1][j1]) ||
+					         (geoMosaicMode == GEOMOSAIC_MAX && candidate > image[i1][j1]))
+					{
+						image[i1][j1] = candidate;
+						psiBuf[i1][j1] = psiBufTmp[i1][j1];
+						gBuf[i1][j1] = gBufTmp[i1][j1];
+					}
+				}
 				/* case for no nearestDate, no orbitPriority, or hWGS override */
-				if ((nearestDate < 0 || (nearestDate > 0 && (int)hWGS > hybridZ)) && orbitPriority < 0)
+				else if ((nearestDate < 0 || (nearestDate > 0 && (int)hWGS > hybridZ)) && orbitPriority < 0)
 				{ /* Summing data or non-nearest date or hybridZ*/
 					image[i1][j1] += imageTmp[i1][j1] * scaleTmp[i1][j1] * inputImage->weight;
 					scale[i1][j1] += scaleTmp[i1][j1];
@@ -559,7 +634,7 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 					if (orbitPriority == ASCENDING)
 					{
 						/* either put in data if none already, or if not ascending replace */
-						if (scale[i1][j1] > 0.1 || scale[i1][j1] == DESCENDING)
+						if (scale[i1][j1] < -0.1 || scale[i1][j1] == DESCENDING)
 						{
 							image[i1][j1] = imageTmp[i1][j1] * inputImage->weight;
 							scale[i1][j1] = inputImage->passType;
@@ -597,7 +672,7 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 	}	  /* end i1=iMin sum current ... */
 }
 
-static float applyCorrections(float *value, inputImageStructure *inputImage, double range, double azimuth, double h)
+float applyCorrections(float *value, inputImageStructure *inputImage, double range, double azimuth, double h)
 {
 	extern int32_t rsatFineCal;
 	extern int32_t S1Cal;
@@ -692,10 +767,10 @@ static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDat
 	if (nearestDate > 0)
 		fprintf(stderr, "Image date %i, Nearest Date %i %i %i %i\n",
 				*imageDate, nearestDate, inputImage->year, inputImage->month, inputImage->day);
-	getMosaicInputImage(inputImage, yMin, yMax);
+	readComplexAsPower(inputImage, yMin, yMax);
 	/* Multilook the image */
 	if (smoothL > 0)
-		smoothImage(&(inputImage[i]), smoothL);
+		smoothImage(inputImage, smoothL);
 	if (inputImage->removePad > 0)
 	{
 		extraPad = 0;
@@ -887,7 +962,7 @@ static void smoothImage(inputImageStructure *inputImage, int32_t smoothL)
 	extern float *smoothBuf;
 	float **image;
 	float *filt;
-	float sum, sumF;
+	float sum = 0.0, sumF;
 	int32_t i, j, k;
 	int32_t hw;
 	if (smoothL < 1)
@@ -897,8 +972,8 @@ static void smoothImage(inputImageStructure *inputImage, int32_t smoothL)
 	else
 		hw = (int)(smoothL / 2);
 
-	filt = (float *)malloc((size_t)((hw * 2 + 1) * sizeof(float)));
-	filt = &(filt[hw]);
+	float *filtBase = (float *)malloc((size_t)((hw * 2 + 1) * sizeof(float)));
+	filt = &(filtBase[hw]);
 	if (smoothL > 1)
 		for (i = -hw; i <= hw; i++)
 			filt[i] = 1;
@@ -975,4 +1050,5 @@ static void smoothImage(inputImageStructure *inputImage, int32_t smoothL)
 			image[i][j] = smoothBuf[i];
 	}
 	fprintf(stderr, "++ %i %i \n", i, j);
+	free(filtBase);
 }

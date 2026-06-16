@@ -346,6 +346,14 @@ void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], do
 	  Invert C
 	*/
 	detC = C[0][0] * C[1][1] - C[0][1] * C[1][0];
+	if (detC < 0.25)
+	{
+		*vx = -LARGEINT;
+		*vy = -LARGEINT;
+		*scaleX = 0.0;
+		*scaleY = 0.0;
+		return;
+	}
 	Cinv[0][0] = C[1][1] / detC;
 	Cinv[1][1] = C[0][0] / detC;
 	Cinv[0][1] = -C[0][1] / detC;
@@ -375,17 +383,6 @@ void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], do
 	*/
 	*scaleX = 1.0 / ex;
 	*scaleY = 1.0 / ey;
-	/*
-	   Added this to avoid large errors with wonky slopes
-	   Forces no solution for low detC
-	*/
-	if (detC < 0.25)
-	{
-		*vx = -LARGEINT;
-		*vy = -LARGEINT;
-		*scaleX = 0.0;
-		*scaleY = 0.0;
-	}
 	return;
 }
 
@@ -703,13 +700,6 @@ void getIntersectOld(inputImageStructure *dPhaseImage, inputImageStructure *aPha
 		/* fprintf(stderr,"**** %f %f %i %i\n", xiP[i], yiP[i], inA, inD);*/
 	}
 	return;
-	if (inA == FALSE && inD == FALSE)
-	{
-		*iMin = 0;
-		*iMax = 0;
-		*jMin = 0;
-		*jMax = 0;
-	}
 }
 
 /*
@@ -923,7 +913,6 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 	outputImage->deltaX = pixelSize;
 	outputImage->deltaY = pixelSize;
 	fprintf(stderr, "pixelSize = %f %f %i\n", pixelSize, inputImage.par.slpA, inputImage.nAzimuthLooks);
-	fprintf(stderr, "--x0,y0 %lf %lf\n\n", outputImage->originX, outputImage->originY);
 	/*
 	  Determin lower left and upper right corner of image
 	*/
@@ -942,7 +931,6 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 		outputImage->originX = minX; /* else outputImage->originX=0.0;*/
 	if (outputImage->originY > (LARGEINT - 1))
 		outputImage->originY = minY; /* else outputImage->originY=0.0;*/
-	fprintf(stderr, "--x0,y0 %lf %lf\n\n", outputImage->originX, outputImage->originY);
 	/*
 	  Determine image type float/complex
 	*/
@@ -957,7 +945,9 @@ void initOutputImage(outputImageStructure *outputImage, inputImageStructure inpu
 		outputImage->xSize = (int32_t)((maxX - minX) / outputImage->deltaX) + 1;
 	if (outputImage->ySize <= 0.0)
 		outputImage->ySize = (int32_t)((maxY - minY) / outputImage->deltaY) + 1;
-	fprintf(stderr, "xSize,ySize = %i %i\n", outputImage->xSize, outputImage->ySize);
+	fprintf(stderr, "bbox x0=%.3f y0=%.3f xSize=%i ySize=%i\n",
+	        outputImage->originX, outputImage->originY,
+	        outputImage->xSize, outputImage->ySize);
 	/*
 	  Init space for image
 	*/

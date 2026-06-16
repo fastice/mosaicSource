@@ -5,9 +5,9 @@ OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
 $(shell mkdir -p $(OBJDIR))
 
-CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
+CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
-SRCS =	addIrregData.c bilinearInterp.c buffers.c computeHeading.c computePhiZ.c \
+SRCS =	addIrregData.c bilinearInterp.c buffers.c computeHeading.c computePhiFlatEarth.c computePhiZ.c \
 	computeScale.c computeTiePoints.c computeXYangle.c \
 	earthRadiusFunctions.c geojsonCode.c getAzimuthBoundsForXYBox.c getBaseline.c \
 	getDataStringSpecial.c getHeight.c getIrregData.c \

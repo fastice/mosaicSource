@@ -12,9 +12,9 @@
 //void readXYDEMGeoInfo(char *xyFile, void *xydem, int32_t resetProjection);
 static void readXYGeodatFile(char *xyFile, double *x0, double *y0, double *deltaX, double *deltaY, 
 							int32_t *xSize, int32_t *ySize, double *rot, int32_t *hemisphere, double *stdLat);
-static float **readXYImageCrop(char *xyFile, void *xyImage, double xmin, double xmax, double  ymin, double ymax, int type);
+static float **readXYImageCrop(char *xyFile, void *xyImage, double xmin, double xmax, double ymin, double ymax, int type, int bandIndex);
 static float **readXYImageGDALCropped(char *xyFile, void *xyImage, double xMin, double xMax,
-						   		double yMin, double yMax, int32_t type);
+						   		double yMin, double yMax, int32_t type, int bandIndex);
 static void getCropBounds(GDALDatasetH hDataset, double xMin, double xMax, double yMin, double yMax,
 				   int *xOffset, int *yOffset, void *obj, int32_t *flip, int32_t type);
 static void readXYGeoInfo(char *xyFile, void *xyImage, int32_t resetProjection, int type);
@@ -46,7 +46,7 @@ void readXYDEM(char *xyFile, xyDEM *xydem) {
 
 void readXYDEMcrop(char *xyFile, xyDEM *xyDEM, double xmin, double xmax, double ymin, double ymax)
 {   // Read a cropped area from a DEM
-	xyDEM->z = readXYImageCrop(xyFile, xyDEM,  xmin,  xmax, ymin, ymax, DEM);
+	xyDEM->z = readXYImageCrop(xyFile, xyDEM,  xmin,  xmax, ymin, ymax, DEM, 1);
 	if(xyDEM->z == NULL)
 		error("Could readXYDEMcrop %s\n", xyFile);
 }
@@ -60,14 +60,27 @@ void readXYCropVel(xyVEL *xyvel, char *velFile, double xmin, double xmax, double
 {   // read a cropped velocity map
 	char *vxFile, *vyFile;
 	if(has_extension(velFile, ".tif") == TRUE || has_extension(velFile, ".vrt")) {
-		//Option 1 use a wild card *
-		vxFile = replace_wildcard(velFile, "*", "vx");
-		vyFile = replace_wildcard(velFile, "*", "vy");
-		// Option to use vv in place of vx, vy
 		vxFile = replace_wildcard(velFile, "vv", "vx");
 		vyFile = replace_wildcard(velFile, "vv", "vy");
-		if(vxFile == NULL || vyFile == NULL) 
-			error("velocity file name %s has not '*' wildcard for vx and vy location");
+		if(vxFile == NULL || vyFile == NULL || strcmp(vxFile, velFile) == 0 || strcmp(vyFile, velFile) == 0) {
+			/* Fallback: single multi-band file with bands labelled "vx" / "vy" */
+			GDALDatasetH hDS = GDALOpen(velFile, GA_ReadOnly);
+			if (hDS == NULL)
+				error("velThresh: cannot open velocity file %s\n", velFile);
+			int nBands = GDALGetRasterCount(hDS);
+			int vxBand = 0, vyBand = 0;
+			for (int b = 1; b <= nBands; b++) {
+				const char *desc = GDALGetDescription(GDALGetRasterBand(hDS, b));
+				if (desc && strcmp(desc, "vx") == 0) vxBand = b;
+				if (desc && strcmp(desc, "vy") == 0) vyBand = b;
+			}
+			GDALClose(hDS);
+			if (vxBand == 0 || vyBand == 0)
+				error("No bands labelled 'vx'/'vy' found in %s\n", velFile);
+			xyvel->vx = readXYImageCrop(velFile, xyvel, xmin, xmax, ymin, ymax, VELOCITY, vxBand);
+			xyvel->vy = readXYImageCrop(velFile, xyvel, xmin, xmax, ymin, ymax, VELOCITY, vyBand);
+			return;
+		}
 	} else {
 		vxFile = appendSuffix(velFile, ".vx",
 							   (char *)malloc((size_t)strlen(velFile) + 4));
@@ -80,8 +93,8 @@ void readXYCropVel(xyVEL *xyvel, char *velFile, double xmin, double xmax, double
 	fileExists(vxFile, TRUE);
 	fileExists(vyFile, TRUE);
 	
-	xyvel->vx = readXYImageCrop(vxFile, xyvel,  xmin,  xmax, ymin, ymax, VELOCITY);
-	xyvel->vy = readXYImageCrop(vyFile, xyvel,  xmin,  xmax, ymin, ymax, VELOCITY);
+	xyvel->vx = readXYImageCrop(vxFile, xyvel,  xmin,  xmax, ymin, ymax, VELOCITY, 1);
+	xyvel->vy = readXYImageCrop(vyFile, xyvel,  xmin,  xmax, ymin, ymax, VELOCITY, 1);
 }
 
 static void readXYGeodatFile(char *xyFile, double *x0, double *y0, double *deltaX, double *deltaY, 
@@ -147,8 +160,8 @@ static void readXYGeodatFile(char *xyFile, double *x0, double *y0, double *delta
 }
 
 
-static float **readXYImageCrop(char *xyFile, void *xyImage, double xmin, double xmax, double  ymin, double ymax, int type)
-{  // Read a cropped area from an XY image binary, tiff, or VRT. 
+static float **readXYImageCrop(char *xyFile, void *xyImage, double xmin, double xmax, double ymin, double ymax, int type, int bandIndex)
+{  // Read a cropped area from an XY image binary, tiff, or VRT.
 	extern int32_t HemiSphere;
 	extern double Rotation;
 	extern double SLat;
@@ -164,7 +177,7 @@ static float **readXYImageCrop(char *xyFile, void *xyImage, double xmin, double 
 	off_t offset1;
 	fprintf(stderr, "READING *** cropped *** %s\n", xyFile);
 	if (has_extension(xyFile, ".tif") == TRUE || has_extension(xyFile, ".vrt")) {
-		return readXYImageGDALCropped(xyFile, xyImage,  xmin, xmax, ymin, ymax, type);
+		return readXYImageGDALCropped(xyFile, xyImage,  xmin, xmax, ymin, ymax, type, bandIndex);
 	}
 	// Read geometric info
 	readXYGeodatFile(xyFile, &x0DEM, &y0DEM, &deltaX, &deltaY, &xSizeDEM, &ySizeDEM, &rot, &hemisphere, &stdLat);
@@ -222,7 +235,7 @@ static float **readXYImageCrop(char *xyFile, void *xyImage, double xmin, double 
 }
 
 static float **readXYImageGDALCropped(char *xyFile, void *xyImage, double xMin, double xMax,
-						   		double yMin, double yMax, int32_t type)
+						   		double yMin, double yMax, int32_t type, int bandIndex)
 // Read a cropped area from the DEM.
 {
 	extern int32_t HemiSphere;
@@ -239,7 +252,8 @@ static float **readXYImageGDALCropped(char *xyFile, void *xyImage, double xMin, 
 	getCropBounds(hDataset, xMin, xMax, yMin, yMax, &xOffset, &yOffset, xyImage, &flip, type);
 	getXYSize(xyImage, type, &xSize, &ySize);
 	// Get the band (for now assume single band)
-	GDALRasterBandH hBand = GDALGetRasterBand(hDataset, 1);
+	fprintf(stderr, "readXYImageGDALCropped: bandIndex=%d file=%s\n", bandIndex, xyFile);
+	GDALRasterBandH hBand = GDALGetRasterBand(hDataset, bandIndex);
 	if (hBand == NULL)
 	{
 		fprintf(stderr, "Failed to get raster band.\n");
@@ -260,6 +274,7 @@ static float **readXYImageGDALCropped(char *xyFile, void *xyImage, double xMin, 
 	// Read the cropped region
 	CPLErr err = GDALRasterIO(hBand, GF_Read, xOffset, yOffset, xSize, ySize,
 							  buffer, xSize, ySize, GDT_Float32, 0, 0);
+	fprintf(stderr, "  bandIndex=%d first buffer value: %f\n", bandIndex, buffer[0]);
 	return image;
 }
 

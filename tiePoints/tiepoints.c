@@ -20,7 +20,8 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 					 int32_t *imageCoords, int32_t *motionFlag, int32_t *timeReverseFlag,
 					 double *nDays, int32_t *quadB, double *stdLat,
 					 int32_t *bnbpFlag, int32_t *bpFlag, int32_t *bnbpdBpFlag,
-					 int32_t *bpdBpFlag, int32_t *vrFlag, char **shelfMaskFile);
+					 int32_t *bpdBpFlag, int32_t *vrFlag, char **shelfMaskFile,
+					 int32_t *yamlOutput, int32_t *verbose);
 
 static void usage();
 
@@ -51,6 +52,7 @@ int main(int argc, char *argv[])
 	int32_t bufferSize;
 	int32_t imageCoords;
 	int32_t motionFlag, quadB, bnbpFlag, bpFlag, bnbpdBpFlag, bpdBpFlag, vrFlag;
+	int32_t yamlOutput, verbose;
 	int32_t i, j; /* LCV */
 	/*
 	   Read command line args and compute filenames
@@ -59,7 +61,8 @@ int main(int argc, char *argv[])
 	readArgs(argc, argv, &imageFlag, &passType, &noDEM, &noRamp, &demFile,
 			 &inputFile, &tiePointFile, &phaseFile, &baselineFile,
 			 &dBpFlag, &imageCoords, &motionFlag, &timeReverseFlag, &nDays, &quadB,
-			 &stdLat, &bnbpFlag, &bpFlag, &bnbpdBpFlag, &bpdBpFlag, &vrFlag, &shelfMaskFile);
+			 &stdLat, &bnbpFlag, &bpFlag, &bnbpdBpFlag, &bpdBpFlag, &vrFlag, &shelfMaskFile,
+			 &yamlOutput, &verbose);
 	/*
 	  Parse input file
 	*/
@@ -68,11 +71,6 @@ int main(int argc, char *argv[])
 	inputImage.passType = passType;
 	inputImage.stateFlag = TRUE;
 	parseInputFile(inputFile, &inputImage);
-
-	if (passType == ASCENDING)
-		fprintf(stderr, "Ascending pass\n");
-	else
-		fprintf(stderr, "Descending pass\n");
 
 	tiePoints.motionFlag = motionFlag;
 	tiePoints.timeReverseFlag = timeReverseFlag;
@@ -85,23 +83,6 @@ int main(int argc, char *argv[])
 	tiePoints.stdLat = stdLat;
 	tiePoints.vrFlag = vrFlag;
 
-	if (quadB == TRUE)
-		fprintf(stderr, "\n(****Quadratic fit*****\n");
-	else if (bnbpFlag == TRUE)
-		fprintf(stderr, "\n(****bn,bp fit*****\n");
-	else if (bpFlag == TRUE)
-		fprintf(stderr, "\n(****bp only fit*****\n");
-	else if (bnbpdBpFlag == TRUE)
-		fprintf(stderr, "\n(***bn,bp,dBp only fit****\n");
-	else if (bpdBpFlag == TRUE)
-		fprintf(stderr, "\n(****bp,dBp only fit*****\n");
-	else
-		fprintf(stderr, "\n(****Linear fit****\n*");
-
-	if (motionFlag == TRUE)
-		fprintf(stderr, "\n\n***Using %f day motion tiepoints*** \n\n", tiePoints.nDays);
-	if (timeReverseFlag == TRUE)
-		fprintf(stderr, "\n\n***Using timeReverse Flag *** \n\n");
 	/*
 	  Input tiepoints
 	*/
@@ -110,21 +91,33 @@ int main(int argc, char *argv[])
 
 	if (tiePoints.lat[0] < 0)
 	{
-		fprintf(stderr, "**** SOUTHERN HEMISPHERE ****");
 		HemiSphere = SOUTH;
 		tiePoints.stdLat = 71;
 		Rotation = 0.0;
 	}
-	else
-		fprintf(stderr, "**** NORTHERN HEMISPHERE ****");
+
+	{
+		const char *passStr = (passType == ASCENDING) ? "Ascending" : "Descending";
+		const char *fitStr  = quadB       ? "Quadratic" :
+		                      bnbpFlag    ? "bn,bp"     :
+		                      bpFlag      ? "bpOnly"    :
+		                      bnbpdBpFlag ? "bn,bp,dBp" :
+		                      bpdBpFlag   ? "bp,dBp"    : "Linear";
+		const char *hemStr  = (HemiSphere == SOUTH) ? "South" : "North";
+		fprintf(stderr, "%s %s %s fit nDays=%.6g%s\n",
+		        passStr, hemStr, fitStr, nDays,
+		        timeReverseFlag ? " timeReverse" : "");
+	}
 
 	tiePoints.noRamp = noRamp;
 	tiePoints.dBpFlag = dBpFlag;
 	tiePoints.imageCoords = imageCoords;
-	if (tiePoints.noRamp == TRUE)
-		fprintf(stderr, "NO RAMP\n");
-	else
-		fprintf(stderr, "RAMP\n");
+	if (verbose) {
+		if (tiePoints.noRamp == TRUE)
+			fprintf(stderr, "NO RAMP\n");
+		else
+			fprintf(stderr, "RAMP\n");
+	}
 	/*
 	  Call to set up stuff, don't really use the outputimage
 	*/
@@ -143,39 +136,42 @@ int main(int argc, char *argv[])
 	/*
 	  Compute image coords and get z from dem if necessary
 	*/
-	computeTiePoints(&inputImage, &tiePoints, dem, noDEM, inputFile, outputImage.shelfMask, FALSE);
+	computeTiePoints(&inputImage, &tiePoints, dem, noDEM, inputFile, outputImage.shelfMask, yamlOutput);
 	/*
 	  Extract phases from phase file.
 	*/
-	getPhases(phaseFile, &tiePoints, inputImage);
+	getPhases(phaseFile, &tiePoints, inputImage, yamlOutput, verbose);
 	/*
 	  Add baseline corrections for previously removed baselines
 	*/
-	addBaselineCorrections(baselineFile, &tiePoints, inputImage);
+	addBaselineCorrections(baselineFile, &tiePoints, inputImage, yamlOutput, verbose);
 	/*
 	  Motion corrections
 	*/
 	if (motionFlag == TRUE || vrFlag == TRUE)
 	{
-		fprintf(stderr, "Before motion corrections\n");
-		addMotionCorrections(inputImage, &tiePoints);
-		fprintf(stderr, "After motion corrections\n");
+		if (verbose) fprintf(stderr, "Before motion corrections\n");
+		addMotionCorrections(inputImage, &tiePoints, verbose);
+		if (verbose) fprintf(stderr, "After motion corrections\n");
 	}
 	/*
 	  Output results for checking to sterr
 	*/
-	for (i = 0; i < tiePoints.npts; i++)
-		if (fabs(tiePoints.phase[i]) < 200000)
-			fprintf(stderr, "%8.1f %8.1f %8.1f ---  %7.2f %7.2f --- %f ---- %f\n",
-					tiePoints.x[i],
-					tiePoints.y[i], tiePoints.z[i], tiePoints.r[i], tiePoints.a[i],
-					tiePoints.phase[i], tiePoints.vyra[i]);
-	fprintf(stderr, "\n");
+	if (verbose)
+	{
+		for (i = 0; i < tiePoints.npts; i++)
+			if (fabs(tiePoints.phase[i]) < 200000)
+				fprintf(stderr, "%8.1f %8.1f %8.1f ---  %7.2f %7.2f --- %f ---- %f\n",
+						tiePoints.x[i],
+						tiePoints.y[i], tiePoints.z[i], tiePoints.r[i], tiePoints.a[i],
+						tiePoints.phase[i], tiePoints.vyra[i]);
+		fprintf(stderr, "\n");
+	}
 
 	/*
 	  Estimate baseline solution and output to stdout
 	*/
-	computeBaseline(&tiePoints, inputImage);
+	computeBaseline(&tiePoints, inputImage, yamlOutput, verbose);
 }
 
 static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passType,
@@ -183,7 +179,7 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 					 char **tiePointFile, char **phaseFile, char **baselineFile, int32_t *dBpFlag,
 					 int32_t *imageCoords, int32_t *motionFlag, int32_t *timeReverseFlag,
 					 double *nDays, int32_t *quadB, double *stdLat, int32_t *bnbpFlag, int32_t *bpFlag, int32_t *bnbpdBpFlag,
-					 int32_t *bpdBpFlag, int32_t *vrFlag, char **shelfMaskFile)
+					 int32_t *bpdBpFlag, int32_t *vrFlag, char **shelfMaskFile, int32_t *yamlOutput, int32_t *verbose)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -210,6 +206,8 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 	*stdLat = 70.0;
 	*quadB = FALSE;
 	*vrFlag = FALSE;
+	*yamlOutput = FALSE;
+	*verbose = FALSE;
 	for (i = 1; i <= n; i++)
 	{
 		argString = strchr(argv[i], '-');
@@ -273,7 +271,11 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 		else if (strstr(argString, "dBp") != NULL)
 			*dBpFlag = TRUE;
 		else if (strstr(argString, "center") != NULL)
-			fprintf(stderr, "ignoring obsolete center flag\n");
+			{ if (*verbose) fprintf(stderr, "ignoring obsolete center flag\n"); }
+		else if (strstr(argString, "yaml") != NULL)
+			*yamlOutput = TRUE;
+		else if (strstr(argString, "verbose") != NULL)
+			*verbose = TRUE;
 		else if (strstr(argString, "motion") != NULL)
 			*motionFlag = TRUE;
 		else if (strstr(argString, "timeReverse") != NULL)

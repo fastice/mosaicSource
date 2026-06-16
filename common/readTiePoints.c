@@ -18,8 +18,7 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 	char lineBuffer[LINEMAX + 1];
 	char *line; /* Input line buffer */
 	int lineCount = 0;
-	if (noDEM == TRUE)
-		fprintf(stderr, "NO DEM used\n");
+	if (noDEM == TRUE) {}
 	line = lineBuffer; /* Allocate line buffer */
 	notdone = TRUE;
 

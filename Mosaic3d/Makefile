@@ -5,7 +5,7 @@ OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
 $(shell mkdir -p $(OBJDIR))
 
-CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
+CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
 SRCS =	get3DInputFile.c make3DOffsets.c make3DMosaic.c makeVhMosaic.c \
 	mosaic3d.c setup3D.c speckleTrackMosaic.c writeTieFile.c

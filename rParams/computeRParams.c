@@ -62,11 +62,11 @@ static void computeLinearBaseline(inputImageStructure *inputImage, Offsets *offs
 	*dbp = bp2 - bp1;
 }
 
-void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets)
+double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets)
 {
 	double Re, H, RNear, thetaC, dr, rOffset, ReH;
 	double *a; /* Solution for params */
-	double nParams;
+	int32_t nParams;
 	double theta, thetaD, zSp, r0, Cij;
 	double **v, **u, chisq;
 	double *y, *sig, *w, *chsq, *sigB, **Cp, **C6;
@@ -102,7 +102,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 		nParams = 1;
 	if (tiePoints->deltaB == DELTABQUAD)
 		nParams = 6;
-	fprintf(stderr, "*** nParams = %f %i\n", nParams, (int)tiePoints->constOnlyFlag);
+	fprintf(stderr, "*** nParams = %i %i\n", nParams, (int)tiePoints->constOnlyFlag);
 	a = dvector(1, nParams);
 	/* Added 6/12/07 to adjust ReH along track */
 	initllToImageNew(&inputImage);
@@ -158,10 +158,10 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 			if (tiePoints->deltaB == DELTABNONE)
 			{
 				if(tiePoints->initWithSV == TRUE) {
-					computeLinearBaseline(&inputImage, offsets, thetaC, &(tiePoints->BnCorig), &(tiePoints->BpCorig), &(tiePoints->dBnorig), &(tiePoints->dBpQorig));
+					computeLinearBaseline(&inputImage, offsets, thetaC, &(tiePoints->BnCorig), &(tiePoints->BpCorig), &(tiePoints->dBnorig), &(tiePoints->dBporig));
 					tiePoints->dBnQorig = 0.;
 					tiePoints->dBpQorig = 0.;
-					fprintf(stderr, "Initial SV-based baseline estimate: Bn %f dBn %f Bp %f dBp %f\n", tiePoints->BnCorig, tiePoints->dBnorig, tiePoints->BpCorig, tiePoints->dBpQorig);
+					fprintf(stderr, "Initial SV-based baseline estimate: Bn %f dBn %f Bp %f dBp %f\n", tiePoints->BnCorig, tiePoints->dBnorig, tiePoints->BpCorig, tiePoints->dBporig);
 				}
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
@@ -276,15 +276,15 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 				j++;
 			} /* End if */
 		}	  /* End for i */
-		varP = varP / (double)npts;
-		meanP = meanP / (double)npts;
-		sigP = sqrt(varP - meanP * meanP);
-		fprintf(stderr, "k= %i v= %lf  sig= %lf mean = %lf\n", k, varP, sigP, meanP);
-		if (i1 < nParams)
+		if (npts < nParams)
 		{
-			fprintf(stderr, "rParams: Insufficient Number (%i)  of Valid tie points \n", i1);
+			fprintf(stderr, "rParams: Insufficient Number (%i)  of Valid tie points \n", npts);
 			fewPoints();
 		}
+		varP = varP / (double)npts;
+		meanP = meanP / (double)npts;
+		sigP = sqrt(max(0.0, varP - meanP * meanP));
+		fprintf(stderr, "k= %i v= %lf  sig= %lf mean = %lf\n", k, varP, sigP, meanP);
 		if (k == kPrint)
 		{
 			fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,dBp\n;\n");
@@ -430,7 +430,7 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 		else if (tiePoints->bpdBpFlag == TRUE)
 		{
 			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f %f\n&\n", tiePoints->BnCorig, tiePoints->BpCorig, tiePoints->dBnorig,
-					a[1], 0.0, 0.0, a[2]);
+					a[1], a[2], 0.0, 0.0);
 		}
 		else if (tiePoints->constOnlyFlag == TRUE)
 		{
@@ -458,7 +458,9 @@ void computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImag
 			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f %f\n&\n", a[1], a[4], a[3], a[2], 0.0, a[6], a[5]);
 		}
 	}
-	return;
+	if (offsets->rOffCorrection.correctionFile[0] != '\0')
+		fprintf(stdout, ";* offsetCorrectionFile %s\n", offsets->rOffCorrection.correctionFile);
+	return sigP;
 }
 
 void fewPoints()

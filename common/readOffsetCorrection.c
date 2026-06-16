@@ -31,15 +31,13 @@ void mallocCorrectionBuffer(int bufferMode)
 }
 
 /*
- * Read an ionospheric range-offset correction from a VRT file into
+ * Read an ionospheric range-offset correction from a VRT/GeoTIFF into
  * offsets->rOffCorrection.
  *
- * The VRT metadata must contain:
- *   NumberRangeLooks   -> stored as rOffCorrection.deltaR
- *   NumberAzimuthLooks -> stored as rOffCorrection.deltaA
- *
- * Raster dimensions (xSize, ySize) give nr and na.
- * Origin (r0, a0) is set to deltaR/2, deltaA/2 (centre of first pixel).
+ * The correction file is on the native ROFF grid — the same pixel spacing
+ * and origin as the range offsets (r0, a0, deltaR, deltaA in SLC pixels).
+ * Those values are copied directly from the already-populated offsets struct
+ * rather than re-reading them from file metadata.
  *
  * Data is placed into the pre-allocated pool:
  *   RANGEBUFF          -> correctionBuf1 / Correction1
@@ -50,10 +48,8 @@ void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode
     extern void *correctionBuf1, *correctionBuf2, *Correction1, *Correction2;
     GDALDatasetH   hDS;
     GDALRasterBandH hBand;
-    dictNode *metaData = NULL;
     float **rangeOffsetCorrection;
     float  *data;
-    float   deltaR, deltaA;
     int32_t nr, na;
     int     i, status;
 
@@ -75,16 +71,14 @@ void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode
         error("readOffsetCorrection: %s na=%i exceeds MAXOFFLENGTH=%i\n",
               correctionFile, na, MAXOFFLENGTH);
 
-    readDataSetMetaData(hDS, &metaData);
-    deltaR = (float)atof(get_value(metaData, "NumberRangeLooks"));
-    deltaA = (float)atof(get_value(metaData, "NumberAzimuthLooks"));
-
+    /* Correction is on the ROFF grid — inherit r0/a0/deltaR/deltaA from the
+       range offsets (already populated from range.offsets.vrt metadata). */
     offsets->rOffCorrection.nr     = nr;
     offsets->rOffCorrection.na     = na;
-    offsets->rOffCorrection.rO     = (int32_t)(deltaR / 2);
-    offsets->rOffCorrection.aO     = (int32_t)(deltaA / 2);
-    offsets->rOffCorrection.deltaR = deltaR;
-    offsets->rOffCorrection.deltaA = deltaA;
+    offsets->rOffCorrection.rO     = offsets->rO;
+    offsets->rOffCorrection.aO     = offsets->aO;
+    offsets->rOffCorrection.deltaR = offsets->deltaR;
+    offsets->rOffCorrection.deltaA = offsets->deltaA;
 
     if (bufferMode == RANGEBUFF)
     {
@@ -114,6 +108,6 @@ void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode
 
     GDALClose(hDS);
     fprintf(stderr, "readOffsetCorrection: %s  nr=%i na=%i deltaR=%.1f deltaA=%.1f r0=%i a0=%i\n",
-            correctionFile, nr, na, deltaR, deltaA,
+            correctionFile, nr, na, offsets->rOffCorrection.deltaR, offsets->rOffCorrection.deltaA,
             offsets->rOffCorrection.rO, offsets->rOffCorrection.aO);
 }

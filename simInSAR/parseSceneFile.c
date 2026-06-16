@@ -7,15 +7,14 @@
 #include "simInSARInclude.h"
 //#include "gdalIO/gdalIO/grimpgdal.h"
 
-static GDALRasterBandH getVRTOffsetMeta(char *datFile, int32_t *rO, int32_t *aO, int32_t *nr, int32_t *na, float *deltaR, float *deltaA)
+static void getVRTOffsetMeta(char *datFile, int32_t *rO, int32_t *aO, int32_t *nr, int32_t *na, float *deltaR, float *deltaA)
 {
 	dictNode *metaData = NULL;
-	// GDALRasterBandH hBand;
 	GDALDatasetH hDS;
-	float tmp;
 	// Get meta data
-	//hBand = GDALGetRasterBand(hDS, 0);
 	hDS = GDALOpen(datFile, GDAL_OF_READONLY);
+	if (hDS == NULL)
+		error("getVRTOffsetMeta: could not open %s\n", datFile);
 	*nr = GDALGetRasterXSize(hDS);
 	*na = GDALGetRasterYSize(hDS);
 	readDataSetMetaData(hDS, &metaData);
@@ -33,7 +32,7 @@ static void parseOffsetParamFile(char *datFile, int32_t *rO, int32_t *aO, int32_
 {
 	int32_t nChar, isVRT = TRUE, isDAT = TRUE;
 	char *datTemplate = "dat", *vrtTemplate = "vrt";
-	int32_t lineCount, eod, nRead;
+	int32_t lineCount = 0, eod, nRead;
 	char line[1024];
 	GDALDatasetH hDS;
 	FILE *fp;
@@ -80,8 +79,9 @@ void parseSceneFile(char *sceneFile, sceneStructure *scene)
 	/*
 	  Compute baseline increment size
 	*/
-	scene->bnStep = (scene->bnEnd - scene->bnStart) / (double)(scene->I.azimuthSize - 1.0);
-	scene->bpStep = (scene->bpEnd - scene->bpStart) / (double)(scene->I.azimuthSize - 1.0);
+	double azDenom = (scene->I.azimuthSize > 1) ? (double)(scene->I.azimuthSize - 1) : 1.0;
+	scene->bnStep = (scene->bnEnd - scene->bnStart) / azDenom;
+	scene->bpStep = (scene->bpEnd - scene->bpStart) / azDenom;
 
 	if (scene->toLLFlag == TRUE)
 	{

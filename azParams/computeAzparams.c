@@ -89,6 +89,8 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	ReH = getReH(cP, inputImage, azimuth);
 	RNear = cP->RNear;
 	fprintf(stderr, "---------------------RNear %f %f \n", RNear, H);
+	azimuth = inputImage->azimuthSize / 2.0;
+	ReH = getReH(cP, inputImage, azimuth);
 
 	/* Fixed 12/1/22 to force zero for sv solutions */
 	thetaC = thetaRReZReH(cP->RCenter, (Re + 0), (ReH));
@@ -133,6 +135,8 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	for (i = 0; i < nData; i++)
 		if (fabs(tiePoints->phase[i]) < 1.0E6)
 			weightSum += tiePoints->weight[i];
+	if (weightSum == 0.0)
+		error("azparams: all tiepoint weights are zero\n");
 	/*
 	  Run 3 times 1) initial estimate with unknown errors, 2) use estimate to determine residual 3) final solution with sigma detemermine by residual
 	 */
@@ -194,14 +198,14 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 				j++;
 			} /* End if */
 		} /* End for i */
-		if (i1 < ma)
-			error("aparams: Insufficient Number (%i)  of Valid tie points \n", i1);
+		if (npts < ma)
+			error("azparams: Insufficient Number (%i)  of Valid tie points \n", npts);
 		/*
 		  Solve for parameters
 		*/
 		varP = varP / npts;
 		meanP = meanP / npts;
-		sigP = sqrt(varP - meanP * meanP);
+		sigP = sqrt(max(0.0, varP - meanP * meanP));
 		fprintf(stderr, "mean sigma %lf %lf \n", meanP, sigP);
 		if (tiePoints->constOnlyFlag == TRUE)
 		{
@@ -383,7 +387,7 @@ void azCoeffsLinear(void *x, int32_t i, double *afunc, int32_t ma)
 static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, double prf, double slPixSize, int32_t lookDir)
 {
 	char line[1024];
-	int32_t lineCount, eod;
+	int32_t lineCount = 0, eod;
 	double x1, x2, x3;
 	FILE *fp;
 

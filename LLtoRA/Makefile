@@ -5,7 +5,7 @@ OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
 $(shell mkdir -p $(OBJDIR))
 
-CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
+CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
 SRCS =	lltora.c
 

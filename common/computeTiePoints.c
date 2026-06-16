@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include "string.h"
+#include <omp.h>
 #include "mosaicSource/common/common.h"
 /*#include "tiePoints.h"*/
 #include "time.h"
@@ -34,7 +35,7 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 	int32_t k = 0;
 	startTime = clock();
 	initllToImageNew(inputImage);
-	fprintf(stderr, "Using new \n");
+	if (!supressOutput) fprintf(stderr, "Using new \n");
 	initTime = clock();
 	cP = &(inputImage->cpAll);
 	Re = cP->Re;
@@ -52,7 +53,6 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 	*/
 	tideFile[0] = '\0';
 	strcpy(tideFile, geodatFile);
-	fprintf(stderr, "%s\n", geodatFile);
 	tmpS = strrchr(tideFile, '/');
 	if (tmpS != NULL)
 		tmpS[0] = '\0';
@@ -73,8 +73,14 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 			fprintf(stdout, ";; Tide difference : %s\n", "none");
 	}
 	/*
-	  Loop over output points
+	  Loop over output points — parallelized with OpenMP.
+	  inputImage->lastTime (written by llToImageNew) is a warm-start cache;
+	  the race is benign: worst case the Newton iteration starts from center
+	  time instead of the previous point's converged time.
 	*/
+#pragma omp parallel for \
+	private(lat, lon, xx, yy, sMask, deltaZ, vz1, zWGS, zSp, RElip, range, azimuth, azOrigin) \
+	schedule(dynamic, 100)
 	for (i = 0; i < tiePoints->npts; i++)
 	{
 		lat = tiePoints->lat[i];

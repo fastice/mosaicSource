@@ -75,9 +75,9 @@ int main(int argc, char *argv[])
 	/*
 	  Set inputs
 	*/
-	if (constOnlyFlag == TRUE)
+	if (tiePoints.constOnlyFlag == TRUE)
 		fprintf(stderr, "\n(****Constant only fit*****\n");
-	if (linFlag == TRUE)
+	if (tiePoints.linFlag == TRUE)
 		fprintf(stderr, "\n(****Including linear term fit*****\n");
 	/*
 	  Input tiepoints

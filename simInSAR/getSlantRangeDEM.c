@@ -15,10 +15,7 @@ void getSlantRangeDEM(char *demFile, demStructure *dem,
        Init image
     */
     fprintf(stderr, "begin getSlantRangeDEM\n");
-    dem->demData = (float **)malloc(scene.I.azimuthSize *
-                                    sizeof(float *));
-    for (i = 0; i < scene.I.azimuthSize; i++)
-        dem->demData[i] = (float *)malloc(scene.I.rangeSize * sizeof(float));
+    dem->demData = mallocImage(scene.I.azimuthSize, scene.I.rangeSize);
     dem->lonSize = scene.I.rangeSize;
     dem->latSize = scene.I.azimuthSize;
     /*
@@ -26,7 +23,7 @@ void getSlantRangeDEM(char *demFile, demStructure *dem,
     */
     fp = openInputFile(demFile);
     for (i = 0; i < scene.I.azimuthSize; i++)
-        freadBS(dem->demData[i], scene.I.rangeSize * sizeof(float), 1, fp, FLOAT32FLAG);
+        freadBS(dem->demData[i], scene.I.rangeSize, sizeof(float), fp, FLOAT32FLAG);
     fprintf(stderr, "end getSlantRangeDEM\n");
 
     return;

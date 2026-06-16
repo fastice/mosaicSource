@@ -21,7 +21,7 @@ siminsar [options] demFile displacementFile sceneFile outputImage
 | Argument          | Description |
 |-------------------|-------------|
 | `demFile`         | XY polar-stereographic DEM (binary float + `.geodat`) |
-| `displacementFile`| Velocity field (`.vx`/`.vy` binary pair, or mask/VRT) |
+| `displacementFile`| Velocity field (`.vx`/`.vy` binary pair, or mask/VRT); only read when `-velocity`, `-offset`, or `-mask` is active — a dummy name may be passed otherwise |
 | `sceneFile`       | SAR image geodat file defining the output image geometry |
 | `outputImage`     | Output file base name |
 
@@ -36,6 +36,8 @@ siminsar [options] demFile displacementFile sceneFile outputImage
 | `-bnStart <val>` / `-bnEnd <val>` | $B_n$ at start / end of scene (alternative to `-dBn`) |
 | `-bpStart <val>` / `-bpEnd <val>` | $B_p$ at start / end of scene (alternative to `-dBp`) |
 | `-bParamsFile <file>` | Read $B_n$, $B_p$, $\delta B_n$, $\delta B_p$ from a baseline parameter file |
+| `-geodat2 <file>` | Compute per-azimuth $B_n$/$B_p$ from state vectors in a second geodat file; overrides all explicit baseline flags |
+| `-velOnly` | Force zero baseline (velocity-only interferogram, no topographic phase); implies `-velocity`; incompatible with any explicit baseline flag or `-geodat2` |
 | `-dT <days>` | Temporal baseline for velocity displacement (default: 12 days) |
 | `-flat` | Output flat-Earth-removed (flattened) phase |
 | `-height` | Output DEM height values instead of phase |
@@ -145,14 +147,22 @@ Total output phase: $\phi = \phi_\text{topo} + \phi_\text{vel}$
 
 #### 5. Baseline Along-Track Variation
 
-The baseline varies linearly with azimuth line index:
+**Explicit baseline (default):** The baseline varies linearly with azimuth line index:
 
 $$
 B_n(i) = B_{n,\text{start}} + i \cdot \frac{B_{n,\text{end}} - B_{n,\text{start}}}{N_{az} - 1}
 $$
 
-(and equivalently for $B_p$). This allows simulation of realistic along-track baseline
-drift from orbit geometry.
+(and equivalently for $B_p$).
+
+**State-vector baseline (`-geodat2`):** When a second geodat is supplied, `simInSARBaselineFromSV`
+calls `svBnBp` once per output azimuth line to compute the exact $B_n(i)$ and $B_p(i)$
+from the orbital state vectors of both acquisitions. These values are stored in per-azimuth
+arrays and take precedence over any explicit baseline flags.
+
+**Velocity-only (`-velOnly`):** All baseline components are forced to zero, making
+$\Delta = 0$ and leaving only the velocity phase $\phi_\text{vel}$. Implies `-velocity`;
+incompatible with any explicit baseline flag or `-geodat2`.
 
 ---
 
@@ -186,6 +196,15 @@ Writes all output files:
 
 ---
 
+### `simInSARBaselineFromSV`(geodat2File, scene) → void
+Activated by `-geodat2`. Parses the secondary geodat into a local `inputImageStructure`,
+computes $R_{eH}$ and $\theta_c$ from the primary image, then loops over all output azimuth
+lines calling `svBnBp` at the corresponding SAR acquisition time to fill `scene->bnArray`
+and `scene->bpArray`. Must be called after `parseSceneFile` (needs `scene->aSize`).  
+*Calls:* `parseInputFile`, `initllToImageNew`, `getReH`, `thetaRReZReH`, `svBnBp`
+
+---
+
 ### `parseBnBpParamsFile`(bpParamsFile, \*bn, \*bp, \*dbn, \*dbp) → int
 Reads $B_n$, $B_p$, $\delta B_n$, $\delta B_p$ from a 5-column baseline parameter file
 (same format as `computeBaseline` output: `Bn Bp dBn x dbp`). Returns 0 on success,
@@ -214,3 +233,5 @@ Reads $B_n$, $B_p$, $\delta B_n$, $\delta B_p$ from a 5-column baseline paramete
 | `getShelfMask` | `common/getShelfMask.c` | Shelf/grounded mask lookup |
 | `writeSingleVRT` | `gdalIO/gdalIO/gdalIO.c` | Write VRT descriptor for output |
 | `readXYDEM` / `readXYVel` | `common/readXYDEM.c` | Read DEM and velocity maps |
+| `svBnBp` | `common/svBase.c` | Compute $B_n$/$B_p$ from two state vectors at a given time |
+| `svBaseTCN` | `common/svBase.c` | Compute baseline in TCN coordinates from two state vectors |

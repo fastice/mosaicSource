@@ -66,6 +66,13 @@ typedef struct sceneStructureType
 	double **lonImage;
 	int32_t useVelocity;
 	int32_t byteOrder;
+	float velThresh;      /* > 0 enables velThresh mode */
+	char  *geodat2File;   /* second geodat for SV-derived baseline; NULL = use explicit bn/bp */
+	float *bnArray;       /* per-azimuth bn from SV; NULL when not used */
+	float *bpArray;       /* per-azimuth bp from SV; NULL when not used */
+	int32_t tiffFlag;     /* -tiff: write lat/lon as GeoTIFF instead of binary */
+	char  *verticalCorrectionFile; /* -verticalCorrection vcFile; NULL = no correction */
+	xyDEM *verticalCorrection;     /* loaded from verticalCorrectionFile, NULL if not used */
 } sceneStructure;
 
 typedef struct displacementStructureType
@@ -86,6 +93,11 @@ typedef struct displacementStructureType
   parse scene input file for siminsar.
 */
 void parseSceneFile(char *sceneFile, sceneStructure *scene);
+/*
+  Compute per-azimuth bn/bp arrays in scene from two sets of state vectors.
+  Call after parseSceneFile so scene->aSize is set.
+*/
+void simInSARBaselineFromSV(char *geodat2File, sceneStructure *scene);
 
 /*
   Initialize conversion matrices and constants for groundRangeToll
@@ -94,6 +106,8 @@ void initGroundRangeToLLNew(inputImageStructure *inputImage);
 /*
   Function to simulate InSAR image including both terrain and motion effects.
 */
+void simInSARDEMBounds(sceneStructure *scene, double rot, double stdLat,
+                       double *xMin, double *xMax, double *yMin, double *yMax);
 void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel);
 /*
   Output simulated image. Writes two files one for image, and xxx.simdat
@@ -112,3 +126,7 @@ double getDisplacement(double lat, double lon, displacementStructure *displaceme
   Input slant range dem.
 */
 void getSlantRangeDEM(char *demFile, demStructure *dem, sceneStructure scene);
+/*
+  Compute speed-threshold mask from velocity map and write as GeoTIFF.
+*/
+void velThreshMask(xyVEL *xyVel, float velThresh, char *outputFile);

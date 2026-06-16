@@ -2,7 +2,7 @@
 #define MEM2 8888
 #define MAXADBUF 150000000
 #define MAXADBUF2 5000000
-#define MXST 75
+#define MXST 100
 #define MNST 5
 
 #define LSB 0
@@ -234,6 +234,8 @@ typedef struct outputImageType
 	double jd1;
 	double jd2;
 	int32_t deltaB; /* used to indicate sv baselines */
+	int32_t outputRAFlag; /* output vr/va instead of rotating to vx/vy */
+	double sigmaAThresh;
 } outputImageStructure;
 
 typedef struct demType
@@ -345,6 +347,8 @@ void lltoxy(double alat, double alon, double *x, double *y, double dlam);
 
 double getXYHeight(double lat, double lon, xyDEM *xydem,
 				   double Re, int32_t heightFlag);
+double getXYHeightXY(double x, double y, double lat, xyDEM *xydem,
+					 double Re, int32_t heightFlag);
 
 /*
   Memory allocation routines

@@ -5,6 +5,8 @@
 #include "rparams.h"
 #include <sys/types.h>
 #include <sys/time.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
 //#include "mosaicSource/common/common.h"
 /*
@@ -12,10 +14,27 @@
 
   This program uses some of the routines for geocode,
   which means there is alot of unused junk to initialize everything correctly.
+
+  Ionosphere correction:
+    When estimateIonosphere.py has been run, SetupNISAR.py stamps the key
+      ionosphereRangeOffsetCorrection = <basename>
+    on range.offsets.vrt.  getROffsets peeks at that VRT metadata before
+    calling readRangeOffsets; checkForIonosphereCorrection (inside
+    readRangeOffsets) then loads the named correction file — a GeoTIFF on
+    the native ROFF grid in SLC pixels — into offsets.rOffCorrection.
+    The default mode (ION_AUTO) runs with and without the correction and
+    emits whichever baseline solution has the lower residual sigma; the
+    chosen mode is recorded in the output baseline file via the
+    ;* offsetCorrectionFile line so mosaic3d can re-apply the same decision.
 */
 
+/* ionosphereMode values */
+#define ION_AUTO    0   /* default: run with and without, pick best sigma */
+#define ION_NONE    1   /* -noIonosphere: never apply correction */
+#define ION_FORCE   2   /* -forceIonosphere: always apply if file exists */
+
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile,
-					 char **baselineFile, tiePointsStructure *tiepoints, char **shelfMaskFile);
+					 char **baselineFile, tiePointsStructure *tiepoints, char **shelfMaskFile, int32_t *ionosphereMode);
 static void setMapProjectionForHemisphere(tiePointsStructure *tiePoints);
 
 
@@ -51,7 +70,8 @@ int main(int argc, char *argv[])
 	char *outputFile;
 	char *shelfMaskFile;
 	Offsets offsets;
-	int32_t imageFlag, passType, noDEM, noRamp, dBpFlag, timeReverseFlag;
+	memset(&offsets, 0, sizeof(offsets));
+	int32_t imageFlag, passType, noDEM, noRamp, dBpFlag, timeReverseFlag, ionosphereMode;
 	int32_t bufferSize;
 	int32_t imageCoords;
 	int32_t linFlag;
@@ -69,7 +89,7 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
-	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile);
+	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile, &ionosphereMode);
 	/*
 	  Parse input file
 	*/
@@ -111,22 +131,33 @@ int main(int argc, char *argv[])
 	*/
 	computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, outputImage.shelfMask, FALSE);
 	/*
-	  Get baseline info
+	  Probe: run getBaselineFile and getROffsets with stdout suppressed to determine
+	  whether ion correction is available and to set up offsets/tiePoints state.
+	  computeTiePoints (above) has already written the InSAR params header to stdout;
+	  flush that now so it reaches the real output before any redirect.
 	*/
-	getBaselineFile(baselineFile, &tiePoints, inputImage);
-	/*
-	  Extract offsets from phase file.
-	*/
-	fprintf(stderr, "------- %s\n", offsets.rFile);
-	getROffsets(offsetFile, &tiePoints, inputImage, &offsets);
-	fprintf(stderr, "OFFSETS READ\n\n");
+	fflush(stdout);
+	{
+		int devnull_fd = open("/dev/null", O_WRONLY);
+		int probe_saved = dup(STDOUT_FILENO);
+		dup2(devnull_fd, STDOUT_FILENO);
+		close(devnull_fd);
+
+		//getBaselineFile(baselineFile, &tiePoints, inputImage);
+		fprintf(stderr, "------- %s\n", offsets.rFile);
+		getROffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE);
+		fprintf(stderr, "OFFSETS READ\n\n");
+
+		dup2(probe_saved, STDOUT_FILENO);
+		close(probe_saved);
+	}
 	fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
-	if (offsets.geo1 != NULL && offsets.geo2 != NULL && 
+	if (offsets.geo1 != NULL && offsets.geo2 != NULL &&
 		( (tiePoints.deltaB != DELTABNONE) || (tiePoints.initWithSV == TRUE)))
 	{
 		parseInputFile(offsets.geo2, &inputImage2);
 		fprintf(stderr, "inputImage2 %s\n", offsets.geo2);
-		
+		//getBaselineFile(baselineFile, &tiePoints, inputImage);
 		initllToImageNew(&inputImage2);
 		memcpy(&(offsets.sv2), &(inputImage2.sv), sizeof(inputImage2.sv));
 		offsets.dt1t2 = inputImage.cpAll.sTime - inputImage2.cpAll.sTime;
@@ -139,29 +170,81 @@ int main(int argc, char *argv[])
 		tiePoints.cnstA = 0.0;
 		tiePoints.cnstR = 0.0;
 	}
-	
-
 	fprintf(stderr, "Rg/Az offsets %10.5f %10.5f\n", tiePoints.cnstR, tiePoints.cnstA);
-	
-	/*
-	 remove velocity components
-	*/
-	addVelCorrections(&inputImage, &tiePoints);
-	/*
-	  Output results for checking to sterr
-	*/
-	/* for(i=0; i < tiePoints.npts; i++)
-	   if( fabs(tiePoints.phase[i]) < 200000)
-	   fprintf(stderr,"%8.1f %8.1f %8.1f ---  %7.2f %7.2f --- %f ---- %f %f %f\n",
-	   tiePoints.x[i],
-	   tiePoints.y[i],tiePoints.z[i],tiePoints.r[i],tiePoints.a[i],
-	   tiePoints.phase[i],tiePoints.vyra[i],tiePoints.vx[i],tiePoints.vy[i]);
-	   fprintf(stderr,"\n");*/
 
 	/*
-	  Estimate baseline solution and output to stdout
+	  Estimate baseline solution.
+	  For each branch: re-run getBaselineFile+getROffsets (so their output is included in
+	  the final file alongside the computeRParams solution), then addVelCorrections, then solve.
+	  For ION_AUTO: capture each run to a tmpfile and emit the lower-sigma result.
 	*/
-	computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+//fprintf(stderr, "ionosphereMode %i %s\n", ionosphereMode, offsets.rOffCorrection.correctionFile);
+//error("h");
+	if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_FORCE)
+	{
+		/* Single run with ion correction */
+		getBaselineFile(baselineFile, &tiePoints, inputImage);
+		getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE);
+		addVelCorrections(&inputImage, &tiePoints);
+		computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+	}
+	else if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_AUTO)
+	{
+		/* Run with and without ion correction; emit the lower-sigma result */
+		char tmp1[] = "/tmp/rparams_ion_XXXXXX";
+		char tmp2[] = "/tmp/rparams_noion_XXXXXX";
+		int fd1 = mkstemp(tmp1);
+		int fd2 = mkstemp(tmp2);
+		if (fd1 < 0 || fd2 < 0) error("rparams: mkstemp failed\n");
+		int saved_stdout = dup(STDOUT_FILENO);
+
+		/* --- Run 1: with ionosphere correction --- */
+		dup2(fd1, STDOUT_FILENO);
+		getBaselineFile(baselineFile, &tiePoints, inputImage);
+		getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE);
+		addVelCorrections(&inputImage, &tiePoints);
+		double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+		fflush(stdout);
+
+		/* --- Run 2: without ionosphere correction --- */
+		dup2(fd2, STDOUT_FILENO);
+		getBaselineFile(baselineFile, &tiePoints, inputImage);
+		getROffsets(offsetFile, &tiePoints, inputImage, &offsets, TRUE);
+		addVelCorrections(&inputImage, &tiePoints);
+		/* clear correctionFile so it is not written to the no-ion output */
+		offsets.rOffCorrection.correctionFile[0] = '\0';
+		double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+		fflush(stdout);
+
+		/* --- Restore stdout and emit the winner --- */
+		dup2(saved_stdout, STDOUT_FILENO);
+		close(saved_stdout);
+		close(fd1);
+		close(fd2);
+
+		int use_ion = (sigma_ion <= sigma_noion);
+		fprintf(stderr, "sigma with ion correction: %f  without: %f  -- using %s\n",
+		        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
+
+		FILE *winner = fopen(use_ion ? tmp1 : tmp2, "r");
+		char buf[4096];
+		size_t n;
+		while ((n = fread(buf, 1, sizeof(buf), winner)) > 0)
+			fwrite(buf, 1, n, stdout);
+		fclose(winner);
+		fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
+		        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
+		unlink(tmp1);
+		unlink(tmp2);
+	}
+	else
+	{
+		/* ION_NONE, or no correction file available */
+		getBaselineFile(baselineFile, &tiePoints, inputImage);
+		getROffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE);
+		addVelCorrections(&inputImage, &tiePoints);
+		computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+	}
 }
 
 static void usage()
@@ -180,6 +263,8 @@ static void usage()
 		"  -bnbpOnly          Estimate only bn and bp\n"
 		"  -bnbpdBpOnly       Estimate only bn, bp, and dBp\n"
 		"  -bpdBpOnly         Estimate only bp and dBp\n"
+		"  -noIonosphere      Do not apply ionosphere correction if one exists\n"
+		"  -forceIonosphere   Always apply ionosphere correction if file exists\n"
 		"  -quiet             Don't echo tiepoints to solution\n"
 		"\nPositional arguments (required, in order):\n"
 		"  geodatFile         Geodat parameter file\n"
@@ -191,12 +276,13 @@ static void usage()
 
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile,
 					 char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints,
-					 char **shelfMaskFile)
+					 char **shelfMaskFile, int32_t *ionosphereMode)
 {
 	int32_t bnbpFlag = FALSE, bpFlag = FALSE, bnbpdBpFlag = FALSE, bpdBpFlag = FALSE;
 	int32_t constOnlyFlag = FALSE, quadB = FALSE, deltaB = DELTABNONE;
 	double nDays = 24;
 	int32_t i;
+	*ionosphereMode = ION_AUTO;
 
 	*shelfMaskFile = NULL;
 	tiePoints->quiet = FALSE;
@@ -242,6 +328,10 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 			deltaB = DELTABQUAD;
 		else if (strcmp(argv[i], "-deltaBC") == 0)
 			deltaB = DELTABCONST;
+		else if (strcmp(argv[i], "-noIonosphere") == 0)
+			*ionosphereMode = ION_NONE;
+		else if (strcmp(argv[i], "-forceIonosphere") == 0)
+			*ionosphereMode = ION_FORCE;
 		else if (strcmp(argv[i], "-quiet") == 0)
 			tiePoints->quiet = TRUE;
 		else

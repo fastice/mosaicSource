@@ -2,6 +2,7 @@
 #include "string.h"
 #include <math.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
@@ -10,6 +11,8 @@
 static void setBuffer(inputImageStructure *inputImage, float *buf);
 static double computePhiZM3d(double *thetaD, double z, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage,
 							 double Range, double Re, double ReH, double ReHfixed, double thetaC, double thetaCfixedReH, double *phaseError);
+static double computePhiFlatEarthM3d(double azimuth, vhParams *vhParam, inputImageStructure *phaseImage,
+									 double Range, double Re, double ReHfixed, double thetaCfixedReH, double *phaseError);
 /*
 ************************ Estimate 3D velocity from phase **************************
 */
@@ -86,7 +89,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	float **scaleX, **scaleY, **scaleZ;							 /*  scale buffers */
 	float dum1, dum2;	
 	float azimuthMin, azimuthMax;										 /* Placeholder dummys for function calls */
-	int32_t validData, Aset;									 /* Flags to indicate a valide solution, and A updates */
+	int32_t validData;											 /* Flag to indicate a valid solution */
 	int32_t iMin, iMax, jMin, jMax;								 /* range in pixels over which to compute solutions */
 	int32_t aa, dd;												 /* Counters for asc/desc images */
 	int32_t i, j, i1, j1, count;
@@ -124,7 +127,14 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	*/
 	aa = 0;
 	tCenter = (outputImage->jd1 + outputImage->jd2 + 1.) * 0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
-	for (aPhaseImage = allImages; aPhaseImage->next != NULL; aPhaseImage = aPhaseImage->next, aParams = aParams->next)
+	int nthreads = omp_get_max_threads();
+	inputImageStructure *localAImgs = (inputImageStructure *)malloc(
+		(size_t)nthreads * sizeof(inputImageStructure));
+	inputImageStructure *localDImgs = (inputImageStructure *)malloc(
+		(size_t)nthreads * sizeof(inputImageStructure));
+	if (localAImgs == NULL || localDImgs == NULL)
+		error("make3DMosaic: malloc failed for per-thread image copies\n");
+	for (aPhaseImage = allImages; aPhaseImage != NULL; aPhaseImage = aPhaseImage->next, aParams = aParams->next)
 	{
 		aa++;
 		/* Use for calculating time skew 09/21/17 */
@@ -170,9 +180,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			getRegion(dPhaseImage, &iMin, &iMax, &jMin, &jMax, outputImage);
 			if (iMin > iMax || jMin > jMax)
 			{
-				/* This file has no overlap so, set to nophase - for future loops */
-				strncpy(dPhaseImage->file, "nophase", 7);
-				dPhaseImage->file[7] = '\0';
+				/* This file has no overlap so, flag as nophase - for future loops */
+				dPhaseImage->file = strdup("nophase");
 				continue;
 			}
 			if (dPhaseImage->passType == aPhaseImage->passType && sepAscDesc == TRUE)
@@ -204,138 +213,164 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			/*
 			  Loop over output grid and compute velocities
 			*/
-			Aset = FALSE;
 			gettimeofday(&start, NULL);
 			count = 0;
-			for (i = iMin; i < iMax; i++)
 			{
-				if ((i % 100) == 0)
-					fprintf(stderr, "--+ %i %f %f %f %f \n", i, A[0][0], A[0][1], A[1][0], A[1][1]);
-				/* y - coordinate */
-				y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
-				for (j = jMin; j < jMax; j++)
+				int t;
+				for (t = 0; t < nthreads; t++) { localAImgs[t] = *aPhaseImage; localDImgs[t] = *dPhaseImage; }
+			}
+#pragma omp parallel \
+			private(j, x, y, lat, lon, zWGS84, \
+			        aZSp, dZSp, arange, drange, aAzimuth, dAzimuth, \
+			        aPhase, dPhase, aReH, dReH, aRange, dRange, \
+			        aTheta, dTheta, aThetaD, dThetaD, aPsi, dPsi, \
+			        aPhiZ, dPhiZ, phaseErrorA, phaseErrorD, \
+			        aP, dP, aPe, dPe, scaleA, scaleD, \
+			        vx, vy, vz, scX, scY, dzdx, dzdy, \
+			        dzdtSubmergence, deltaOffCenter, sMask, validData)
+			{
+				int myThread = omp_get_thread_num();
+				inputImageStructure *myAImg = &localAImgs[myThread];
+				inputImageStructure *myDImg = &localDImgs[myThread];
+				double A[2][2], B[2][2];
+#pragma omp for schedule(dynamic, 8)
+				for (i = iMin; i < iMax; i++)
 				{
-					/*  x-coordinate, then convert x/y stereographic coords to lat/lon	*/
-					x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
-					zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
-					/*
-					   Process points where elevation is known
-					*/
-					validData = FALSE; /* Assume didn't work until successful */
-					if (zWGS84 > MINELEVATION)
+					if ((i % 100) == 0)
+						fprintf(stderr, "--+ %i\n", i);
+					/* y - coordinate */
+					y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+					for (j = jMin; j < jMax; j++)
 					{
-						/*   Convert elevations to spherical reference	*/
-						aZSp = sphericalElev(zWGS84, lat, aRe);
-						dZSp = sphericalElev(zWGS84, lat, dRe);
+						/*  x-coordinate, then convert x/y stereographic coords to lat/lon	*/
+						x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
+						xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+						zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 						/*
-						  Compute range azimuth position
+						   Process points where elevation is known
 						*/
-						llToImageNew(lat, lon, zWGS84, &arange, &aAzimuth, aPhaseImage);
-						geometryInfo(aCp, aPhaseImage, aAzimuth, arange, aZSp, aThetaC, &aReH, &aRange, &aTheta, &aThetaD, &aPsi, aZSp);
-						llToImageNew(lat, lon, zWGS84, &drange, &dAzimuth, dPhaseImage);
-						geometryInfo(dCp, dPhaseImage, dAzimuth, drange, dZSp, dThetaC, &dReH, &dRange, &dTheta, &dThetaD, &dPsi, dZSp);
-						/*  Interpolate Phase*/
-						interpPhaseImage(aPhaseImage, arange, aAzimuth, &aPhase);
-						interpPhaseImage(dPhaseImage, drange, dAzimuth, &dPhase);
-						/*  If shelf mask, get mask value */
-						sMask = GROUNDED;
-						if (shelfMask != NULL)
-							sMask = getShelfMask(shelfMask, x, y);
-						if (sMask == NOSOLUTION)
+						validData = FALSE; /* Assume didn't work until successful */
+						if (zWGS84 > MINELEVATION)
 						{
-							aPhase = -LARGEINT;
-							dPhase = -LARGEINT;
-						};
-						/*
-						  If there is valid phase data from both images then compute velocity
-						*/
-						if (aPhase > -LARGEINT && dPhase > -LARGEINT && zWGS84 > MINELEVATION && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
-						{
+							/*   Convert elevations to spherical reference	*/
+							aZSp = sphericalElev(zWGS84, lat, aRe);
+							dZSp = sphericalElev(zWGS84, lat, dRe);
 							/*
-							  Compute phase due to topography.  Everything is looped through
-							  and only the pairs where there is a good angular seperation are used. In general, one will be asc and one will be desc, but they could be flipped.
-							  As a consequence, this next step has to look at the flag to see if it should flip the azimuth coordinate when computing the baseline.
+							  Compute range azimuth position
 							*/
-							aPhiZ = computePhiZM3d(&aThetaD, aZSp, aAzimuth, aParams, aPhaseImage, aRange, aRe, aReH, aReHfixed, aThetaC, aThetaCfixedReH, &phaseErrorA);
-							dPhiZ = computePhiZM3d(&dThetaD, dZSp, dAzimuth, dParams, dPhaseImage, dRange, dRe, dReH, dReHfixed, dThetaC, dThetaCfixedReH, &phaseErrorD);
-							aPhase = aPhase - aPhiZ;
-							dPhase = dPhase - dPhiZ;
-							/*  Tide corrections	*/
-							if (sMask == SHELF)
+							llToImageNew(lat, lon, zWGS84, &arange, &aAzimuth, myAImg);
+							geometryInfo(aCp, myAImg, aAzimuth, arange, aZSp, aThetaC, &aReH, &aRange, &aTheta, &aThetaD, &aPsi, aZSp);
+							llToImageNew(lat, lon, zWGS84, &drange, &dAzimuth, myDImg);
+							geometryInfo(dCp, myDImg, dAzimuth, drange, dZSp, dThetaC, &dReH, &dRange, &dTheta, &dThetaD, &dPsi, dZSp);
+							/*  Interpolate Phase*/
+							interpPhaseImage(myAImg, arange, aAzimuth, &aPhase);
+							interpPhaseImage(myDImg, drange, dAzimuth, &dPhase);
+							/*  If shelf mask, get mask value */
+							sMask = GROUNDED;
+							if (shelfMask != NULL)
+								sMask = getShelfMask(shelfMask, x, y);
+							if (sMask == NOSOLUTION)
 							{
-								/* update tide correct, and compute phaseImage->tideCorrection */
-								interpTideError(&phaseErrorA, aPhaseImage, aParams, x, y, aPsi, twokA);
-								interpTideError(&phaseErrorD, dPhaseImage, dParams, x, y, dPsi, twokD);
-								aPhase -= -aPhaseImage->tideCorrection * cos(aPsi) * twokA * (double)aParams->nDays / 365.25;
-								dPhase -= -dPhaseImage->tideCorrection * cos(dPsi) * twokD * (double)dParams->nDays / 365.25;
-							} /* ENd if(smask... */
-							/* Submergence corrections */
-							if (vCorrect != NULL)
-							{
-								dzdtSubmergence = interpVCorrect(x, y, vCorrect);
-								aPhase -= -dzdtSubmergence * cos(aPsi) * twokA * (double)aParams->nDays / 365.25;
-								dPhase -= -dzdtSubmergence * cos(dPsi) * twokD * (double)dParams->nDays / 365.25;
-							}
-							/* Compute conversion matrix A */
-							computeA(lat, lon, x, y, aPhaseImage, dPhaseImage, A);
+								aPhase = -LARGEINT;
+								dPhase = -LARGEINT;
+							};
 							/*
-							  Only pursue solution if sufficient difference  in angles for 3d solution
+							  If there is valid phase data from both images then compute velocity
 							*/
-							if (A[0][0] != -LARGEINT)
+							if (aPhase > -LARGEINT && dPhase > -LARGEINT && zWGS84 > MINELEVATION && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
 							{
-								/*  Compute B (note B is really C in the TGARS paper	*/
-								computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
-								/*  Scale phases for velocity computation (scale for m/yr)	*/
-								scaleA = 365.25 / (twokA * aParams->nDays * sin(aPsi));
-								scaleD = 365.25 / (twokD * dParams->nDays * sin(dPsi));
-								aP = aPhase * scaleA;
-								dP = dPhase * scaleD;
-								aPe = phaseErrorA * scaleA;
-								dPe = phaseErrorD * scaleD;
-								/*  Compute velocity */
-								computeVxy(aP, dP, aPe, dPe, A, B, &vx, &vy, &scX, &scY);
-								/*  Compute vertical velocity	*/
-								vz = vx * dzdx + vy * dzdy;
 								/*
-								  Update output arrays
+								  Compute phase due to topography.  Everything is looped through
+								  and only the pairs where there is a good angular seperation are used. In general, one will be asc and one will be desc, but they could be flipped.
+								  As a consequence, this next step has to look at the flag to see if it should flip the azimuth coordinate when computing the baseline.
 								*/
-								if (!(scX > -1000. && scX < 1000.))
-									error("invalid velocity %f %f %f %f %f %f\n", vx, vy, phaseErrorA, phaseErrorD, aPe, dPe);
-								vxTmp[i][j] = vx * scX;
-								vyTmp[i][j] = vy * scY;
+								if (aParams->applyFlatEarth) {
+									aPhiZ = computePhiFlatEarthM3d(aAzimuth, aParams, myAImg, aRange, aRe, aReHfixed, aThetaCfixedReH, &phaseErrorA);
+									dPhiZ = computePhiFlatEarthM3d(dAzimuth, dParams, myDImg, dRange, dRe, dReHfixed, dThetaCfixedReH, &phaseErrorD);
+								} else {
+									aPhiZ = computePhiZM3d(&aThetaD, aZSp, aAzimuth, aParams, myAImg, aRange, aRe, aReH, aReHfixed, aThetaC, aThetaCfixedReH, &phaseErrorA);
+									dPhiZ = computePhiZM3d(&dThetaD, dZSp, dAzimuth, dParams, myDImg, dRange, dRe, dReH, dReHfixed, dThetaC, dThetaCfixedReH, &phaseErrorD);
+								}
+								aPhase = aPhase - aPhiZ;
+								dPhase = dPhase - dPhiZ;
+								/*  Tide corrections	*/
+								if (sMask == SHELF)
+								{
+									/* update tide correct, and compute phaseImage->tideCorrection */
+									interpTideError(&phaseErrorA, myAImg, aParams, x, y, aPsi, twokA);
+									interpTideError(&phaseErrorD, myDImg, dParams, x, y, dPsi, twokD);
+									aPhase -= -myAImg->tideCorrection * cos(aPsi) * twokA * (double)aParams->nDays / 365.25;
+									dPhase -= -myDImg->tideCorrection * cos(dPsi) * twokD * (double)dParams->nDays / 365.25;
+								} /* ENd if(smask... */
+								/* Submergence corrections */
+								if (vCorrect != NULL)
+								{
+									dzdtSubmergence = interpVCorrect(x, y, vCorrect);
+									aPhase -= -dzdtSubmergence * cos(aPsi) * twokA * (double)aParams->nDays / 365.25;
+									dPhase -= -dzdtSubmergence * cos(dPsi) * twokD * (double)dParams->nDays / 365.25;
+								}
+								/* Compute conversion matrix A */
+								computeA(lat, lon, x, y, myAImg, myDImg, A);
+								/*
+								  Only pursue solution if sufficient difference  in angles for 3d solution
+								*/
+								if (A[0][0] != -LARGEINT)
+								{
+									/*  Compute B (note B is really C in the TGARS paper	*/
+									computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
+									/*  Scale phases for velocity computation (scale for m/yr)	*/
+									scaleA = 365.25 / (twokA * aParams->nDays * sin(aPsi));
+									scaleD = 365.25 / (twokD * dParams->nDays * sin(dPsi));
+									aP = aPhase * scaleA;
+									dP = dPhase * scaleD;
+									aPe = phaseErrorA * scaleA;
+									dPe = phaseErrorD * scaleD;
+									/*  Compute velocity */
+									computeVxy(aP, dP, aPe, dPe, A, B, &vx, &vy, &scX, &scY);
+									/*  Compute vertical velocity	*/
+									vz = vx * dzdx + vy * dzdy;
+									/*
+									  Update output arrays
+									*/
+									if (!(scX > -1000. && scX < 1000.))
+										error("invalid velocity %f %f %f %f %f %f\n", vx, vy, phaseErrorA, phaseErrorD, aPe, dPe);
+									vxTmp[i][j] = vx * scX;
+									vyTmp[i][j] = vy * scY;
 
-								if (outputImage->makeTies == TRUE)
-								{
-									vzTmp[i][j] = vz;
-								}
-								else if (outputImage->timeOverlapFlag == TRUE)
-								{
-									/* For lack of better option, use the average of the two data takes */
-									deltaOffCenter = 0.5 * (tOffCenterA + tOffCenterD - 2.0 * tCenter);
-									vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
-								}
-								else
-								{
-									vzTmp[i][j] = vz;
-								}
+									if (outputImage->makeTies == TRUE)
+									{
+										vzTmp[i][j] = vz;
+									}
+									else if (outputImage->timeOverlapFlag == TRUE)
+									{
+										/* For lack of better option, use the average of the two data takes */
+										deltaOffCenter = 0.5 * (tOffCenterA + tOffCenterD - 2.0 * tCenter);
+										vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
+									}
+									else
+									{
+										vzTmp[i][j] = vz;
+									}
 
-								sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
-								syTmp[i][j] = scY;
-								fScale[i][j] = 1.0; /* Value for zero feathering */
-								aPhaseImage->used = TRUE;
-								dPhaseImage->used = TRUE;
-								validData = TRUE;
-							} /* else fprintf(stderr,"LARGEA\n"); */
+									sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
+									syTmp[i][j] = scY;
+									fScale[i][j] = 1.0; /* Value for zero feathering */
+#pragma omp atomic write
+									aPhaseImage->used = TRUE;
+#pragma omp atomic write
+									dPhaseImage->used = TRUE;
+									validData = TRUE;
+								} /* else fprintf(stderr,"LARGEA\n"); */
+							}
 						}
-					}
-					if (validData == FALSE)
-					{
-						vxTmp[i][j] = (float)-LARGEINT;
-						fScale[i][j] = 0.0;
-					}
-				} /* j loop */
-			}	  /* i loop */
+						if (validData == FALSE)
+						{
+							vxTmp[i][j] = (float)-LARGEINT;
+							fScale[i][j] = 0.0;
+						}
+					} /* j loop */
+				}	  /* i loop */
+			} /* End omp parallel */
 				  /*
 					Compute scale array for feathering.
 				  */
@@ -359,6 +394,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			   Use end of goto used to skip inner loop for nophase */
 		} /* End desc loop */
 	}	  /* End asc loop */
+	free(localAImgs);
+	free(localDImgs);
 	/**************************END OF MAIN LOOP ******************************/
 	fprintf(stderr, "Out of main loop\n");
 	/*
@@ -367,6 +404,37 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, FALSE);
 	fprintf(outputImage->fpLog, ";\n; Returning from make3DOffs(.c)\n");
 	fflush(outputImage->fpLog);
+}
+
+/*
+  Compute flat-earth baseline phase for ISCE/NISAR products (topo already removed).
+  Mirrors the changeflat formula so the orbit-error ramp is corrected inline.
+*/
+static double computePhiFlatEarthM3d(double azimuth, vhParams *vhParam, inputImageStructure *phaseImage,
+									  double Range, double Re, double ReHfixed,
+									  double thetaCfixedReH, double *phaseError)
+{
+	double normAzimuth, imageLength;
+	double bn, bp, bSq, delta;
+	double theta, thetaDFlat;
+	double twok;
+	double xsq;
+
+	twok = 4.0 * PI / phaseImage->par.lambda;
+	imageLength = (double)phaseImage->azimuthSize;
+	normAzimuth = (azimuth - 0.5 * imageLength) / imageLength;
+	xsq = normAzimuth * normAzimuth;
+	bn = vhParam->Bn + normAzimuth * vhParam->dBn + xsq * vhParam->dBnQ;
+	bp = vhParam->Bp + normAzimuth * vhParam->dBp + xsq * vhParam->dBpQ;
+	bSq = bn * bn + bp * bp;
+
+	/* Flat-earth look angle (same formula as computePhiZM3d line for thetaDFlat) */
+	theta = acos((Range * Range + ReHfixed * ReHfixed - Re * Re) / (2.0 * ReHfixed * Range));
+	thetaDFlat = theta - thetaCfixedReH;
+
+	delta = -bn * sin(thetaDFlat) - bp * cos(thetaDFlat) + bSq * 0.5 / Range;
+	*phaseError = PI / 4.0;
+	return delta * twok;
 }
 
 /*

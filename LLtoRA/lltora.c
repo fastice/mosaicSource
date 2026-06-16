@@ -1,6 +1,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
+#include <omp.h>
 #include "mosaicSource/common/common.h"
 #include <sys/types.h>
 #include <sys/time.h>
@@ -11,7 +12,7 @@
   This program is uses some of the routines for geocode,
   which means there is alot of unused junk to initialize everything correctly.
 */
-static void readArgs(int32_t argc, char *argv[], int32_t *passType, char **demFile, char **inputFile, char **tiePointFile, char **outFile);
+static void readArgs(int32_t argc, char *argv[], int32_t *passType, char **demFile, char **inputFile, char **tiePointFile, char **outFile, int32_t *nThreads);
 static void usage();
 void computeScaleLS(float **inImage, float **scale, int32_t azimuthSize, int32_t rangeSize, float fl, float weight, double minVal,
 					int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
@@ -47,6 +48,7 @@ int main(int argc, char *argv[])
 	int imageFlag, passType;
 	int bufferSize;
 	int i, j; /* LCV */
+	int32_t nThreads = 4;
 	float dr, da;
 	ShelfMask *shelfMask = NULL;
 	uint32_t size[2];
@@ -55,7 +57,9 @@ int main(int argc, char *argv[])
 	   Read command line args and compute filenames
 	*/
 	GDALAllRegister();
-	readArgs(argc, argv, &passType, &DemFile, &inputFile, &tiePointFile, &outputFile);
+	readArgs(argc, argv, &passType, &DemFile, &inputFile, &tiePointFile, &outputFile, &nThreads);
+	omp_set_num_threads(nThreads);
+	fprintf(stderr, "ompThreads %i\n", nThreads);
 	if (inputFile != NULL)
 		fprintf(stderr, "inputFile  %s \n", inputFile);
 	if (DemFile != NULL)
@@ -136,42 +140,55 @@ int main(int argc, char *argv[])
 	}
 }
 
-static void readArgs(int argc, char *argv[], int32_t *passType, char **demFile, char **inputFile, char **tiePointFile, char **outFile)
+static void readArgs(int argc, char *argv[], int32_t *passType, char **demFile, char **inputFile, char **tiePointFile, char **outFile, int32_t *nThreads)
 {
-	int32_t filenameArg;
-	char *argString;
-	if (argc < 3 || argc > 5)
-		usage(); /* Check number of args */
+	int32_t i;
+	int32_t posargc = 0; /* count of non-flag args */
+	char *posargs[8];    /* positional args in order */
 	*passType = DESCENDING;
-
-	if (*passType < 0)
-		*passType = DESCENDING;
 	*demFile = NULL;
-	if (argc == 5)
+	for (i = 1; i < argc; i++)
 	{
-		*outFile = argv[argc - 1];
-		*tiePointFile = argv[argc - 2];
-		*demFile = argv[argc - 3];
-		*inputFile = argv[argc - 4];
+		if (strcmp(argv[i], "-ompThreads") == 0 || strcmp(argv[i], "--ompThreads") == 0)
+		{
+			if (i + 1 >= argc)
+				usage();
+			*nThreads = atoi(argv[++i]);
+		}
+		else
+		{
+			if (posargc >= 8)
+				usage();
+			posargs[posargc++] = argv[i];
+		}
 	}
-	else if (argc == 4)
+	if (posargc < 2 || posargc > 4)
+		usage();
+	if (posargc == 4)
 	{
-		*outFile = argv[argc - 1];
-		*tiePointFile = argv[argc - 2];
-		*inputFile = argv[argc - 3];
+		*inputFile    = posargs[0];
+		*demFile      = posargs[1];
+		*tiePointFile = posargs[2];
+		*outFile      = posargs[3];
+	}
+	else if (posargc == 3)
+	{
+		*inputFile    = posargs[0];
+		*tiePointFile = posargs[1];
+		*outFile      = posargs[2];
 	}
 	else
 	{
-		*outFile = NULL;
-		*tiePointFile = argv[argc - 1];
-		*inputFile = argv[argc - 2];
+		*inputFile    = posargs[0];
+		*tiePointFile = posargs[1];
+		*outFile      = NULL;
 	}
 	return;
 }
 
 static void usage()
 {
-	error("\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n",
+	error("\n\n%s\n%s\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n\n%s\n",
 		  "Compute single look image pixels locations for lat lon z",
 		  "Output is to stdout range,azimuth,lat,lon,z ",
 		  "Usage:",
@@ -180,7 +197,8 @@ static void usage()
 		  " lltora    geoInputFile  DEM llFile outfile (binary input mode - 2 columns in)",
 		  "where",
 		  "  geoInputFile = geodat file",
-		  "  llFile       = (lat,lon,z)");
+		  "  llFile       = (lat,lon,z)",
+		  "Options: -ompThreads N  (OpenMP thread count, default 4)");
 }
 
 /*

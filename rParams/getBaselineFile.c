@@ -98,13 +98,9 @@ void getBaselineFile(char *baselineFile, tiePointsStructure *tiePoints, inputIma
     BnvC = Bn1 + Bn2;
     dBnv = dBn1 + dBn2;
     dBnQv = dBnQ1 + dBnQ2;
-    if (tiePoints->dBpFlag == TRUE)
-    {
-        BpvC = Bp1 + Bp2;
-        dBpv = dBp1 + dBp2;
-        dBpQv = dBpQ1 + dBpQ2;
-    }
-    Bpv = Bp1 + Bp2;
+    BpvC = Bp1 + Bp2;
+    dBpv = dBp1 + dBp2;
+    dBpQv = dBpQ1 + dBpQ2;
     /*
        Retain these value for cases where only a subset of the params are est
     */

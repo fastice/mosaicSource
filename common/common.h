@@ -106,6 +106,7 @@ typedef struct offsetCorrectionType
 	float deltaA;
 	float deltaR;
 	float **rangeOffsetCorrection;
+	char correctionFile[2048];  /* path read from ;* offsetCorrectionFile line; empty if none */
 } offsetCorrection;
 
 
@@ -176,6 +177,7 @@ typedef struct vhParamsType
 	double dBpQ;
 	double C[7][7];
 	double sigma;
+	int32_t applyFlatEarth;
 	int32_t offsetFlag;
 	int32_t rOffsetFlag;
 	char *xyDEMFile;
@@ -299,6 +301,8 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
 unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y);
 void computePhiZ(double *phiZ, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double thetaD, double Range, double ReH,
 				 double ReHfixed, double Re, double thetaC, double *phaseError);
+void computePhiFlatEarth(double *phiFlat, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double Range,
+						 double ReHfixed, double Re, double thetaCfixed, double *phaseError);
 double interpTideDiff(double x, double y, xyDEM xydem);
 void getIrregData(irregularData *irregData);
 void addIrregData(irregularData *irregDat, outputImageStructure *outputImage, float fl);
@@ -306,21 +310,23 @@ void parseIrregFile(char *irregFile, irregularData **irregDat);
 void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, char ***baselineFiles, char ***offsetFiles, char ***azParamsFiles,
 					 char ***rOffsetFiles, char ***rParamsFiles, outputImageStructure *outputImage, float **nDays, float **weights, int32_t **crossFlags,
 					 int32_t *nFiles, int32_t offsetFlag, int32_t rOffsetFlag, int threeDOffFlag);
+void computeSLCFromMLCoords(inputImageStructure *inputImage, double range, double azimuth, double *slcRange, double *slcAzimuth);
 float interpAzOffset(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double theta, float azSLPixSize);
 float interpAzSigma(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double theta, float azSLPixSize);
-float interpRangeOffset(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double thetaD, float rSLPixSize,
+float interpRangeOffsetInMeters(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double thetaD, float rSLPixSize,
 						double theta, double *demError);
 float interpRangeSigma(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double thetaD, float rSLPixSize);
 float bilinearInterp(float **fimage, double range, double azimuth, int32_t nr, int32_t na, float minvalue, float noData);
 
 void computeXYangle(double lat, double lon, double *xyAngle, xyDEM xydem);
+void computeXYangleXY(double x, double y, double *xyAngle);
 void computeXYangleNoDem(double lat, double lon, double *xyAngle, double stdLat);
 void endScale(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY, float **scaleX,
 			  float **scaleY, float **scaleZ, int statsFlag);
 void readBothOffsets(Offsets *offsets, float azimuthMin, float azimuthMax);
 void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax);
 void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode);
-float interpolateOffsetCorrection(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
+float interpolateOffsetIonCorrectionInPixels(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
 void readOffsetParams(char *datFile, Offsets *offsets, int32_t);
 //char *checkForVrt(char *filename, char *vrtBuff);
 void undoNormalization(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY,

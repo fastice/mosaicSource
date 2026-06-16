@@ -7,6 +7,27 @@
 #include "mosaicSource/computeVH_p/computevh.h"*/
 #include "common.h"
 
+/*
+  Append the vertical-correction suffix to a baseline filename. YAML baseline
+  files (extension .yaml, see getBaseline.c) must keep ".yaml" as the final
+  extension for getBaseline's format-detection check, so the suffix is
+  inserted before it (e.g. baseline.26x16.480.yaml -> baseline.26x16.480.surf.yaml).
+  Non-yaml baseline files get the suffix appended as before.
+*/
+static char *appendBaselineSuffix(char *baseline, char *verticalCorrectionSuffix, char *buf)
+{
+	size_t blen = strlen(baseline);
+	if (blen > 5 && strcmp(baseline + blen - 5, ".yaml") == 0)
+	{
+		strncpy(buf, baseline, blen - 5);
+		buf[blen - 5] = '\0';
+		strcat(buf, verticalCorrectionSuffix);
+		strcat(buf, ".yaml");
+		return buf;
+	}
+	return appendSuffix(baseline, verticalCorrectionSuffix, buf);
+}
+
 static char *dupName(char *phase)
 {
 	int32_t j;
@@ -42,7 +63,7 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 	{
 		len = strlen(outputImage->verticalCorrectionSuffix);
 		verticalCorrectionSuffix = (char *)malloc(sizeof(char) * (len+2));
-		verticalCorrectionSuffix[ii] = '.';
+		verticalCorrectionSuffix[0] = '.';
 		for(ii=1;  ii <=min(len,2048); ii++) verticalCorrectionSuffix[ii] = outputImage->verticalCorrectionSuffix[ii-1];
 		verticalCorrectionSuffix[len+1] = '\0';
 	}
@@ -158,7 +179,7 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 		{   
 			(*phaseFiles)[i] = appendSuffix(phase, verticalCorrectionSuffix,
 				(char *)malloc(strlen(phase)+ strlen(verticalCorrectionSuffix) + 1));
-			(*baselineFiles)[i] = appendSuffix(baseline, verticalCorrectionSuffix,
+			(*baselineFiles)[i] = appendBaselineSuffix(baseline, verticalCorrectionSuffix,
 				(char *)malloc(strlen(baseline)+ strlen(verticalCorrectionSuffix) + 1));
 		} 
 		else

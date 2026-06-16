@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <math.h>
 #include <stdlib.h>
+#include <omp.h>
 
 /*
   Program to simulate InSAR image including both terrain and motion effects.
@@ -41,6 +42,7 @@ int main(int argc, char *argv[])
 	sceneStructure scene;
 	demStructure llDem;
 	xyDEM xyDem;
+	xyDEM verticalCorrection;
 	xyVEL xyVel;
 	void *dem;
 	displacementStructure displacements;
@@ -49,6 +51,8 @@ int main(int argc, char *argv[])
 	ShelfMask *imageMask;
 	char *demFile, *displacementFile, *sceneFile, *outputFile;
 	GDALAllRegister();
+	if (getenv("OMP_NUM_THREADS") == NULL)
+		omp_set_num_threads(4);
 	/*
 	   Read command line args
 	*/
@@ -66,24 +70,44 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "Parsing scene file (%s)...\n", sceneFile);
 	parseSceneFile(sceneFile, &scene);
 	/*
+	  Compute scene bounding box so we only read the relevant portion of the
+	  DEM and velocity map (xyDem.rot/stdLat set by readXYDEMGeoInfo above).
+	*/
+	double xMin, xMax, yMin, yMax;
+	simInSARDEMBounds(&scene, xyDem.rot, xyDem.stdLat, &xMin, &xMax, &yMin, &yMax);
+	/*
 	  Init and input DEM
 	*/
 	if (scene.offsetFlag == TRUE || scene.useVelocity == TRUE)
 	{
 		if (scene.offsetFlag == TRUE)
 			fprintf(stderr, "Using offsets\n");
-		readXYVel(&xyVel, displacementFile);
+		readXYCropVel(&xyVel, displacementFile, xMin, xMax, yMin, yMax);
 	}
 	else
 	{
 		xyVel.xSize = 0;
 		xyVel.ySize = 0;
 	}
-	
+
+	if (scene.velThresh > 0)
+		scene.maskFlag = TRUE;
+
 	fprintf(stderr, "Loading DEM...\n");
-	readXYDEM(demFile, &xyDem);
+	readXYDEMcrop(demFile, &xyDem, xMin, xMax, yMin, yMax);
 	dem = (void *)&xyDem;
-	if (scene.maskFlag == TRUE)
+
+	if (scene.verticalCorrectionFile != NULL)
+	{
+		fprintf(stderr, "Loading vertical correction (%s)...\n", scene.verticalCorrectionFile);
+		readXYDEMcrop(scene.verticalCorrectionFile, &verticalCorrection, xMin, xMax, yMin, yMax);
+		scene.verticalCorrection = &verticalCorrection;
+	}
+	else
+	{
+		scene.verticalCorrection = NULL;
+	}
+	if (scene.maskFlag == TRUE && scene.velThresh == 0)
 	{
 		readMaskFile(displacementFile, imageMask);
 		scene.imageMask = imageMask;
@@ -92,6 +116,8 @@ int main(int argc, char *argv[])
 	/*
 	  Simulate InSAR image
 	*/
+	if (scene.geodat2File != NULL)
+		simInSARBaselineFromSV(scene.geodat2File, &scene);
 	fprintf(stderr, "Running simulation....\n");
 	simInSARimage(&scene, dem, &xyVel);
 	/*
@@ -139,12 +165,13 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	double bnMid, dBn, bpMid, dBp;
 	double dT;
 	int32_t velocityFlag;
+	float velThresh;
 
 	int32_t bnFlag = FALSE, bnStartFlag = FALSE, toLLFlag = FALSE;
 	int32_t bpFlag = FALSE, bpStartFlag = FALSE;
-	int32_t i, n, flatFlag, heightFlag, maskFlag, offsetFlag;
+	int32_t i, n, flatFlag, heightFlag, maskFlag, offsetFlag, velOnlyFlag, tiffFlag;
 
-	if (argc < 5 || argc > 22)
+	if (argc < 5 || argc > 30)
 		usage(); /* Check number of args */
 	n = argc - 5;
 	bn = DEFAULT_SIM_BN;
@@ -155,16 +182,23 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	heightFlag = FALSE;
 	maskFlag = FALSE;
 	offsetFlag = FALSE;
+	tiffFlag = FALSE;
 	bnStart = bn;
 	bnEnd = bn;
 	bpStart = bp;
 	bpEnd = bp;
 	velocityFlag = FALSE;
+	velOnlyFlag = FALSE;
+	velThresh = 0.0;
 	dT = 12.0;
 	scene->llInput = NULL;
 	scene->toLLFlag = FALSE;   /* For offsets */
 	scene->saveLLFlag = FALSE; /* for phase/geodat */
 	scene->byteOrder = MSB;
+	scene->geodat2File = NULL;
+	scene->bnArray = NULL;
+	scene->bpArray = NULL;
+	scene->verticalCorrectionFile = NULL;
 	for (i = 1; i <= n; i += 2)
 	{
 		argString = strchr(argv[i], '-');
@@ -209,7 +243,8 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 			sscanf(argv[i + 1], "%s", bpParamsFile);
 			bnFlag = TRUE;
 			bpFlag = TRUE;
-			parseBnBpParamsFile(bpParamsFile, &bn, &bp, &dBn, &dBp);
+			if (parseBnBpParamsFile(bpParamsFile, &bn, &bp, &dBn, &dBp) != 0)
+				error("readArgs: failed to parse bParamsFile %s\n", bpParamsFile);
 			if (bnStartFlag == TRUE)
 				error("readargs: dBn incompatible bnStart/bnEnd\n");
 		}
@@ -278,6 +313,17 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 			i--;
 			offsetFlag = TRUE;
 		}
+		else if (strstr(argString, "velThresh") != NULL)
+		{
+			sscanf(argv[i + 1], "%f", &velThresh);
+			velocityFlag = TRUE;
+		}
+		else if (strstr(argString, "velOnly") != NULL)
+		{
+			i--;
+			velOnlyFlag = TRUE;
+			velocityFlag = TRUE;
+		}
 		else if (strstr(argString, "velocity") != NULL)
 		{
 			i--;
@@ -297,9 +343,46 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 			i--;
 			scene->byteOrder = LSB;
 		}
+		else if (strstr(argString, "tiff") != NULL)
+		{
+			i--;
+			tiffFlag = TRUE;
+		}
+		else if (strstr(argString, "geodat2") != NULL)
+		{
+			scene->geodat2File = argv[i + 1];
+		}
+		else if (strstr(argString, "verticalCorrection") != NULL)
+		{
+			scene->verticalCorrectionFile = argv[i + 1];
+		}
+		else if (strstr(argString, "ompThreads") != NULL)
+		{
+			int32_t nThreads = 0;
+			sscanf(argv[i + 1], "%d", &nThreads);
+			if (nThreads > 0) {
+				omp_set_num_threads(nThreads);
+				fprintf(stderr, "\033[1;3;34mompThreads set to %d\033[0m\n", nThreads);
+			} else
+				fprintf(stderr, "\033[1;3;34mompThreads using default (%d)\033[0m\n", omp_get_max_threads());
+		}
 		else
 			usage();
 	}
+	if (velOnlyFlag == TRUE && (bnFlag == TRUE || bpFlag == TRUE || bnStartFlag == TRUE || bpStartFlag == TRUE ||
+	                            scene->geodat2File != NULL))
+		error("-velOnly cannot be combined with explicit baseline flags or -geodat2\n");
+	if (velOnlyFlag == TRUE)
+	{
+		bn = 0.0; bp = 0.0;
+		bnStart = 0.0; bnEnd = 0.0;
+		bpStart = 0.0; bpEnd = 0.0;
+		dBn = 0.0; dBp = 0.0;
+		fprintf(stderr, "velOnly: baseline set to zero (velocity-only interferogram)\n");
+	}
+	if (scene->geodat2File != NULL && (bnFlag == TRUE || bpFlag == TRUE || bnStartFlag == TRUE || bpStartFlag == TRUE))
+		fprintf(stderr, "WARNING: -geodat2 specified with explicit baseline flags; "
+		                "explicit bn/bp values will be ignored\n");
 	fprintf(stderr, "offsetFlag %i\n", offsetFlag);
 	if (flatFlag == TRUE)
 		fprintf(stderr, "flat\n");
@@ -316,9 +399,11 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	scene->heightFlag = heightFlag;
 	scene->maskFlag = maskFlag;
 	scene->offsetFlag = offsetFlag;
+	scene->tiffFlag = tiffFlag;
 	scene->useVelocity = velocityFlag;
+	scene->velThresh = velThresh;
 
-	if (bpStartFlag == TRUE)
+	if (bnStartFlag == TRUE)
 	{
 		scene->bnStart = bnStart;
 		scene->bnEnd = bnEnd;
@@ -328,7 +413,7 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 		scene->bnStart = bn - 0.5 * dBn;
 		scene->bnEnd = bn + 0.5 * dBn;
 	}
-	if (bnStartFlag == TRUE)
+	if (bpStartFlag == TRUE)
 	{
 		scene->bpStart = bpStart;
 		scene->bpEnd = bpEnd;
@@ -347,14 +432,15 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 
 static void usage()
 {
-	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n",
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n",
 			"Simulate interferogram using a DEM",
 			"Usage:",
 			"siminsar -LSB -bn bn -dBn dBn -bp bp -dBp dBp ",
 			"         -bnStart bnStart -bnEnd bnEnd -bpStart bpStart -bpEnd bpEnd ",
 			"         -bParamsFile bParamsFile",
-			"         -flat -height -rPix rPix -aPix deltA -velocity",
+			"         -flat -height -rPix rPix -aPix deltA -velocity -velOnly",
 			"         -slantRangeDEM -xyDEM -mask -saveLL -toLL file.dat",
+			"         -geodat2 geodat2File -verticalCorrection vcFile -ompThreads N",
 			"          demFile displacementFile sceneFile outPutImage",
 			"where",
 			"   LSB             Output results as LSB [MSB]",
@@ -374,6 +460,8 @@ static void usage()
 			"   rPix            = range single look pixel size",
 			"   aPix            = azimuth single look pixel size",
 			"   velocity        = use velocity",
+			"   verticalCorrection vcFile = xyDEM grid (m/yr) of submergence/emergence rate added to simulated phase",
+			"   ompThreads N    = number of OpenMP threads [default: 4]",
 			"   slantRangeDEM   = use dem of image size in slant range coords",
 			"   xyDEM           = xyDEM file with xyDEM.geodat file",
 			"   demFile          = dem file in lat/lon, xy, or slant range format",
@@ -389,68 +477,142 @@ static void usage()
 */
 static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask)
 {
-	FILE *fp;
-	char *geodatFile;
-	char line[256];
-	int32_t lineCount = 0, eod;
-	unsigned char *tmp, *tmp1;
-	float dum1, dum2;
-	int32_t i;
-	/*
-	  geodat file name
-	*/
 	fprintf(stderr, "ShelfMaskFile %s\n", shelfMaskFile);
-	geodatFile = (char *)malloc(strlen(shelfMaskFile) + 8);
-	geodatFile[0] = '\0';
-	geodatFile = strcpy(geodatFile, shelfMaskFile);
-	geodatFile = strcat(geodatFile, ".geodat");
-	fprintf(stderr, "Shelfmask geodat file %s\n", geodatFile);
-	/*
-	   Open geodat file
-	*/
-	fp = openInputFile(geodatFile);
-	if (fp == NULL)
-		error("*** readShelf: Error opening %s ***\n", geodatFile);
-	/*
-	  Read parameters
-	*/
-	lineCount = getDataString(fp, lineCount, line, &eod); /* Skip # 2 line */
-	lineCount = getDataString(fp, lineCount, line, &eod);
-	sscanf(line, "%f %f\n", &dum1, &dum2); /* read as float in case fp value */
-	shelfMask->xSize = (int)dum1;
-	shelfMask->ySize = (int)dum2;
-	lineCount = getDataString(fp, lineCount, line, &eod);
-	sscanf(line, "%lf %lf\n", &(shelfMask->deltaX), &(shelfMask->deltaY));
-	shelfMask->deltaX *= MTOKM;
-	shelfMask->deltaY *= MTOKM;
-	lineCount = getDataString(fp, lineCount, line, &eod);
-	sscanf(line, "%lf %lf\n", &(shelfMask->x0), &(shelfMask->y0));
-	fprintf(stderr, "%s\n", line);
-	fclose(fp);
-	shelfMask->rot = 0;
-	shelfMask->hemisphere = SOUTH;
-	shelfMask->stdLat = 71.0;
 
-	fprintf(stderr, "** %i %i \n %f %f \n %f %f \n %f %i %f \n",
-			shelfMask->xSize, shelfMask->ySize, shelfMask->deltaX, shelfMask->deltaY,
-			shelfMask->x0, shelfMask->y0, shelfMask->rot, shelfMask->hemisphere, shelfMask->stdLat);
-	/*
-	  Malloc array
-	*/
-	shelfMask->mask = (unsigned char **)
-		malloc(shelfMask->ySize * sizeof(unsigned char *));
-	tmp = (unsigned char *)malloc(shelfMask->xSize * shelfMask->ySize * sizeof(unsigned char));
-	/*
-	   Open shelfFile file
-	*/
-	fp = openInputFile(shelfMaskFile);
-	if (fp == NULL)
-		error("*** readShelf: Error opening %s ***\n", shelfMaskFile);
-	for (i = 0; i < shelfMask->ySize; i++)
+	if (has_extension(shelfMaskFile, ".tif") || has_extension(shelfMaskFile, ".vrt"))
 	{
-		tmp1 = &(tmp[i * shelfMask->xSize]);
-		freadBS(tmp1, sizeof(unsigned char), shelfMask->xSize, fp, BYTEFLAG);
-		shelfMask->mask[i] = tmp1;
+		/* GDAL path for .tif / .vrt mask files */
+		GDALDatasetH hDS = GDALOpen(shelfMaskFile, GA_ReadOnly);
+		if (hDS == NULL)
+			error("readMaskFile: cannot open %s with GDAL\n", shelfMaskFile);
+
+		int32_t nCols = GDALGetRasterXSize(hDS);
+		int32_t nRows = GDALGetRasterYSize(hDS);
+		double gt[6];
+		GDALGetGeoTransform(hDS, gt);
+
+		shelfMask->xSize  = nCols;
+		shelfMask->ySize  = nRows;
+		shelfMask->deltaX = gt[1] * MTOKM;         /* m → km, positive east */
+		shelfMask->deltaY = -gt[5] * MTOKM;        /* gt[5]<0 north-up; store positive */
+		shelfMask->x0     = gt[0] * MTOKM;         /* left edge in km */
+		shelfMask->y0     = (gt[3] + nRows * gt[5]) * MTOKM; /* bottom edge in km */
+		shelfMask->rot    = 0;
+
+		/* Detect hemisphere and standard latitude from EPSG */
+		const char *projStr = GDALGetProjectionRef(hDS);
+		char *projCopy = strdup(projStr);
+		char *projCopyOrig = projCopy;  /* OSRImportFromWkt advances projCopy; free the original */
+		OGRSpatialReferenceH hSRS = OSRNewSpatialReference(NULL);
+		int32_t epsg = 0;
+		if (projCopy != NULL && strlen(projCopy) > 0 &&
+			OSRImportFromWkt(hSRS, &projCopy) == OGRERR_NONE)
+		{
+			const char *epsgCode = OSRGetAuthorityCode(hSRS, NULL);
+			if (epsgCode != NULL)
+				epsg = atoi(epsgCode);
+		}
+		OSRDestroySpatialReference(hSRS);
+		free(projCopyOrig);
+
+		if (epsg == 3413)
+		{
+			shelfMask->hemisphere = NORTH;
+			shelfMask->stdLat     = 70.0;
+			shelfMask->rot        = 45.0;
+		}
+		else if (epsg == 3031)
+		{
+			shelfMask->hemisphere = SOUTH;
+			shelfMask->stdLat     = 71.0;
+			shelfMask->rot        = 0.0;
+		}
+		else
+		{
+			/* Default to Greenland if unknown */
+			fprintf(stderr, "readMaskFile: unknown EPSG %d, defaulting to Greenland (3413)\n", epsg);
+			shelfMask->hemisphere = NORTH;
+			shelfMask->stdLat     = 70.0;
+			shelfMask->rot        = 45.0;
+		}
+
+		fprintf(stderr, "** %i %i \n %f %f \n %f %f \n %f %i %f \n",
+				shelfMask->xSize, shelfMask->ySize, shelfMask->deltaX, shelfMask->deltaY,
+				shelfMask->x0, shelfMask->y0, shelfMask->rot, shelfMask->hemisphere, shelfMask->stdLat);
+
+		/* Read pixel data: GDAL row 0 = top; ShelfMask row 0 = bottom → flip Y */
+		unsigned char *tmp = (unsigned char *)malloc(nCols * nRows);
+		GDALRasterBandH hBand = GDALGetRasterBand(hDS, 1);
+		GDALRasterIO(hBand, GF_Read, 0, 0, nCols, nRows,
+					 tmp, nCols, nRows, GDT_Byte, 0, 0);
+		GDALClose(hDS);
+
+		unsigned char *storage = (unsigned char *)malloc(nCols * nRows);
+		shelfMask->mask = (unsigned char **)malloc(nRows * sizeof(unsigned char *));
+		int32_t i;
+		/* mask[i] = bottom-up row i → must hold GDAL row (nRows-1-i) */
+		for (i = 0; i < nRows; i++)
+		{
+			shelfMask->mask[i] = &storage[i * nCols];
+			memcpy(shelfMask->mask[i], &tmp[(nRows - 1 - i) * nCols], nCols);
+		}
+		free(tmp);
 	}
-	fprintf(stderr, "%f %f \n", shelfMask->x0, shelfMask->y0);
+	else
+	{
+		/* GrIMP binary path: read geometry from .geodat sidecar, data from binary file */
+		FILE *fp;
+		char *geodatFile;
+		char line[256];
+		int32_t lineCount = 0, eod;
+		unsigned char *tmp, *tmp1;
+		float dum1, dum2;
+		int32_t i;
+
+		geodatFile = (char *)malloc(strlen(shelfMaskFile) + 8);
+		geodatFile[0] = '\0';
+		geodatFile = strcpy(geodatFile, shelfMaskFile);
+		geodatFile = strcat(geodatFile, ".geodat");
+		fprintf(stderr, "Shelfmask geodat file %s\n", geodatFile);
+
+		fp = openInputFile(geodatFile);
+		if (fp == NULL)
+			error("*** readShelf: Error opening %s ***\n", geodatFile);
+
+		lineCount = getDataString(fp, lineCount, line, &eod); /* Skip # 2 line */
+		lineCount = getDataString(fp, lineCount, line, &eod);
+		sscanf(line, "%f %f\n", &dum1, &dum2);
+		shelfMask->xSize = (int)dum1;
+		shelfMask->ySize = (int)dum2;
+		lineCount = getDataString(fp, lineCount, line, &eod);
+		sscanf(line, "%lf %lf\n", &(shelfMask->deltaX), &(shelfMask->deltaY));
+		shelfMask->deltaX *= MTOKM;
+		shelfMask->deltaY *= MTOKM;
+		lineCount = getDataString(fp, lineCount, line, &eod);
+		sscanf(line, "%lf %lf\n", &(shelfMask->x0), &(shelfMask->y0));
+		fprintf(stderr, "%s\n", line);
+		fclose(fp);
+		shelfMask->rot = 0;
+		shelfMask->hemisphere = SOUTH;
+		shelfMask->stdLat = 71.0;
+
+		fprintf(stderr, "** %i %i \n %f %f \n %f %f \n %f %i %f \n",
+				shelfMask->xSize, shelfMask->ySize, shelfMask->deltaX, shelfMask->deltaY,
+				shelfMask->x0, shelfMask->y0, shelfMask->rot, shelfMask->hemisphere, shelfMask->stdLat);
+
+		shelfMask->mask = (unsigned char **)
+			malloc(shelfMask->ySize * sizeof(unsigned char *));
+		tmp = (unsigned char *)malloc(shelfMask->xSize * shelfMask->ySize * sizeof(unsigned char));
+
+		fp = openInputFile(shelfMaskFile);
+		if (fp == NULL)
+			error("*** readShelf: Error opening %s ***\n", shelfMaskFile);
+		for (i = 0; i < shelfMask->ySize; i++)
+		{
+			tmp1 = &(tmp[i * shelfMask->xSize]);
+			freadBS(tmp1, sizeof(unsigned char), shelfMask->xSize, fp, BYTEFLAG);
+			shelfMask->mask[i] = tmp1;
+		}
+		fprintf(stderr, "%f %f \n", shelfMask->x0, shelfMask->y0);
+	}
 }

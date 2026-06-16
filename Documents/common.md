@@ -210,6 +210,8 @@ Used for converting geodetic to ECEF coordinates.
 
 ### `initRoutines.c` (geometry helpers — declared in `common.h`)
 
+#### Spherical geometry primitives
+
 **`psiRReZReH`**(R, ReZ, ReH) → double  
 Incidence angle $\psi$ at the surface from slant range $R$, surface radius $R_{eZ} = R_e + h$,
 and satellite radius $R_{eH} = R_e + H$, using the spherical law of sines:
@@ -220,7 +222,11 @@ $$
 $$
 
 **`thetaRReZReH`**(R, ReZ, ReH) → double  
-Look angle $\theta$ at the satellite (intermediate result used by `psiRReZReH`).
+Look angle $\theta$ at the satellite:
+
+$$
+\theta = \arccos\!\left(\frac{R^2 + R_{eH}^2 - R_{eZ}^2}{2\,R\,R_{eH}}\right)
+$$
 
 **`rhoRReZReH`**(R, ReZ, ReH) → double  
 Earth central angle $\rho$ between sub-satellite point and target:
@@ -229,16 +235,222 @@ $$
 \rho = \arccos\!\left(\frac{R^2 - R_{eH}^2 - R_{eZ}^2}{-2\,R_{eZ}\,R_{eH}}\right)
 $$
 
-**`getReH`**(cP, inputImage, azimuth) → double  
-Returns the azimuth-varying satellite radius $R_{eH}(\text{az})$ by nearest-neighbour lookup
-in a precomputed table. Falls back to a fixed value if the table is absent.
-
 **`slantRange`**(rho, ReZ, ReH) → double  
-Computes slant range from Earth central angle:
+Slant range from Earth central angle:
 
 $$
 R = \sqrt{R_{eH}^2 + R_{eZ}^2 - 2\,R_{eZ}\,R_{eH}\cos\rho}
 $$
+
+**`getReH`**(cP, inputImage, azimuth) → double  
+Returns the azimuth-varying satellite radius $R_{eH}(\text{az})$ by nearest-neighbour index into
+the precomputed `cP->ReH[]` table. Falls back to $R_e + H$ if the table is absent.
+
+**`sphericalElev`**(z, lat, Re) → double  
+Converts a WGS84 ellipsoidal elevation $z$ (m) at latitude `lat` to an equivalent spherical
+elevation relative to a reference radius $R_e$:
+
+$$
+z_\text{sph} = z + \bigl(R_{e,\text{WGS}}(\varphi) - R_e\bigr)
+$$
+
+**`sphericalToWGSElev`**(z, lat, Re) → double  
+Inverse of `sphericalElev`: converts a spherical elevation back to WGS84.
+
+**`bPoly`**(b0, b1, b2, x) → double  
+Evaluates the quadratic baseline polynomial $b_0 + b_1 x + b_2 x^2$ used for
+along-track baseline variation.
+
+**`limitSlope`**(slope, maxSlope) → double  
+Clamps a DEM slope to $\pm$`maxSlope` with sign preserved. Used before forming the
+B matrix to avoid numerical blow-up on steep terrain.
+
+---
+
+#### Geometric setup
+
+**`setupGeoConversions`**(currentImage, \*azSLPixSize, \*rSLPixSize, \*Re, \*ReH, \*thetaC, \*ReHfixed, \*thetaCfixedReH) → conversionDataStructure\*  
+Initialises all geometric parameters needed for phase-to-velocity conversion for a single
+input image:
+- Calls `initllToImageNew` to populate `cpAll`.
+- Sets single-look pixel sizes from geodat looks.
+- Reads $R_e$ and mid-scene $R_{eH}$ from `cpAll.ReH[]`.
+- Computes the state-vector-derived centre look angle $\theta_C = \text{thetaRReZReH}(R_c, R_e, R_{eH})$.
+- Also computes `thetaCfixedReH` using the nominal geodat altitude $H$, needed to compensate
+  for `changeflat` corrections in phase calculations.
+
+*Calls:* `initllToImageNew`, `thetaRReZReH`
+
+**`geometryInfo`**(cP, currentImage, azimuth, range, z, thetaC, \*ReH, \*Range, \*theta, \*thetaD, \*psi, zSp) → void  
+Computes all per-pixel radar geometry quantities given image coordinates (azimuth, range) and
+surface height `zSp`:
+- Looks up $R_{eH}$ at the given azimuth line.
+- $R = R_\text{near} + \text{range} \cdot \delta r$
+- $\theta = \text{thetaRReZReH}(R, R_e + z_{sp}, R_{eH})$
+- $\theta_D = \theta - \theta_C$ (look angle relative to centre)
+- $\psi = \text{psiRReZReH}(R, R_e + z_{sp}, R_{eH})$
+
+**`initOutputImage`**(outputImage, inputImage) → void  
+Determines the output grid extent and pixel size from a reference input image.
+Projects the four corner control points to XY (polar stereographic) to find the bounding
+box, then sets `originX/Y`, `xSize`, `ySize`, and `deltaX/Y`.
+Allocates `outputImage->image` via `mallocImage` unless `noMem` is set.
+
+*Calls:* `lltoxy`, `mallocImage`
+
+**`setupBuffers`**(outputImage, \*\*vXimage, \*\*vYimage, …) → void  
+Convenience wrapper that extracts all output image buffer pointers (vx, vy, vz, scale,
+error, tmp arrays) from an `outputImageStructure` into individual `float **` pointers.
+
+**`mallocImage`**(nr, nc) → float\*\*  
+Allocates a 2-D float array of `nr` rows and `nc` columns. Calls `error()` on allocation
+failure.
+
+**`setTiePointsMapProjectionForHemisphere`**(tiePoints) → void  
+Sets the global `HemiSphere` (NORTH/SOUTH), `Rotation`, and `stdLat` based on the sign of
+the first tiepoint latitude. Used to initialise the polar-stereographic projection before
+any geographic computations.
+
+---
+
+#### 3-D velocity inversion
+
+**`computeA`**(lat, lon, x, y, aPhaseImage, dPhaseImage, A\[2\]\[2\]) → void  
+Fills the 2×2 geometric conversion matrix mapping phase measurements to horizontal velocity.
+Computes heading angles for ascending and descending images at (lat, lon), then:
+
+$$
+\alpha = H_A - H_D, \quad \beta = \phi_{xy} - H_A
+$$
+
+$$
+A = \frac{1}{\sin^2\!\alpha}
+\begin{pmatrix}
+\cos\beta - \cos\alpha\cos(\alpha+\beta) & \cos(\alpha+\beta) - \cos\alpha\cos\beta \\
+\sin\beta - \cos\alpha\sin(\alpha+\beta) & \sin(\alpha+\beta) - \cos\alpha\sin\beta
+\end{pmatrix}
+$$
+
+Sets $A_{00} = -\text{LARGEINT}$ if $|\alpha| < 0.8$ rad to flag insufficient heading difference.  
+*Calls:* `computeHeading`
+
+**`computeB`**(x, y, z, B\[2\]\[2\], \*dzdx, \*dzdy, aPsi, dPsi, xydem) → void  
+Fills the 2×2 surface-slope correction matrix. DEM gradients are computed by centred
+finite differences with $\geq 90$ m spacing, clamped to $\pm 0.1$ by `limitSlope`:
+
+$$
+B = \begin{pmatrix}
+\partial z/\partial x \,/\, \tan\psi_A & \partial z/\partial y \,/\, \tan\psi_A \\
+\partial z/\partial x \,/\, \tan\psi_D & \partial z/\partial y \,/\, \tan\psi_D
+\end{pmatrix}
+$$
+
+*Calls:* `interpXYDEM`, `limitSlope`
+
+**`computeVxy`**(aP, dP, aPe, dPe, A, B, \*vx, \*vy, \*scaleX, \*scaleY) → void  
+Solves for horizontal velocity $(v_x, v_y)$ given ascending and descending phase measurements
+(`aP`, `dP`) and their errors (`aPe`, `dPe`):
+
+$$
+C = I - AB, \quad D = C^{-1}A, \quad (v_x, v_y)^T = D\,(p_A, p_D)^T
+$$
+
+Error variances: $\sigma_{v_x}^2 = D_{00}^2\sigma_{p_A}^2 + D_{01}^2\sigma_{p_D}^2$ (and
+similarly for $v_y$). Weights: $1/\sigma^2$.  
+Sets $v_x = v_y = -\text{LARGEINT}$, $w = 0$ if $\det C < 0.25$ (ill-conditioned due to
+extreme slopes).
+
+---
+
+#### Error propagation
+
+**`computeSig2Base`**(sinThetaD, cosThetaD, azimuth, inputImage, offsets) → double  
+Returns $\sigma^2_\text{base}$ — the phase variance due to baseline parameter uncertainty —
+via the Jacobian vector $\mathbf{v}$ and 6×6 covariance matrix $\mathbf{C}$:
+
+$$
+\sigma^2 = \mathbf{v}^T \mathbf{C}\, \mathbf{v}, \qquad
+v_i = (-\sin\theta_D,\; -\sin\theta_D\,\hat{x},\; -\cos\theta_D\,\hat{x},\;
+       -\sin\theta_D\,\hat{x}^2,\; -\cos\theta_D\,\hat{x}^2,\; v_6)
+$$
+
+where $\hat{x} = (\text{az} - N_{az}/2) / N_{az}$ is the normalised along-track position
+and $v_6 = 1$ (no state-vector) or $-\cos\theta_D$ (with state-vector correction).
+
+**`computeSig2AzParam`**(sinTheta, cosTheta, azimuth, Range, inputImage, offsets) → double  
+Returns $\sigma^2_\text{az}$ from the 4×4 azimuth-parameter covariance matrix $\mathbf{C}_a$
+using the Jacobian $\mathbf{v} = (1,\; R\sin\theta,\; R\cos\theta,\; \hat{x})$.
+
+**`interpTideError`**(\*phaseError, phaseImage, params, x, y, psi, twok) → void  
+If a tidal difference field is present, interpolates the tidal correction at (x, y) and
+adds a tidal error contribution $0.1\cos\psi \cdot \text{twok}$ in quadrature to `phaseError`.
+
+**`shelfMaskCorrection`**(currentImage, currentParams, sMask, x, y, psi, \*sigmaR) → float  
+For shelf pixels (sMask == SHELF), computes and returns the tidal range correction:
+
+$$
+\delta r = -\delta_\text{tide} \cos\psi \cdot \frac{\Delta t}{365.25}
+$$
+
+Also adds tidal range error $0.1\cos\psi$ in quadrature to `sigmaR`. Returns 0 for
+grounded pixels.
+
+---
+
+#### Image pair intersection and heading check
+
+**`getIntersect`**(dPhaseImage, aPhaseImage, \*iMin, \*iMax, \*jMin, \*jMax, outputImage) → void  
+Computes the output-grid row/column bounding box of the overlap between ascending and
+descending images. Projects each image's four corner control points to polar-stereographic
+XY via `lltoxy1`, forms axis-aligned bounding boxes for each, and takes their intersection
+with a 15 km pad. Returns all zeros if the images do not overlap.  
+*Calls:* `lltoxy1`
+
+**`computeSceneAlpha`**(outputImage, aOffImage, dOffImage, aCp, dCp, dem, \*iMin, \*iMax, \*jMin, \*jMax) → void  
+Samples the heading difference $\alpha = H_A - H_D$ at a coarse grid of pixels within the
+intersection box. Sets `iMax = jMax = 0` (skip this pair) if $|\alpha| < 0.7$ rad, indicating
+the orbits are too nearly parallel for a well-conditioned crossing solution.  
+*Calls:* `computeHeading`, `llToImageNew`, `xytoll1`
+
+---
+
+#### Coordinate rotation
+
+**`errorsToXY`**(er, ea, \*ex, \*ey, xyAngle, hAngle) → void  
+Rotates radar-frame range/azimuth error variances $(e_r^2, e_a^2)$ into polar-stereographic
+XY variances using the angle between the satellite heading and the map x-axis:
+
+$$
+\sigma_x^2 = e_r^2\cos^2\!\phi + e_a^2\sin^2\!\phi, \qquad
+\sigma_y^2 = e_r^2\sin^2\!\phi + e_a^2\cos^2\!\phi, \qquad
+\phi = H - \phi_{xy}
+$$
+
+---
+
+#### String and file utilities
+
+**`hasSuffix`**(filename, suffix) → int  
+Returns TRUE if `filename` ends with `suffix` (case-sensitive byte comparison).
+
+**`appendSuffix`**(file, suffix, buf) → char\*  
+Concatenates `file` and `suffix` into `buf` and returns a pointer to `buf`.
+
+**`fileExists`**(filename, abort) → int  
+Opens `filename` for reading. Returns TRUE if successful; if `abort == TRUE` calls
+`error()` on failure.
+
+**`has_extension`**(filename, extension) → int  
+Case-insensitive check for a file extension (e.g. `.vrt`, `.tif`).
+
+**`replace_wildcard`**(filename, wildcard, replacement) → char\*  
+Allocates and returns a new string with the first occurrence of `wildcard` in `filename`
+replaced by `replacement`. Returns a copy of `filename` if `wildcard` is not found.
+Caller is responsible for freeing the returned string.
+
+**`secondForSAR`**(par) → double  
+Converts the SAR timing fields `hr`, `min`, `sec` in a `SARData` struct to total seconds
+since midnight.
 
 ---
 

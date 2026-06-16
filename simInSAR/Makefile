@@ -5,9 +5,9 @@ OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
 $(shell mkdir -p $(OBJDIR))
 
-CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP
+CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
-SRCS =	siminsar.c parseSceneFile.c simInSARimage.c outputSimulatedImage.c getDisplacement.c getSlantRangeDEM.c
+SRCS =	siminsar.c parseSceneFile.c simInSARimage.c outputSimulatedImage.c getDisplacement.c getSlantRangeDEM.c simInSARBaselineFromSV.c
 
 OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
 

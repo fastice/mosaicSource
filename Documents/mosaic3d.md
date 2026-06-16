@@ -31,29 +31,44 @@ mosaic3d [options] inputFile demFile outFileBase
 > are known to be experimental, rarely used, or may not be fully supported in current
 > builds.
 
-| Option                          | Description |
-|---------------------------------|-------------|
-| `-fl <length>`                  | Feathering length (m) at image edges for blending overlapping inputs |
-| `-north` / `-south`             | Force northern / southern hemisphere projection |
-| `-shelfMask <file>`             | Ice-shelf and grounding-zone mask for tidal corrections |
-| `-tideFile <file>`              | Tidal model file for shelf corrections |
-| `-verticalCorrection <file>`    | Vertical correction field (e.g. submergence/emergence) |
-| `-irregFile <file>`             | Irregularly spaced supplemental velocity data |
-| `-landSat <file>`               | Landsat feature-tracking input list |
-| `-extraTieFile <file>`          | ⚠️ Extra tiepoints for output tiepoint file (used with `-makeTies`) |
-| `-tieThresh <val>`              | ⚠️ Threshold for tiepoint selection (used with `-makeTies`) |
-| `-refVel <file>`                | ⚠️ Reference velocity map for clipping outliers (experimental) |
-| `-date1 <date>` / `-date2`      | Date range for output (YYYY-MM-DD) |
-| `-timeThresh <days>`            | Maximum time separation for crossing-orbit offset pairs (`-3dOff`) |
-| `-timeThreshPhase <days>`       | Maximum time separation for crossing-orbit InSAR pairs |
-| `-no3d`                         | Skip the 3D InSAR phase solution |
-| `-noVh`                         | Skip the InSAR phase + azimuth offset (Vh) solution |
-| `-3dOff`                        | Include the crossing-orbit range offset 3D solution |
-| `-makeTies`                     | ⚠️ Output a tiepoint file rather than a velocity mosaic (experimental) |
-| `-statsFlag`                    | ⚠️ Use unit weights for computing spatial statistics (experimental) |
-| `-GTiff`                        | Write output as GeoTIFF |
-| `-COG`                          | Write output as Cloud-Optimised GeoTIFF |
-| `-quiet`                        | Suppress verbose output |
+| Option                                 | Description |
+|----------------------------------------|-------------|
+| `-fl <length>`                         | Feathering length (m) at image edges for blending overlapping inputs |
+| `-north`                               | Force northern hemisphere projection |
+| `-shelfMask <file>`                    | Ice-shelf and grounding-zone mask for tidal corrections |
+| `-noTide`                              | Skip tidal correction even on shelf pixels |
+| `-tideFile <file>`                     | Tidal model file for shelf corrections |
+| `-verticalCorrection <file>`           | Vertical correction field (e.g. submergence/emergence velocity) in m/yr |
+| `-verticalCorrectionSuffix <suffix>`   | Suffix appended to phase, baseline, and rBaseline filenames for vertical correction |
+| `-irreg <file>`                        | File listing irregularly spaced supplemental velocity datasets |
+| `-landSat <file>`                      | File containing list of Landsat feature-tracking offset inputs |
+| `-rOffsets`                            | Use range+azimuth speckle-tracked offsets for both velocity components where needed |
+| `-offsets`                             | *(obsolete — azimuth offsets are always used; flag is silently ignored)* |
+| `-no3d`                                | Skip the crossing-orbit InSAR phase (3D) solution |
+| `-noVh`                                | Skip the single-pass InSAR phase + azimuth offset (Vh) solution |
+| `-3dOff`                               | Enable crossing-orbit range offset 3D solution |
+| `-noSepAscDesc`                        | Use heading difference rather than ascending/descending classification for crossing pairs |
+| `-timeThresh <days>`                   | Max time separation for crossing-orbit range-offset pairs (`-3dOff`); default 12 days |
+| `-timePhaseThresh <days>`              | Max time separation for crossing-orbit InSAR pairs; default 548 days (1.5 years) |
+| `-date1 <MM-DD-YYYY>`                  | Start of output date range |
+| `-date2 <MM-DD-YYYY>`                  | End of output date range |
+| `-timeOverlap`                         | Include images that partially overlap the date range (weighted by fractional overlap); default is fully-contained-only |
+| `-SVConst`                             | Apply constant-only state-vector correction on top of orbital solution |
+| `-SVAlongTrack`                        | Apply along-track quadratic state-vector correction |
+| `-refVel <file>`                       | Reference velocity map used to clip large residuals |
+| `-initMap`                             | Interpolate `-refVel` map as the starting point for the mosaic |
+| `-clipThresh <val>`                    | With `-refVel`: clip differences exceeding `val` m/yr for slow regions (< 100 m/yr) |
+| `-extraTies <file>`                    | ⚠️ Extra tiepoints to include (used with `-makeTies`) |
+| `-tieThresh <val>`                     | ⚠️ Velocity threshold for tiepoint selection (default 100 m/yr) |
+| `-makeTies`                            | ⚠️ Output a tiepoint file rather than a velocity mosaic |
+| `-sigmaAThresh <val>`                  | Skip azimuth offsets for an image if the residual from the azimuth parameter fit exceeds `val` metres (default 1000 m — effectively no filtering) |
+| `-stats`                               | ⚠️ Compute unweighted mean vx/vy and std dev of ex/ey; output point count in vz channel (speckle-track inputs only) |
+| `-vzFlag <val>`                        | Select vertical-channel output: 0 = vz (default), 1 = horizontal 1/sin ψ, 2 = 1/cos ψ, 3 = LOS scaled to m/yr, 4 = incidence angle |
+| `-writeBlank`                          | Force output to be written even when no valid data exist |
+| `-GTiff`                               | Write output as GeoTIFF |
+| `-COG`                                 | Write output as Cloud-Optimised GeoTIFF |
+| `-ompThreads <N>`                      | Number of OpenMP threads for parallel pixel processing (default: 4; overridden by `OMP_NUM_THREADS` environment variable) |
+| `-center`                              | *(obsolete — silently ignored)* |
 
 ### Output Files
 
@@ -429,6 +444,30 @@ where $\sigma_{x,i}$ is the per-pixel velocity error from step $i$. The final
 `endScale` pass converts accumulated weighted sums to normalised velocities and
 error estimates. Edge blending between overlapping images uses a distance-weighted
 feather zone of length `fl`.
+
+---
+
+## Performance
+
+### Multi-threading (OpenMP)
+
+All five pixel-loop routines are parallelised with OpenMP:
+
+| Routine | Per-thread state |
+|---|---|
+| `makeLandSatMosaic` | No shared mutable image state in pixel path — no per-thread copies needed |
+| `make3DMosaic` | Per-thread copies of ascending and descending `inputImageStructure` |
+| `make3DOffsets` | Per-thread copies of ascending and descending `inputImageStructure`; per-thread `Aset` flag |
+| `makeVhMosaic` | Per-thread copy of `inputImageStructure` |
+| `speckleTrackMosaic` | Per-thread copy of `inputImageStructure` |
+
+The outer pixel-row loop (`i`) uses `schedule(dynamic, 8)` — rows are handed out in chunks of 8 to threads as they become free, which handles the non-uniform work distribution (pixels outside the image footprint exit cheaply; interior pixels do geocoding, interpolation, and SVD evaluation).
+
+Per-thread image copies are required because `llToImageNew` writes a warm-start cache field (`lastTime`) into the image struct, and `interpTideError` writes a tide correction field. Making each thread work on its own copy of the struct eliminates these write races.
+
+Before the parallel region for routines that use SVD-based offset interpolation, the lazy-init routines (`svAzOffset`, `svInterpBnBp`) are called once in the serial section to ensure global SVD workspace buffers are allocated before any thread enters the loop.
+
+Thread count is controlled by `-ompThreads N` (default 4). Note that GDAL uses its own internal thread pool for I/O decompression, which can push CPU usage above 100% even at `-ompThreads 1`.
 
 ---
 

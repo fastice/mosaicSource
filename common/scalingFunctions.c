@@ -53,6 +53,7 @@ void redoNormalization(float myWeight, outputImageStructure *outputImage, int32_
 				if (outputImage->timeOverlapFlag == TRUE)
 				{
 					vZimage[i][j] += vzTmp[i][j] * fScale[i][j] * weight;
+					if (syTmp[i][j] > 0.0f && sxTmp[i][j] > 0.0f)
 					scaleZ[i][j] += sqrt(syTmp[i][j] * sxTmp[i][j]) * fScale[i][j] * weight;
 				}
 				else

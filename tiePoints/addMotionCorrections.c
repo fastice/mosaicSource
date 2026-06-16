@@ -5,7 +5,7 @@
 /*
   Compute motion correction.
 */
-void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints)
+void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints, int32_t verbose)
 {
 	extern int32_t HemiSphere;
 	int32_t i, j;
@@ -40,7 +40,7 @@ void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *ti
 	cP = &(inputImage.cpAll);
 	Re = cP->Re;
 	RNear = cP->RNear;
-	fprintf(stderr, "---------------------RNear %f\n", RNear);
+	if (verbose) fprintf(stderr, "---------------------RNear %f\n", RNear);
 	twok = (4.0 * PI / lambda1);
 	deltaT = tiePoints->nDays / 365.25;
 	/*

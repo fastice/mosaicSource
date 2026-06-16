@@ -21,7 +21,7 @@ void bnbpdBpBaselineCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 double lambda;
 
 void computeBaseline(tiePointsStructure *tiePoints,
-					 inputImageStructure inputImage)
+					 inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose)
 {
 	double Re, H, RNear, thetaC, dr, rOffset;
 	double *a; /* Solution for params */
@@ -44,7 +44,6 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	conversionDataStructure *cP;
 
 	lambda = inputImage.par.lambda;
-	fprintf(stderr, "wavelength %f\n", lambda);
 	if (tiePoints->quadB == TRUE)
 		nParams = 6;
 	else if (tiePoints->bpFlag == TRUE)
@@ -66,7 +65,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	Re = tiePoints->Re;
 	RNear = tiePoints->RNear;
 	thetaC = thetaRReZReH(cP->RCenter, (Re + 0.), ReH);
-	fprintf(stderr, "------------------+++ RNear %f %f %f %f\n", RNear, thetaC * RTOD, tiePoints->thetaC * RTOD, ReH);
+	if (verbose) fprintf(stderr, "------------------+++ RNear %f %f %f %f\n", RNear, thetaC * RTOD, tiePoints->thetaC * RTOD, ReH);
 	/*
 	  Range comp params
 	*/
@@ -80,7 +79,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	for (i = 0; i < nData; i++)
 		if (fabs(tiePoints->phase[i]) < 1.0E6)
 			npts++;
-	fprintf(stderr, "Npoints %i\n", npts);
+	fprintf(stderr, "%i points wavelength %f\n", npts, lambda);
 	ma = nParams;
 	x = (modelValues *)malloc((npts + 1) * sizeof(modelValues));
 	y = dvector(1, npts);
@@ -101,6 +100,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	  added second loop on 4/28/14 to iterate on delta and bsq
 	*/
 	sigP = 10.0; /* Use for first try */
+	fprintf(stderr, "iter: Bn Bp dBn dBp dBnQ dBpQ meanPhase sigPhase\n");
 	for (k = 0; k <= 2; k++)
 	{
 		j = 0;
@@ -185,13 +185,17 @@ void computeBaseline(tiePointsStructure *tiePoints,
 		}
 		else
 		{
-			if (tiePoints->noRamp == TRUE)
+			if (tiePoints->bpFlag == TRUE)
+				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpBaselineCoeffs);
+			else if (tiePoints->bnbpFlag == TRUE)
+				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpbnBaselineCoeffs);
+			else if (tiePoints->noRamp == TRUE)
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &noRampBaselineCoeffs);
 			else
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &baselineCoeffs);
 		}
 		svdvar(v, ma, w, Cp);
-		if (tiePoints->dBpFlag == FALSE)
+		if (tiePoints->dBpFlag == FALSE && !tiePoints->bpFlag && !tiePoints->bnbpFlag)
 			a[3] = twok * a[3] / (inputImage.azimuthSize * inputImage.nAzimuthLooks);
 		if (tiePoints->quadB == TRUE)
 		{
@@ -287,57 +291,79 @@ void computeBaseline(tiePointsStructure *tiePoints,
 
 	} /* end k*/
 
-	fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
-	/* use sigma=10 as in above */
-	fprintf(stdout, "; X2 %f \n", chisq);
-	fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", sigP * sqrt(chisq / (double)npts));
-	fprintf(stdout, "; Covariance Matrix \n;");
-	for (l1 = 1; l1 <= 6; l1++)
-	{
-		fprintf(stdout, ";* C_%1i ", l1);
-		for (l2 = 1; l2 <= 6; l2++)
-		{
-			Cij = 0;
-			if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
-				Cij = Cp[pIndex[l1]][pIndex[l2]];
-			fprintf(stdout, " %10.6e ", Cij);
-		}
-		fprintf(stdout, "\n");
+	/* Extract fitted baseline values for output */
+	double BnOut, BpOut, dBnOut, dBpOut, dBnQOut, dBpQOut;
+	if (tiePoints->quadB == TRUE) {
+		BnOut=a[1]; BpOut=a[2]; dBnOut=a[4]; dBpOut=a[3]; dBnQOut=a[6]; dBpQOut=a[5];
+	} else if (tiePoints->bpFlag == TRUE) {
+		BnOut=tiePoints->BnCorig; BpOut=a[1]; dBnOut=tiePoints->dBnorig; dBpOut=tiePoints->dBporig;
+		dBnQOut=tiePoints->dBnQorig; dBpQOut=tiePoints->dBpQorig;
+	} else if (tiePoints->bnbpFlag == TRUE) {
+		BnOut=a[1]; BpOut=a[2]; dBnOut=tiePoints->dBnorig; dBpOut=tiePoints->dBporig;
+		dBnQOut=tiePoints->dBnQorig; dBpQOut=tiePoints->dBpQorig;
+	} else if (tiePoints->bpdBpFlag == TRUE) {
+		BnOut=tiePoints->BnCorig; BpOut=a[1]; dBnOut=tiePoints->dBnorig; dBpOut=a[2];
+		dBnQOut=tiePoints->dBnQorig; dBpQOut=tiePoints->dBpQorig;
+	} else if (tiePoints->bnbpdBpFlag == TRUE) {
+		BnOut=a[1]; BpOut=a[2]; dBnOut=tiePoints->dBnorig; dBpOut=a[3];
+		dBnQOut=tiePoints->dBnQorig; dBpQOut=tiePoints->dBpQorig;
+	} else {
+		BnOut=a[1]; BpOut=a[2]; dBnOut=a[4]; dBpOut=a[3]; dBnQOut=0.0; dBpQOut=0.0;
 	}
-	/*
-	  Output results
-	*/
-	if (tiePoints->dBpFlag == TRUE)
-		fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,dBp\n;\n");
-	else
-		fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,omegaA\n;\n");
 
-	if (tiePoints->quadB == TRUE)
-	{
-		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", a[1], a[2], a[4], a[3], a[6], a[5]);
+	if (yamlOutput) {
+		fprintf(stdout, "applyFlatEarth: true\n");
+		fprintf(stdout, "nDays: %.6f  # days\n",      tiePoints->nDays);
+		fprintf(stdout, "nTiepoints: %d\n",            npts);
+		fprintf(stdout, "nTiepointsGiven: %d\n",       nData);
+		fprintf(stdout, "X2: %f\n",                    chisq);
+		fprintf(stdout, "sigma: %.6f  # radians\n",   sigP * sqrt(chisq / (double)npts));
+		fprintf(stdout, "Bn: %.6f  # meters\n",        BnOut);
+		fprintf(stdout, "Bp: %.6f  # meters\n",        BpOut);
+		fprintf(stdout, "dBn: %.6f  # meters/pixel\n", dBnOut);
+		fprintf(stdout, "dBp: %.6f  # meters/pixel\n", dBpOut);
+		fprintf(stdout, "dBnQ: %.6f  # meters/pixel^2\n", dBnQOut);
+		fprintf(stdout, "dBpQ: %.6f  # meters/pixel^2\n", dBpQOut);
+		fprintf(stdout, "C:\n");
+		for (l1 = 1; l1 <= 6; l1++) {
+			fprintf(stdout, "  - [");
+			for (l2 = 1; l2 <= 6; l2++) {
+				Cij = 0;
+				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
+					Cij = Cp[pIndex[l1]][pIndex[l2]];
+				fprintf(stdout, "%s%10.6e", l2 > 1 ? ", " : "", Cij);
+			}
+			fprintf(stdout, "]\n");
+		}
+	} else {
+		fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
+		fprintf(stdout, "; X2 %f \n", chisq);
+		fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", sigP * sqrt(chisq / (double)npts));
+		fprintf(stdout, "; Covariance Matrix \n;");
+		for (l1 = 1; l1 <= 6; l1++)
+		{
+			fprintf(stdout, ";* C_%1i ", l1);
+			for (l2 = 1; l2 <= 6; l2++)
+			{
+				Cij = 0;
+				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
+					Cij = Cp[pIndex[l1]][pIndex[l2]];
+				fprintf(stdout, " %10.6e ", Cij);
+			}
+			fprintf(stdout, "\n");
+		}
+		if (tiePoints->dBpFlag == TRUE)
+			fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,dBp\n;\n");
+		else
+			fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,omegaA\n;\n");
+		if (tiePoints->quadB == TRUE)
+			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", BnOut, BpOut, dBnOut, dBpOut, dBnQOut, dBpQOut);
+		else if (tiePoints->dBpFlag == TRUE || tiePoints->bpFlag == TRUE || tiePoints->bnbpFlag == TRUE ||
+				 tiePoints->bpdBpFlag == TRUE || tiePoints->bnbpdBpFlag == TRUE)
+			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", BnOut, BpOut, dBnOut, dBpOut, dBnQOut, dBpQOut);
+		else
+			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f\n&\n", BnOut, BpOut, dBnOut, dBpOut);
 	}
-	else if (tiePoints->bpFlag == TRUE)
-	{
-		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n",
-				tiePoints->BnCorig, a[1], tiePoints->dBnorig, tiePoints->dBporig, tiePoints->dBnQorig, tiePoints->dBpQorig);
-	}
-	else if (tiePoints->bnbpFlag == TRUE)
-	{
-		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", a[1], a[2], tiePoints->dBnorig, tiePoints->dBporig,
-				tiePoints->dBnQorig, tiePoints->dBpQorig);
-	}
-	else if (tiePoints->bpdBpFlag == TRUE)
-	{
-		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n",
-				tiePoints->BnCorig, a[1], tiePoints->dBnorig, a[2], tiePoints->dBnQorig, tiePoints->dBpQorig);
-	}
-	else if (tiePoints->bnbpdBpFlag == TRUE)
-	{
-		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n",
-				a[1], a[2], tiePoints->dBnorig, a[3], tiePoints->dBnQorig, tiePoints->dBpQorig);
-	}
-	else
-		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f\n&\n", a[1], a[2], a[4], a[3]);
 
 	return;
 }

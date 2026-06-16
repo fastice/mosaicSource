@@ -1,4 +1,4 @@
-#define MXST 75 /* maximum number of orbital state vectors  in the processing parameter file */
+#define MXST 100 /* maximum number of orbital state vectors  in the processing parameter file */
 #define MNST 3
 #include <stdio.h>
 

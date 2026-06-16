@@ -14,7 +14,7 @@ void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInpu
 {
 	FILE *fp;
 	double xo, yo, xs, ys, deltaX, deltaY;
-	int lineCount, eod;
+	int lineCount = 0, eod;
 	int i, j;
 	float w;
 	char insarDEM[1024], demInput[1024], antPat[1024];
@@ -77,7 +77,7 @@ void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInpu
 		for (j = 0; j < strlen(demInput); j++)
 			(*demInputFiles)[i][j] = demInput[j];
 		(*demInputFiles)[i][j] = '\0';
-		if (strlen(antPat) > 0 && ((strstr(antPat, "poly") != NULL) || (strstr(antPat, "alos") != NULL)))
+		if (strlen(antPat) > 0)
 		{
 			(*antPatFiles)[i] = (char *)malloc((size_t)(strlen(antPat) + 1));
 			for (j = 0; j < strlen(antPat); j++)

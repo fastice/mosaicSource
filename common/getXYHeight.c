@@ -12,17 +12,13 @@
 */
 #define MINDEMELEV -1000.
 
-double getXYHeight(double lat, double lon, xyDEM *xydem, double Re, int32_t heightFlag)
+double getXYHeightXY(double x, double y, double lat, xyDEM *xydem, double Re, int32_t heightFlag)
 {
 	double xi, yi;
-	double x, y, rDist;
+	double rDist;
 	int32_t i, j, iSize, jSize;
 	double t, u, p1, p2, p3, p4;
 	double z;
-	/*
-	  Convert lat/lon to xy for dem
-	*/
-	lltoxy1(lat, lon, &x, &y, xydem->rot, xydem->stdLat);
 	xi = ((x - xydem->x0) / xydem->deltaX);
 	yi = ((y - xydem->y0) / xydem->deltaY);
 	/*
@@ -77,4 +73,11 @@ double getXYHeight(double lat, double lon, xyDEM *xydem, double Re, int32_t heig
 	z = rDist - Re;
 
 	return z;
+}
+
+double getXYHeight(double lat, double lon, xyDEM *xydem, double Re, int32_t heightFlag)
+{
+	double x, y;
+	lltoxy1(lat, lon, &x, &y, xydem->rot, xydem->stdLat);
+	return getXYHeightXY(x, y, lat, xydem, Re, heightFlag);
 }

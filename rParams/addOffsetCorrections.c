@@ -60,7 +60,7 @@ void addOffsetCorrections(inputImageStructure inputImage,
            IRJ changed 10/23/00 (see notes 10/12/00)
            ****if(HemiSphere == SOUTH) dlat = -0.02; else dlat = 0.02;
         */
-        if (inputImage->lookDir == LEFT)
+        if (inputImage.lookDir == LEFT)
             dlat = -0.02;
         else
             dlat = 0.02;
