@@ -9,56 +9,59 @@
 /*
   Input range offset and extract phases for tiepoint locations.
 */
-void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, Offsets *offsets, int32_t noIonosphere)
+void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, Offsets *offsets, int32_t noIonosphere, int32_t skipLoad)
 {
 	FILE *fp;
 	double range, azimuth;
 	int32_t i, count;
 
-	/*
-	  If ion correction is requested and no baseline has pre-filled correctionFile,
-	  peek at the range offset VRT metadata now so checkForIonosphereCorrection (called
-	  inside readRangeOffsets) will see a non-empty correctionFile and load the correction.
-	*/
-	if (!noIonosphere && offsets->rOffCorrection.correctionFile[0] == '\0')
+	if (!skipLoad)
 	{
-		char vrtBuf[2048];
-		char *vrtFile = NULL;
-		/* Try explicit .vrt suffix first, then append .vrt */
-		if (has_suffix(phaseFile, ".vrt"))
+		/*
+		  If ion correction is requested and no baseline has pre-filled correctionFile,
+		  peek at the range offset VRT metadata now so checkForIonosphereCorrection (called
+		  inside readRangeOffsets) will see a non-empty correctionFile and load the correction.
+		*/
+		if (!noIonosphere && offsets->rOffCorrection.correctionFile[0] == '\0')
 		{
-			vrtFile = phaseFile;
-		}
-		else
-		{
-			snprintf(vrtBuf, sizeof(vrtBuf), "%s.vrt", phaseFile);
-			if (access(vrtBuf, F_OK) == 0)
-				vrtFile = vrtBuf;
-		}
-		if (vrtFile != NULL)
-		{
-			GDALDatasetH hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
-			if (hDS != NULL)
+			char vrtBuf[2048];
+			char *vrtFile = NULL;
+			/* Try explicit .vrt suffix first, then append .vrt */
+			if (has_suffix(phaseFile, ".vrt"))
 			{
-				dictNode *metaData = NULL;
-				readDataSetMetaData(hDS, &metaData);
-				char *ionName = get_value(metaData, "ionosphereRangeOffsetCorrection");
-				if (ionName != NULL)
+				vrtFile = phaseFile;
+			}
+			else
+			{
+				snprintf(vrtBuf, sizeof(vrtBuf), "%s.vrt", phaseFile);
+				if (access(vrtBuf, F_OK) == 0)
+					vrtFile = vrtBuf;
+			}
+			if (vrtFile != NULL)
+			{
+				GDALDatasetH hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+				if (hDS != NULL)
 				{
-					strncpy(offsets->rOffCorrection.correctionFile, ionName,
-					        sizeof(offsets->rOffCorrection.correctionFile) - 1);
-					offsets->rOffCorrection.correctionFile[sizeof(offsets->rOffCorrection.correctionFile) - 1] = '\0';
-					fprintf(stderr, "getROffsets: found ionosphere correction in VRT: %s\n",
-					        offsets->rOffCorrection.correctionFile);
+					dictNode *metaData = NULL;
+					readDataSetMetaData(hDS, &metaData);
+					char *ionName = get_value(metaData, "ionosphereRangeOffsetCorrection");
+					if (ionName != NULL)
+					{
+						strncpy(offsets->rOffCorrection.correctionFile, ionName,
+						        sizeof(offsets->rOffCorrection.correctionFile) - 1);
+						offsets->rOffCorrection.correctionFile[sizeof(offsets->rOffCorrection.correctionFile) - 1] = '\0';
+						fprintf(stderr, "getROffsets: found ionosphere correction in VRT: %s\n",
+						        offsets->rOffCorrection.correctionFile);
+					}
+					free_dictionary(metaData);
+					GDALClose(hDS);
 				}
-				free_dictionary(metaData);
-				GDALClose(hDS);
 			}
 		}
-	}
 
-	/* Get offsets (checkForIonosphereCorrection inside will load correction if correctionFile set) */
-	readRangeOffsets(offsets, FALSE, 0.0f, (float)LARGEINT);
+		/* Get offsets (checkForIonosphereCorrection inside will load correction if correctionFile set) */
+		readRangeOffsets(offsets, FALSE, 0.0f, (float)LARGEINT);
+	}
 	fprintf(stderr, "	OFFSETS READ\n\n");
 	/*
 	  Interpolate offsets
