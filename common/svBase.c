@@ -306,7 +306,6 @@ void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets
 	{
 		llToImageNew(image1->latControlPoints[i], image1->lonControlPoints[i], 0, &range1, &azimuth1, image1);
 		llToImageNew(image1->latControlPoints[i], image1->lonControlPoints[i], 0, &range2, &azimuth2, image2);
-		fprintf(stderr, "Control point %i: range1 %f az1 %f range2 %f az2 %f\n", i, range1, azimuth1, range2, azimuth2);
 		Re = earthRadius(image1->latControlPoints[i] * DTOR, EMINOR, EMAJOR) * KMTOM;
 		azTime = image1->cpAll.sTime + azimuth1 * image1->nAzimuthLooks / image1->par.prf;
 		svBaseTCN(azTime, offsets->dt1t2, &(image1->sv), &(offsets->sv2), bTCN);
@@ -319,8 +318,12 @@ void svOffsets(inputImageStructure *image1, inputImageStructure *image2, Offsets
 		/* This is the offset for one image to the other */
 		deltaRo = (range2 - range1) * image1->nRangeLooks * image1->par.slpR;
 		deltaA = a2 - a1;
-		/* this ensures that the azimuth difference relative to the early time for the first image */
-		if (azimuth1 < 100)
+		/* cnstR/cnstA are meant to be a true constant (not azimuth-dependent), so use every
+		   control point that geocoded validly in both images rather than restricting to
+		   azimuth1<100 -- that restriction silently zeroed out this correction for virtual
+		   frames spanning thousands of azimuth lines, where none of the 5 control points
+		   happen to land near the very start of image1. */
+		if (range1 > -9000.0 && azimuth1 > -9000.0 && range2 > -9000.0 && azimuth2 > -9000.0)
 		{
 			*cnstR += (deltaRo - deltaRb);
 			*cnstA += deltaA;

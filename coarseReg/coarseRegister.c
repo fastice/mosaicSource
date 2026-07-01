@@ -28,11 +28,10 @@ void coarseRegister(inputImageStructure *inputImage1, inputImageStructure *input
     lon = inputImage1->lonControlPoints[i];
     llToImageNew(lat, lon, 0, &range1, &azimuth1, inputImage1);
     llToImageNew(lat, lon, 0, &range2, &azimuth2, inputImage2);
-    /*
-    fprintf(stderr,"lat,lon %f %f\n",lat,lon);
-    fprintf(stderr,"r2-r1 %f a2-a1 %f\n",(range2-range1)*inputImage1->nRangeLooks,(azimuth2-azimuth1)*inputImage1->nAzimuthLooks);*/
-    /*	   fprintf(stderr,"r1,a1 %f %f\n",range1,azimuth1);
-      fprintf(stderr,"r2,a2 %f %f\n",range2,azimuth2);*/
+    fprintf(stderr,"DBGCP %i lat,lon %f %f\n", i, lat,lon);
+    fprintf(stderr,"DBGCP %i r2-r1 %f a2-a1 %f\n", i, (range2-range1)*inputImage1->nRangeLooks,(azimuth2-azimuth1)*inputImage1->nAzimuthLooks);
+    fprintf(stderr,"DBGCP %i r1,a1 %f %f\n", i, range1,azimuth1);
+    fprintf(stderr,"DBGCP %i r2,a2 %f %f\n", i, range2,azimuth2);
     if (range2 > 0 && range2<inputImage2->rangeSize & azimuth2> 0 && azimuth2 < inputImage2->azimuthSize)
     {
       deltaR += (range2 - range1) * inputImage1->nRangeLooks;

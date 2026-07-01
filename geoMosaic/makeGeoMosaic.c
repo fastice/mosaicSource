@@ -387,15 +387,14 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 		  Process input image
 		*/
 		inputImage[i].file = imageFiles[i];
-		/*  Get bounding box of image */
-		getRegion(&(inputImage[i]), &iMin, &iMax, &jMin, &jMax, &outputImage);
-		fprintf(stderr, "*** iMin, iMax, jMin, jMax ++ w %i %i %i %i ++ %f\n", iMin, iMax, jMin, jMax, inputImage[i].weight);
-		/* If zero weight or out of bounds, force skip */
-		if (inputImage[i].weight < 1e-20 || iMin > iMax || jMin > jMax)
+		/*  Get bounding box of image; skip if no overlap, file missing, or zero weight */
+		if (!getRegion(&(inputImage[i]), &iMin, &iMax, &jMin, &jMax, &outputImage)
+		    || inputImage[i].weight < 1e-20)
 		{
-			fprintf(stderr, "Skip (out of bounds or 0 weight\n");
+			fprintf(stderr, "Skip (out of bounds, file missing, or 0 weight)\n");
 			continue;
 		}
+		fprintf(stderr, "*** iMin, iMax, jMin, jMax ++ w %i %i %i %i ++ %f\n", iMin, iMax, jMin, jMax, inputImage[i].weight);
 		/* Read image  */
 		initllToImageNew(&(inputImage[i])); /* Setup conversions */
 		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, &(inputImage[i]), &outputImage, &azimuthMin, &azimuthMax);

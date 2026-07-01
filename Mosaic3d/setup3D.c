@@ -306,10 +306,29 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 			// Don'read baseline if nophase 
 			if(strstr(phaseFiles[i], "nophase")== NULL)
 			{
-				getBaseline(baselineFiles[i], dumParams, noPhase);
-				
-			} 
-			else 
+				extern int32_t useSquint;
+				getBaseline(baselineFiles[i], dumParams, noPhase, useSquint);
+				if (dumParams->sigma < 0)
+				{
+					/* tiepoints found no solution (sigma<0 sentinel written by
+					   computeBaseline.c when too few valid tie points survive) --
+					   treat exactly like a nophase input so every downstream
+					   consumer that already skips on this sentinel (mosaic3d.c,
+					   makeVhMosaic.c, make3DMosaic.c, getRegion.c, readOffsets.c)
+					   does the right thing without further changes. */
+					fprintf(stderr, "setup3D: %s has no baseline solution (sigma<0) -- "
+					        "treating as nophase\n", baselineFiles[i]);
+					phaseFiles[i] = "nophase";
+					inputImage[i].file = phaseFiles[i];
+					dumParams->Bn = 0.;
+					dumParams->Bp = 0.;
+					dumParams->dBn = 0.;
+					dumParams->dBp = 0.;
+					dumParams->dBnQ = 0.;
+					dumParams->dBpQ = 0.;
+				}
+			}
+			else
 			{ // Shouldn't be needed, but zero anyway
 				dumParams->Bn = 0.;
 				dumParams->Bp = 0.;
@@ -317,7 +336,7 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 				dumParams->dBp = 0.;
 				dumParams->dBnQ = 0.;
 				dumParams->dBpQ = 0.;
-			}	
+			}
 			/*	  Get time info	*/
 			//fprintf(stderr, "time weight, nDays %f %f\n", weight, nDays[i]);
 			dumParams->nDays = nDays[i];

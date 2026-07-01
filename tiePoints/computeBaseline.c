@@ -3,6 +3,7 @@
 #include "tiePoints.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
+#include <string.h>
 /*
   Estimate baseline parameters.
 */
@@ -20,8 +21,23 @@ void bnbpdBpBaselineCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 
 double lambda;
 
-void computeBaseline(tiePointsStructure *tiePoints,
-					 inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose)
+/* Result of fitting one baseline solution (unsquinted or squinted phase array) */
+typedef struct
+{
+	int32_t npts, nData;
+	int32_t insufficientPoints; /* TRUE if fewer than 4 valid tie points -- no solution */
+	double chisq, sigma;
+	double Bn, Bp, dBn, dBp, dBnQ, dBpQ;
+	double C[7][7];
+} BaselineFit;
+
+/*
+  Fit one baseline solution against phaseArr (parallel to tiePoints->npts -- either
+  tiePoints->phase [unsquinted] or tiePoints->phaseSquint [squinted]). Pulled out of
+  computeBaseline() so it can be run twice -- see computeBaseline() below.
+*/
+static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
+							   inputImageStructure inputImage, int32_t verbose)
 {
 	double Re, H, RNear, thetaC, dr, rOffset;
 	double *a; /* Solution for params */
@@ -42,7 +58,10 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	int32_t i, i1, k, j, npts, l1, l2;
 	int32_t pIndex[7];
 	conversionDataStructure *cP;
+	BaselineFit fit;
 
+	memset(&fit, 0, sizeof(fit));
+	fit.insufficientPoints = FALSE;
 	lambda = inputImage.par.lambda;
 	if (tiePoints->quadB == TRUE)
 		nParams = 6;
@@ -77,7 +96,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	npts = 0;
 	nData = tiePoints->npts;
 	for (i = 0; i < nData; i++)
-		if (fabs(tiePoints->phase[i]) < 1.0E6)
+		if (fabs(phaseArr[i]) < 1.0E6)
 			npts++;
 	fprintf(stderr, "%i points wavelength %f\n", npts, lambda);
 	ma = nParams;
@@ -117,7 +136,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 		}
 		for (i = 0; i < nData; i++)
 		{
-			if (fabs(tiePoints->phase[i]) < 1.0E6)
+			if (fabs(phaseArr[i]) < 1.0E6)
 			{ /* Use only good points */
 				i1 = j + 1;
 				z = tiePoints->z[i];
@@ -134,7 +153,7 @@ void computeBaseline(tiePointsStructure *tiePoints,
 				bSq = bn * bn + bp * bp;
 				deltaApprox = -bn * sin(thetaD) - bp * cos(thetaD) + bSq * 0.5 / r0 - (pow(tiePoints->delta[i], 2.0) / (2.0 * r0));
 				deltaApprox = -bn * sin(thetaD) - bp * cos(thetaD) + bSq * 0.5 / r0 - (pow(deltaApprox, 2.0) / (2.0 * r0));
-				y[i1] = tiePoints->phase[i] - twok * bSq / (2.0 * r0) + pow(deltaApprox, 2.0) * twok / (2.0 * r0);
+				y[i1] = phaseArr[i] - twok * bSq / (2.0 * r0) + pow(deltaApprox, 2.0) * twok / (2.0 * r0);
 				xtmp = -twok * sin(thetaD) * (Bn + dBn * x[i1].x + dBnQ * (x[i1].x * x[i1].x)) - twok * cos(thetaD) * (Bp + dBp * x[i1].x + dBpQ * (x[i1].x * x[i1].x));
 				varP += (y[i1] - xtmp) * (y[i1] - xtmp);
 				meanP += (y[i1] - xtmp);
@@ -163,8 +182,21 @@ void computeBaseline(tiePointsStructure *tiePoints,
 				j++;
 			} /* End if */
 		}	  /* End for i */
-		if (i1 < 4)
-			error("tiepoints: Insufficient Number (%i)  of Valid tie points \n", i1);
+		if (j < 4) {
+			/* j (reliably 0-initialized above, incremented per valid point) not i1 --
+			   i1 is only ever assigned inside the valid-point branch, so it's
+			   uninitialized stack garbage whenever zero points pass, which previously
+			   made both this message and the original "if (i1 < 4)" check itself read
+			   garbage in that exact case (could in principle even skip this check if
+			   the garbage happened to be >= 4). */
+			fprintf(stderr, "error:  tiepoints: Insufficient Number (%i)  of Valid tie points \n", j);
+			/* No solution -- let computeBaseline() emit the sigma<0 sentinel for both
+			   blocks and exit(1) once, rather than doing it per-fit here. */
+			fit.insufficientPoints = TRUE;
+			fit.npts = j;
+			fit.nData = nData;
+			return fit;
+		}
 
 		if (tiePoints->dBpFlag == TRUE)
 		{
@@ -311,61 +343,158 @@ void computeBaseline(tiePointsStructure *tiePoints,
 		BnOut=a[1]; BpOut=a[2]; dBnOut=a[4]; dBpOut=a[3]; dBnQOut=0.0; dBpQOut=0.0;
 	}
 
-	if (yamlOutput) {
-		fprintf(stdout, "applyFlatEarth: true\n");
-		fprintf(stdout, "nDays: %.6f  # days\n",      tiePoints->nDays);
-		fprintf(stdout, "nTiepoints: %d\n",            npts);
-		fprintf(stdout, "nTiepointsGiven: %d\n",       nData);
-		fprintf(stdout, "X2: %f\n",                    chisq);
-		fprintf(stdout, "sigma: %.6f  # radians\n",   sigP * sqrt(chisq / (double)npts));
-		fprintf(stdout, "Bn: %.6f  # meters\n",        BnOut);
-		fprintf(stdout, "Bp: %.6f  # meters\n",        BpOut);
-		fprintf(stdout, "dBn: %.6f  # meters/pixel\n", dBnOut);
-		fprintf(stdout, "dBp: %.6f  # meters/pixel\n", dBpOut);
-		fprintf(stdout, "dBnQ: %.6f  # meters/pixel^2\n", dBnQOut);
-		fprintf(stdout, "dBpQ: %.6f  # meters/pixel^2\n", dBpQOut);
-		fprintf(stdout, "C:\n");
-		for (l1 = 1; l1 <= 6; l1++) {
-			fprintf(stdout, "  - [");
-			for (l2 = 1; l2 <= 6; l2++) {
-				Cij = 0;
-				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
-					Cij = Cp[pIndex[l1]][pIndex[l2]];
-				fprintf(stdout, "%s%10.6e", l2 > 1 ? ", " : "", Cij);
-			}
-			fprintf(stdout, "]\n");
+	fit.npts = npts;
+	fit.nData = nData;
+	fit.chisq = chisq;
+	fit.sigma = sigP * sqrt(chisq / (double)npts);
+	fit.Bn = BnOut;
+	fit.Bp = BpOut;
+	fit.dBn = dBnOut;
+	fit.dBp = dBpOut;
+	fit.dBnQ = dBnQOut;
+	fit.dBpQ = dBpQOut;
+	for (l1 = 1; l1 <= 6; l1++)
+		for (l2 = 1; l2 <= 6; l2++) {
+			Cij = 0;
+			if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
+				Cij = Cp[pIndex[l1]][pIndex[l2]];
+			fit.C[l1][l2] = Cij;
 		}
-	} else {
-		fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
-		fprintf(stdout, "; X2 %f \n", chisq);
-		fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", sigP * sqrt(chisq / (double)npts));
-		fprintf(stdout, "; Covariance Matrix \n;");
-		for (l1 = 1; l1 <= 6; l1++)
-		{
-			fprintf(stdout, ";* C_%1i ", l1);
-			for (l2 = 1; l2 <= 6; l2++)
-			{
-				Cij = 0;
-				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
-					Cij = Cp[pIndex[l1]][pIndex[l2]];
-				fprintf(stdout, " %10.6e ", Cij);
-			}
-			fprintf(stdout, "\n");
-		}
-		if (tiePoints->dBpFlag == TRUE)
-			fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,dBp\n;\n");
-		else
-			fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,omegaA\n;\n");
-		if (tiePoints->quadB == TRUE)
-			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", BnOut, BpOut, dBnOut, dBpOut, dBnQOut, dBpQOut);
-		else if (tiePoints->dBpFlag == TRUE || tiePoints->bpFlag == TRUE || tiePoints->bnbpFlag == TRUE ||
-				 tiePoints->bpdBpFlag == TRUE || tiePoints->bnbpdBpFlag == TRUE)
-			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", BnOut, BpOut, dBnOut, dBpOut, dBnQOut, dBpQOut);
-		else
-			fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f\n&\n", BnOut, BpOut, dBnOut, dBpOut);
+
+	return fit;
+}
+
+/*
+  Write the legacy (non-YAML) text baseline solution -- always the unsquinted fit, matching
+  prior behavior (the legacy format has no notion of squint).
+*/
+static void writeLegacyTextSolution(tiePointsStructure *tiePoints, BaselineFit *fit)
+{
+	int32_t l1, l2;
+
+	fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", fit->npts, fit->nData);
+	fprintf(stdout, "; X2 %f \n", fit->chisq);
+	fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", fit->sigma);
+	fprintf(stdout, "; Covariance Matrix \n;");
+	for (l1 = 1; l1 <= 6; l1++)
+	{
+		fprintf(stdout, ";* C_%1i ", l1);
+		for (l2 = 1; l2 <= 6; l2++)
+			fprintf(stdout, " %10.6e ", fit->C[l1][l2]);
+		fprintf(stdout, "\n");
+	}
+	if (tiePoints->dBpFlag == TRUE)
+		fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,dBp\n;\n");
+	else
+		fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,omegaA\n;\n");
+	if (tiePoints->quadB == TRUE)
+		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", fit->Bn, fit->Bp, fit->dBn, fit->dBp, fit->dBnQ, fit->dBpQ);
+	else if (tiePoints->dBpFlag == TRUE || tiePoints->bpFlag == TRUE || tiePoints->bnbpFlag == TRUE ||
+			 tiePoints->bpdBpFlag == TRUE || tiePoints->bnbpdBpFlag == TRUE)
+		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f %f %f\n&\n", fit->Bn, fit->Bp, fit->dBn, fit->dBp, fit->dBnQ, fit->dBpQ);
+	else
+		fprintf(stdout, "%11.5f  %11.5f  %11.5f  %f\n&\n", fit->Bn, fit->Bp, fit->dBn, fit->dBp);
+}
+
+/*
+  Write one labeled solution block (noSquint: or squint:) to stdout in YAML.
+*/
+static void writeYamlSolutionBlock(BaselineFit *fit)
+{
+	int32_t l1, l2;
+	fprintf(stdout, "  nTiepoints: %d\n",               fit->npts);
+	fprintf(stdout, "  nTiepointsGiven: %d\n",          fit->nData);
+	fprintf(stdout, "  X2: %f\n",                       fit->chisq);
+	fprintf(stdout, "  sigma: %.6f  # radians\n",       fit->sigma);
+	fprintf(stdout, "  Bn: %.6f  # meters\n",           fit->Bn);
+	fprintf(stdout, "  Bp: %.6f  # meters\n",           fit->Bp);
+	fprintf(stdout, "  dBn: %.6f  # meters/pixel\n",    fit->dBn);
+	fprintf(stdout, "  dBp: %.6f  # meters/pixel\n",    fit->dBp);
+	fprintf(stdout, "  dBnQ: %.6f  # meters/pixel^2\n", fit->dBnQ);
+	fprintf(stdout, "  dBpQ: %.6f  # meters/pixel^2\n", fit->dBpQ);
+	fprintf(stdout, "  C:\n");
+	for (l1 = 1; l1 <= 6; l1++) {
+		fprintf(stdout, "    - [");
+		for (l2 = 1; l2 <= 6; l2++)
+			fprintf(stdout, "%s%10.6e", l2 > 1 ? ", " : "", fit->C[l1][l2]);
+		fprintf(stdout, "]\n");
+	}
+}
+
+/*
+  Write a sigma<0 "no solution" sentinel block -- see getBaseline.c, which treats
+  sigma<0 as an unambiguous, machine-readable "no solution" signal for callers.
+*/
+static void writeYamlSentinelBlock(void)
+{
+	fprintf(stdout, "  nTiepoints: 0\n");
+	fprintf(stdout, "  nTiepointsGiven: 0\n");
+	fprintf(stdout, "  X2: -1\n");
+	fprintf(stdout, "  sigma: -1  # no solution -- insufficient tie points\n");
+	fprintf(stdout, "  Bn: 0.000000  # meters\n");
+	fprintf(stdout, "  Bp: 0.000000  # meters\n");
+	fprintf(stdout, "  dBn: 0.000000  # meters/pixel\n");
+	fprintf(stdout, "  dBp: 0.000000  # meters/pixel\n");
+	fprintf(stdout, "  dBnQ: 0.000000  # meters/pixel^2\n");
+	fprintf(stdout, "  dBpQ: 0.000000  # meters/pixel^2\n");
+	fprintf(stdout, "  C:\n");
+	fprintf(stdout, "    - [0, 0, 0, 0, 0, 0]\n");
+	fprintf(stdout, "    - [0, 0, 0, 0, 0, 0]\n");
+	fprintf(stdout, "    - [0, 0, 0, 0, 0, 0]\n");
+	fprintf(stdout, "    - [0, 0, 0, 0, 0, 0]\n");
+	fprintf(stdout, "    - [0, 0, 0, 0, 0, 0]\n");
+	fprintf(stdout, "    - [0, 0, 0, 0, 0, 0]\n");
+}
+
+/*
+  Fit and emit the baseline solution(s). When tiePoints->hasSquintSolution (squint
+  coefficients were available in the input geodat and -motion/-vr was used), fits both
+  the unsquinted (tiePoints->phase) and squinted (tiePoints->phaseSquint) phase arrays
+  and writes both as separate labeled YAML blocks; mosaic3d -useSquint then picks which
+  block getBaseline() reads. Legacy (non-YAML) text output only ever reflects the
+  unsquinted solution, matching prior behavior.
+*/
+void computeBaseline(tiePointsStructure *tiePoints,
+					 inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose)
+{
+	BaselineFit noSquintFit, squintFit;
+
+	noSquintFit = fitBaseline(tiePoints, tiePoints->phase, inputImage, verbose);
+
+	if (!yamlOutput) {
+		/* Legacy text format has no notion of squint -- unsquinted solution only,
+		   matching prior behavior. */
+		if (noSquintFit.insufficientPoints)
+			exit(1);
+		writeLegacyTextSolution(tiePoints, &noSquintFit);
+		return;
 	}
 
-	return;
+	if (tiePoints->hasSquintSolution)
+		squintFit = fitBaseline(tiePoints, tiePoints->phaseSquint, inputImage, verbose);
+
+	if (noSquintFit.insufficientPoints || (tiePoints->hasSquintSolution && squintFit.insufficientPoints)) {
+		fprintf(stdout, "applyFlatEarth: true\n");
+		fprintf(stdout, "hasSquintSolution: %s\n", tiePoints->hasSquintSolution ? "true" : "false");
+		fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+		fprintf(stdout, "noSquint:\n");
+		writeYamlSentinelBlock();
+		if (tiePoints->hasSquintSolution) {
+			fprintf(stdout, "squint:\n");
+			writeYamlSentinelBlock();
+		}
+		exit(1);
+	}
+
+	fprintf(stdout, "applyFlatEarth: true\n");
+	fprintf(stdout, "hasSquintSolution: %s\n", tiePoints->hasSquintSolution ? "true" : "false");
+	fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+	fprintf(stdout, "noSquint:\n");
+	writeYamlSolutionBlock(&noSquintFit);
+	if (tiePoints->hasSquintSolution) {
+		fprintf(stdout, "squint:\n");
+		writeYamlSolutionBlock(&squintFit);
+	}
 }
 
 void baselineCoeffs(void *x, int32_t i, double *afunc, int32_t ma)

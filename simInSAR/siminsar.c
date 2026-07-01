@@ -120,6 +120,11 @@ int main(int argc, char *argv[])
 		simInSARBaselineFromSV(scene.geodat2File, &scene);
 	fprintf(stderr, "Running simulation....\n");
 	simInSARimage(&scene, dem, &xyVel);
+	if (scene.smoothRadiusFlag == TRUE)
+	{
+		fprintf(stderr, "Computing smoothing-radius map....\n");
+		computeSmoothRadiusMap(&scene);
+	}
 	/*
 	  Output image
 	*/
@@ -166,6 +171,8 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	double dT;
 	int32_t velocityFlag;
 	float velThresh;
+	double minTol = 0.0, percentSpeedVal = 0.0, maxTol = 0.0;
+	int32_t minTolFlag = FALSE, percentSpeedFlag = FALSE, maxTolFlag = FALSE;
 
 	int32_t bnFlag = FALSE, bnStartFlag = FALSE, toLLFlag = FALSE;
 	int32_t bpFlag = FALSE, bpStartFlag = FALSE;
@@ -199,6 +206,9 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 	scene->bnArray = NULL;
 	scene->bpArray = NULL;
 	scene->verticalCorrectionFile = NULL;
+	scene->smoothRadiusFlag = FALSE;
+	scene->maxSmoothRadius = 50;
+	scene->smoothNIter = 3;
 	for (i = 1; i <= n; i += 2)
 	{
 		argString = strchr(argv[i], '-');
@@ -356,6 +366,29 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 		{
 			scene->verticalCorrectionFile = argv[i + 1];
 		}
+		else if (strstr(argString, "minTol") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &minTol);
+			minTolFlag = TRUE;
+		}
+		else if (strstr(argString, "percentSpeed") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &percentSpeedVal);
+			percentSpeedFlag = TRUE;
+		}
+		else if (strstr(argString, "maxTol") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &maxTol);
+			maxTolFlag = TRUE;
+		}
+		else if (strstr(argString, "maxSmoothRadius") != NULL)
+		{
+			sscanf(argv[i + 1], "%d", &(scene->maxSmoothRadius));
+		}
+		else if (strstr(argString, "smoothNIter") != NULL)
+		{
+			sscanf(argv[i + 1], "%d", &(scene->smoothNIter));
+		}
 		else if (strstr(argString, "ompThreads") != NULL)
 		{
 			int32_t nThreads = 0;
@@ -368,6 +401,21 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 		}
 		else
 			usage();
+	}
+	if (minTolFlag == TRUE || percentSpeedFlag == TRUE || maxTolFlag == TRUE)
+	{
+		if (!(minTolFlag == TRUE && percentSpeedFlag == TRUE && maxTolFlag == TRUE))
+			error("readArgs: -minTol/-percentSpeed/-maxTol must be given together\n");
+		scene->smoothRadiusFlag = TRUE;
+		scene->minTol = minTol;
+		scene->percentSpeed = percentSpeedVal;
+		scene->maxTol = maxTol;
+		if (scene->maxSmoothRadius > 255)
+		{
+			fprintf(stderr, "WARNING: -maxSmoothRadius %d exceeds byte range, clamping to 255\n",
+					scene->maxSmoothRadius);
+			scene->maxSmoothRadius = 255;
+		}
 	}
 	if (velOnlyFlag == TRUE && (bnFlag == TRUE || bpFlag == TRUE || bnStartFlag == TRUE || bpStartFlag == TRUE ||
 	                            scene->geodat2File != NULL))
@@ -432,7 +480,7 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 
 static void usage()
 {
-	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n",
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n",
 			"Simulate interferogram using a DEM",
 			"Usage:",
 			"siminsar -LSB -bn bn -dBn dBn -bp bp -dBp dBp ",
@@ -441,6 +489,8 @@ static void usage()
 			"         -flat -height -rPix rPix -aPix deltA -velocity -velOnly",
 			"         -slantRangeDEM -xyDEM -mask -saveLL -toLL file.dat",
 			"         -geodat2 geodat2File -verticalCorrection vcFile -ompThreads N",
+			"         -minTol minTol -percentSpeed percentSpeed -maxTol maxTol",
+			"         -maxSmoothRadius maxSmoothRadius -smoothNIter smoothNIter",
 			"          demFile displacementFile sceneFile outPutImage",
 			"where",
 			"   LSB             Output results as LSB [MSB]",
@@ -462,6 +512,11 @@ static void usage()
 			"   velocity        = use velocity",
 			"   verticalCorrection vcFile = xyDEM grid (m/yr) of submergence/emergence rate added to simulated phase",
 			"   ompThreads N    = number of OpenMP threads [default: 4]",
+			"   minTol/percentSpeed/maxTol = compute a smoothing-radius map (.smr): per-pixel",
+			"                     tolerance = clip(percentSpeed/100*speed, minTol, maxTol) [m/yr];",
+			"                     all three required together",
+			"   maxSmoothRadius = smoothing-radius sweep cap in single-look pixels [50, max 255]",
+			"   smoothNIter     = repeated box-filter passes per sweep step (Gaussian-ish) [3]",
 			"   slantRangeDEM   = use dem of image size in slant range coords",
 			"   xyDEM           = xyDEM file with xyDEM.geodat file",
 			"   demFile          = dem file in lat/lon, xy, or slant range format",

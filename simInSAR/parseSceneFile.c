@@ -143,6 +143,16 @@ void parseSceneFile(char *sceneFile, sceneStructure *scene)
 		{
 			scene->image[i] = (float *)malloc(scene->rSize * sizeof(float));
 		}
+		if (scene->smoothRadiusFlag == TRUE)
+		{
+			/* calloc: zero-initialized default tolerance for any pixel the velocity
+			   loop in simInSARimage.c doesn't end up writing (e.g. no xyVel data) */
+			scene->toleranceImage = (float **)malloc(scene->aSize * sizeof(float *));
+			for (i = 0; i < scene->aSize; i++)
+			{
+				scene->toleranceImage[i] = (float *)calloc(scene->rSize, sizeof(float));
+			}
+		}
 	}
 	return;
 }

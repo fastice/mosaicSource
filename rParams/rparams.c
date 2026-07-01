@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
 //#include "mosaicSource/common/common.h"
 /*
@@ -35,7 +36,7 @@
 
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile,
 					 char **baselineFile, tiePointsStructure *tiepoints, char **shelfMaskFile, int32_t *ionosphereMode,
-					 char **runFile);
+					 char **runFile, int32_t *yamlOutput);
 static void setMapProjectionForHemisphere(tiePointsStructure *tiePoints);
 
 
@@ -67,6 +68,7 @@ typedef struct {
 	int32_t deltaB;
 	char tiefile[RPARAMS_PATH_LEN];
 	char outfile[RPARAMS_PATH_LEN];
+	char oldfile[RPARAMS_PATH_LEN];   /* optional old file to unlink after write */
 } runSpec_t;
 
 static void readRunFile(const char *specFile, runSpec_t *runs, int *nRuns)
@@ -74,7 +76,7 @@ static void readRunFile(const char *specFile, runSpec_t *runs, int *nRuns)
 	FILE *fp = fopen(specFile, "r");
 	if (fp == NULL) error("rparams: cannot open -runFile %s", specFile);
 	*nRuns = 0;
-	char line[RPARAMS_PATH_LEN * 3];
+	char line[RPARAMS_PATH_LEN * 5];
 	while (fgets(line, sizeof(line), fp)) {
 		char *nl = strchr(line, '\n'); if (nl) *nl = '\0';
 		char *p = line; while (*p == ' ' || *p == '\t') p++;
@@ -82,8 +84,10 @@ static void readRunFile(const char *specFile, runSpec_t *runs, int *nRuns)
 		if (*nRuns >= RPARAMS_MAX_RUNS)
 			error("rparams: runFile exceeds %d entries", RPARAMS_MAX_RUNS);
 		runSpec_t *r = &runs[*nRuns];
+		r->oldfile[0] = '\0';
 		char token[64];
-		if (sscanf(p, "%63s %4095s %4095s", token, r->tiefile, r->outfile) != 3)
+		int n = sscanf(p, "%63s %4095s %4095s %4095s", token, r->tiefile, r->outfile, r->oldfile);
+		if (n < 3)
 			error("rparams: bad runFile line: %s", line);
 		if      (strcmp(token, "NONE")         == 0) r->deltaB = DELTABNONE;
 		else if (strcmp(token, "DELTABCONST")  == 0) r->deltaB = DELTABCONST;
@@ -114,6 +118,7 @@ int main(int argc, char *argv[])
 	int32_t bufferSize;
 	int32_t imageCoords;
 	int32_t linFlag;
+	int32_t yamlOutput = 0;
 	int32_t i, j; /* LCV */
 	char *runFile = NULL;
 	Abuf1 = NULL;
@@ -129,7 +134,7 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
-	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile, &ionosphereMode, &runFile);
+	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile, &ionosphereMode, &runFile, &yamlOutput);
 	/*
 	  Parse input file
 	*/
@@ -163,7 +168,19 @@ int main(int argc, char *argv[])
 		tiePoints.motionFlag = TRUE;
 		readTiePoints(tiePointFp, &tiePoints, noDEM);
 		setTiePointsMapProjectionForHemisphere(&tiePoints);
-		computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, outputImage.shelfMask, FALSE);
+		if (yamlOutput) {
+			/* suppress tiepoint header to stdout in yaml mode */
+			int sup_fd = open("/dev/null", O_WRONLY);
+			int sup_saved = dup(STDOUT_FILENO);
+			dup2(sup_fd, STDOUT_FILENO);
+			close(sup_fd);
+			computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, outputImage.shelfMask, FALSE);
+			fflush(stdout);
+			dup2(sup_saved, STDOUT_FILENO);
+			close(sup_saved);
+		} else {
+			computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, outputImage.shelfMask, FALSE);
+		}
 		fflush(stdout);
 		{
 			int devnull_fd = open("/dev/null", O_WRONLY);
@@ -200,7 +217,7 @@ int main(int argc, char *argv[])
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 		}
 		else if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_AUTO)
 		{
@@ -215,7 +232,7 @@ int main(int argc, char *argv[])
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
-			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 			fflush(stdout);
 
 			dup2(fd2, STDOUT_FILENO);
@@ -223,7 +240,7 @@ int main(int argc, char *argv[])
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, TRUE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
 			offsets.rOffCorrection.correctionFile[0] = '\0';
-			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 			fflush(stdout);
 
 			dup2(saved_stdout, STDOUT_FILENO);
@@ -231,7 +248,10 @@ int main(int argc, char *argv[])
 			close(fd1);
 			close(fd2);
 
-			int use_ion = (sigma_ion <= sigma_noion);
+			/* sigma<0 means that attempt found no solution (see fewPoints() in
+			   computeRParams.c) -- treat it as worse than any real fit rather than
+			   letting a negative number win a naive numeric comparison. */
+			int use_ion = (sigma_noion < 0) ? 1 : (sigma_ion >= 0 && sigma_ion <= sigma_noion);
 			fprintf(stderr, "sigma with ion correction: %f  without: %f  -- using %s\n",
 			        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			FILE *winner = fopen(use_ion ? tmp1 : tmp2, "r");
@@ -240,8 +260,12 @@ int main(int argc, char *argv[])
 			while ((n = fread(buf, 1, sizeof(buf), winner)) > 0)
 				fwrite(buf, 1, n, stdout);
 			fclose(winner);
-			fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
-			        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
+			if (yamlOutput)
+				fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\nusingIon: %s\n",
+				        sigma_ion, sigma_noion, use_ion ? "True" : "False");
+			else
+				fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
+				        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			unlink(tmp1);
 			unlink(tmp2);
 		}
@@ -250,7 +274,7 @@ int main(int argc, char *argv[])
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 		}
 		return 0;
 	}
@@ -371,9 +395,11 @@ int main(int argc, char *argv[])
 		dup2(out_fd, STDOUT_FILENO);
 		close(out_fd);
 
-		/* Write the shared header */
-		fwrite(hdrBuf, 1, hdrLen, stdout);
-		fflush(stdout);
+		/* Write the shared header (skipped in yaml mode — header is not valid yaml) */
+		if (!yamlOutput) {
+			fwrite(hdrBuf, 1, hdrLen, stdout);
+			fflush(stdout);
+		}
 
 		/* Set deltaB for this run; save correctionFile (ION_AUTO clears it) */
 		tiePoints.deltaB = runs[i].deltaB;
@@ -387,7 +413,7 @@ int main(int argc, char *argv[])
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 		}
 		else if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_AUTO)
 		{
@@ -402,7 +428,7 @@ int main(int argc, char *argv[])
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
-			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 			fflush(stdout);
 
 			dup2(fd2, STDOUT_FILENO);
@@ -410,7 +436,7 @@ int main(int argc, char *argv[])
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, TRUE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
 			offsets.rOffCorrection.correctionFile[0] = '\0';
-			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 			fflush(stdout);
 
 			dup2(saved_stdout, STDOUT_FILENO);
@@ -418,7 +444,10 @@ int main(int argc, char *argv[])
 			close(fd1);
 			close(fd2);
 
-			int use_ion = (sigma_ion <= sigma_noion);
+			/* sigma<0 means that attempt found no solution (see fewPoints() in
+			   computeRParams.c) -- treat it as worse than any real fit rather than
+			   letting a negative number win a naive numeric comparison. */
+			int use_ion = (sigma_noion < 0) ? 1 : (sigma_ion >= 0 && sigma_ion <= sigma_noion);
 			fprintf(stderr, "sigma with ion correction: %f  without: %f  -- using %s\n",
 			        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			FILE *winner = fopen(use_ion ? tmp1 : tmp2, "r");
@@ -427,8 +456,12 @@ int main(int argc, char *argv[])
 			while ((n = fread(buf, 1, sizeof(buf), winner)) > 0)
 				fwrite(buf, 1, n, stdout);
 			fclose(winner);
-			fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
-			        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
+			if (yamlOutput)
+				fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\nusingIon: %s\n",
+				        sigma_ion, sigma_noion, use_ion ? "True" : "False");
+			else
+				fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
+				        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			unlink(tmp1);
 			unlink(tmp2);
 		}
@@ -437,7 +470,7 @@ int main(int argc, char *argv[])
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
 		}
 
 		/* Restore correctionFile (may have been cleared by ION_AUTO no-ion branch) */
@@ -448,6 +481,13 @@ int main(int argc, char *argv[])
 		fflush(stdout);
 		dup2(run_saved, STDOUT_FILENO);
 		close(run_saved);
+
+		/* Remove old non-yaml file now that yaml version is written */
+		if (runs[i].oldfile[0] != '\0') {
+			if (unlink(runs[i].oldfile) != 0 && errno != ENOENT)
+				fprintf(stderr, "rparams: warning: could not remove %s: %s\n",
+				        runs[i].oldfile, strerror(errno));
+		}
 	}
 	free(hdrBuf);
 	return 0;
@@ -475,6 +515,7 @@ static void usage()
 		"  -noIonosphere      Do not apply ionosphere correction if one exists\n"
 		"  -forceIonosphere   Always apply ionosphere correction if file exists\n"
 		"  -quiet             Don't echo tiepoints to solution\n"
+		"  -yaml              Write baseline output in YAML format\n"
 		"\nPositional arguments (single-run):\n"
 		"  geodatFile         Geodat parameter file\n"
 		"  tiepointsFile      Tiepoint location file (lat,lon,z,vx,vy,vz)\n"
@@ -485,13 +526,14 @@ static void usage()
 		"  offsetFile         Range offset file\n"
 		"  baselineFile       CW state vector baseline file\n"
 		"\nRun-spec file format (one run per line):\n"
-		"  NONE|DELTABCONST|DELTABQUAD  /abs/path/tiefile  outfile\n");
+		"  NONE|DELTABCONST|DELTABQUAD  /abs/path/tiefile  outfile  [oldfile]\n"
+		"  oldfile: optional old (non-yaml) file to remove after writing outfile\n");
 	exit(1);
 }
 
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile,
 					 char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints,
-					 char **shelfMaskFile, int32_t *ionosphereMode, char **runFile)
+					 char **shelfMaskFile, int32_t *ionosphereMode, char **runFile, int32_t *yamlOutput)
 {
 	int32_t bnbpFlag = FALSE, bpFlag = FALSE, bnbpdBpFlag = FALSE, bpdBpFlag = FALSE;
 	int32_t constOnlyFlag = FALSE, quadB = FALSE, deltaB = DELTABNONE;
@@ -500,6 +542,7 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 	*ionosphereMode = ION_AUTO;
 	*shelfMaskFile = NULL;
 	*runFile = NULL;
+	*yamlOutput = 0;
 	tiePoints->quiet = FALSE;
 
 	/* First pass: detect -runFile so we know how many positional args to expect */
@@ -566,6 +609,8 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 			*ionosphereMode = ION_FORCE;
 		else if (strcmp(argv[i], "-quiet") == 0)
 			tiePoints->quiet = TRUE;
+		else if (strcmp(argv[i], "-yaml") == 0)
+			*yamlOutput = 1;
 		else
 		{
 			fprintf(stderr, "Unknown option: %s\n", argv[i]);

@@ -157,8 +157,18 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 		}
 		if(currentParams->offsets.sigmaAresidual > outputImage->sigmaAThresh)
 		{
-			fprintf(stderr, "Skipping sigmaAresidual > sigmaAThresh: %f > %f\n", 
+			fprintf(stderr, "Skipping sigmaAresidual > sigmaAThresh: %f > %f\n",
 				currentParams->offsets.sigmaAresidual, outputImage->sigmaAThresh);
+			currentParams = currentParams->next;
+			continue;
+		}
+		if(currentParams->offsets.sigmaAresidual < 0)
+		{
+			/* azparams found no solution (sigma<0 sentinel -- see fewPointsAz() in
+			   computeAzparams.c); not caught by the sigmaAThresh check above since
+			   negative is never > a positive threshold. */
+			fprintf(stderr, "Skipping %s: no azimuth baseline solution (sigmaAresidual<0)\n",
+				currentParams->offsets.azParamsFile);
 			currentParams = currentParams->next;
 			continue;
 		}

@@ -175,16 +175,16 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 			}
 		}
 		// Suffix for vertical correction if its different than default (none)
+		// Only the baseline filename gets the suffix -- the phase file is shared
+		// across vertical-correction scenarios; only its baseline fit differs.
+		(*phaseFiles)[i] = dupName(phase);
 		if(verticalCorrectionSuffix != NULL)
-		{   
-			(*phaseFiles)[i] = appendSuffix(phase, verticalCorrectionSuffix,
-				(char *)malloc(strlen(phase)+ strlen(verticalCorrectionSuffix) + 1));
+		{
 			(*baselineFiles)[i] = appendBaselineSuffix(baseline, verticalCorrectionSuffix,
 				(char *)malloc(strlen(baseline)+ strlen(verticalCorrectionSuffix) + 1));
-		} 
+		}
 		else
 		{
-			(*phaseFiles)[i] = dupName(phase);
 			(*baselineFiles)[i] = dupName(baseline);
 		}
 		(*geodatFiles)[i] = dupName(geodat);

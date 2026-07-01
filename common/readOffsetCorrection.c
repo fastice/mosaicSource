@@ -107,7 +107,4 @@ void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode
         if (isnan(data[i])) data[i] = (float)-LARGEINT;
 
     GDALClose(hDS);
-    fprintf(stderr, "readOffsetCorrection: %s  nr=%i na=%i deltaR=%.1f deltaA=%.1f r0=%i a0=%i\n",
-            correctionFile, nr, na, offsets->rOffCorrection.deltaR, offsets->rOffCorrection.deltaA,
-            offsets->rOffCorrection.rO, offsets->rOffCorrection.aO);
 }

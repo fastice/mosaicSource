@@ -66,7 +66,7 @@ void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruc
 	/*
 	  Interpolate offsets
 	*/
-	fprintf(stdout, ";;\n;;Tiepoints row column elevation\n;;\n");
+	if (!tiePoints->quiet) fprintf(stdout, ";;\n;;Tiepoints row column elevation\n;;\n");
 	count = 0;
 	for (i = 0; i < tiePoints->npts; i++)
 	{
@@ -103,6 +103,6 @@ void getROffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruc
 					tiePoints->z[i], tiePoints->phase[i]);
 	}
 	fprintf(stderr, "count %i\n", count);
-	fprintf(stdout, ";&\n");
+	if (!tiePoints->quiet) fprintf(stdout, ";&\n");
 	return;
 }

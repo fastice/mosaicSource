@@ -3,6 +3,7 @@
 #include "rparams.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
+#include <unistd.h>
 /*
   Estimate baseline parameters.
 */
@@ -10,7 +11,7 @@
 /*#define NPARAMSEST 4*/
 
 void rParamsCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
-void fewPoints();
+void fewPoints(int32_t npts, int32_t nData, tiePointsStructure *tiePoints, Offsets *offsets, int32_t yamlOutput);
 void rParamsCoeffsQuad(void *x, int32_t i, double *afunc, int32_t ma);
 
 void rbnbpdBpParamsCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
@@ -62,7 +63,7 @@ static void computeLinearBaseline(inputImageStructure *inputImage, Offsets *offs
 	*dbp = bp2 - bp1;
 }
 
-double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets)
+double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput)
 {
 	double Re, H, RNear, thetaC, dr, rOffset, ReH;
 	double *a; /* Solution for params */
@@ -278,14 +279,14 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 		}	  /* End for i */
 		if (npts < nParams)
 		{
-			fprintf(stderr, "rParams: Insufficient Number (%i)  of Valid tie points \n", npts);
-			fewPoints();
+			fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+			return -1.0;
 		}
 		varP = varP / (double)npts;
 		meanP = meanP / (double)npts;
 		sigP = sqrt(max(0.0, varP - meanP * meanP));
 		fprintf(stderr, "k= %i v= %lf  sig= %lf mean = %lf\n", k, varP, sigP, meanP);
-		if (k == kPrint)
+		if (k == kPrint && !yamlOutput)
 		{
 			fprintf(stdout, ";\n; Estimated Baseline\n; Bn,Bp,dBn,dBp\n;\n");
 			fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
@@ -296,7 +297,10 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			if (tiePoints->bnbpdBpFlag == TRUE)
 			{ /*    solve for bn,bp,dBp */
 				if (npts < 3)
-					fewPoints();
+				{
+					fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+					return -1.0;
+				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rbnbpdBpParamsCoeffs);
 				Bn = a[1];
 				Bp = tiePoints->BpCorig;
@@ -310,7 +314,10 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			else if (tiePoints->bpdBpFlag == TRUE)
 			{ /*	  Solve for bp and dBp only 			*/
 				if (npts < 2)
-					fewPoints();
+				{
+					fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+					return -1.0;
+				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rbpdBpParamsCoeffs);
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
@@ -324,7 +331,10 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			else if (tiePoints->constOnlyFlag == TRUE)
 			{
 				if (npts < 2)
-					fewPoints();
+				{
+					fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+					return -1.0;
+				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &constOnlyParamsCoeffs);
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
@@ -338,7 +348,10 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			else if (tiePoints->quadB == TRUE)
 			{
 				if (npts < 6)
-					fewPoints();
+				{
+					fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+					return -1.0;
+				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rParamsCoeffsQuad);
 				Bn = a[1];
 				Bp = tiePoints->BpCorig;
@@ -352,7 +365,10 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			else
 			{ /* 	 SOLVE FOR ALL PARAMETERS */
 				if (npts < 4)
-					fewPoints();
+				{
+					fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+					return -1.0;
+				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rParamsCoeffs);
 				Bn = a[1];
 				Bp = tiePoints->BpCorig;
@@ -368,14 +384,17 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 		else if (tiePoints->deltaB == DELTABCONST)
 		{
 			if (npts < 2)
-				fewPoints();
+			{
+				fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+				return -1.0;
+			}
 			svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &BpCorrectOnlyParamsCoeffs);
 			Bn = 0;
 			Bp = a[1];
 			dBn = 0;
 			dBp = 0.0;
 			dBnQ = 0., dBpQ = 0.;
-			cnst = tiePoints->cnstR;
+			cnst = 0.0;
 			int32_t tmp[7] = {0, 0, 0, 0, 0, 0, 1};
 			for(int ii=1; ii<=6; ii++) pIndex[ii] = tmp[ii];
 			fprintf(stderr, "fit 1 %f %i\n", a[1], ma);
@@ -383,7 +402,10 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 		else if (tiePoints->deltaB == DELTABQUAD)
 		{
 			if (npts < 6)
-				fewPoints();
+			{
+				fewPoints(npts, nData, tiePoints, offsets, yamlOutput);
+				return -1.0;
+			}
 			svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rParamsCoeffsQuadCorrect);
 			cnst = 0.0;
 			Bn = a[1];
@@ -401,6 +423,39 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 		fprintf(stderr, " --- %f %f %f %f %f %f %f\n", Bn, Bp, dBn, dBp, dBnQ, dBpQ, cnst);
 	}
 	/* 12/17/21: Remove chisq since sigP is direct estimate of the variance - note left text X2/n in case other prgrams expect it */
+	if (yamlOutput) {
+		const char *deltaBName[3] = {"NONE", "CONST", "QUAD"};
+		int32_t dBmode = (int32_t)tiePoints->deltaB;
+		if (dBmode < 0 || dBmode > 2) dBmode = 0;
+		fprintf(stdout, "sigma: %.6f  # meters\n", sigP);
+		fprintf(stdout, "nTiepointsUsed: %d\n", npts);
+		fprintf(stdout, "nTiepointsGiven: %d\n", nData);
+		fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+		fprintf(stdout, "deltaB: %s\n", deltaBName[dBmode]);
+		fprintf(stdout, "Bn: %.5f  # meters\n", Bn);
+		fprintf(stdout, "Bp: %.5f  # meters\n", Bp);
+		fprintf(stdout, "dBn: %.5f  # meters/pixel\n", dBn);
+		fprintf(stdout, "dBp: %.5f  # meters/pixel\n", dBp);
+		fprintf(stdout, "cnst: %.5f  # meters\n", cnst);
+		fprintf(stdout, "dBnQ: %.6f  # meters/pixel^2\n", dBnQ);
+		fprintf(stdout, "dBpQ: %.6f  # meters/pixel^2\n", dBpQ);
+		fprintf(stdout, "C:\n");
+		for (l1 = 1; l1 <= 6; l1++) {
+			fprintf(stdout, "  - [");
+			for (l2 = 1; l2 <= 6; l2++) {
+				Cij = 0.0;
+				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
+					Cij = Cp[pIndex[l1]][pIndex[l2]];
+				fprintf(stdout, "%s%13.6e", l2 > 1 ? ", " : " ", Cij);
+			}
+			fprintf(stdout, "]\n");
+		}
+		if (offsets->rOffCorrection.correctionFile[0] != '\0')
+			fprintf(stdout, "offsetCorrectionFile: %s\n", offsets->rOffCorrection.correctionFile);
+		else
+			fprintf(stdout, "offsetCorrectionFile: nil\n");
+		return sigP;
+	}
 	fprintf(stdout, ";* sigma*sqrt(X2/n)= %lf \n", sigP);
 	fprintf(stdout, "; Pseudo erors \n;");
 	if (tiePoints->deltaB == DELTABNONE)
@@ -463,10 +518,58 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 	return sigP;
 }
 
-void fewPoints()
+void fewPoints(int32_t npts, int32_t nData, tiePointsStructure *tiePoints, Offsets *offsets, int32_t yamlOutput)
 {
-	fprintf(stdout, "0. 0. 0. 0. 0. 0.\n&\n");
-	exit(-1);
+	/* Complete the YAML with a sigma<0 sentinel instead of exiting mid/no-write --
+	   readOffsets.c's readRParamsYaml() already parses sigma unconditionally, and a
+	   negative sigma (impossible for a real fit) is an unambiguous, machine-readable
+	   "no solution" signal, vs. the previous behavior of writing one meaningless
+	   legacy-format line (even in yaml mode) and exiting, which left readers with no
+	   way to distinguish this from a genuinely-absent/unreadable file.
+	   Legacy (non-yaml) text format intentionally left as before -- not the active
+	   format for this project (rBaseline.deltabp.yaml is), and its reader uses a more
+	   intricate readCov()/getDataString() section-marker convention that a best-effort
+	   completion here could get subtly wrong in a worse way than the current behavior. */
+	fprintf(stderr, "rParams: Insufficient Number (%i) of Valid tie points -- no solution\n", npts);
+	if (yamlOutput) {
+		fprintf(stdout, "sigma: -1  # no solution -- insufficient tie points\n");
+		fprintf(stdout, "nTiepointsUsed: %d\n", npts);
+		fprintf(stdout, "nTiepointsGiven: %d\n", nData);
+		fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+		{
+			const char *deltaBName[3] = {"NONE", "CONST", "QUAD"};
+			int32_t dBmode = (int32_t)tiePoints->deltaB;
+			if (dBmode < 0 || dBmode > 2) dBmode = 0;
+			fprintf(stdout, "deltaB: %s\n", deltaBName[dBmode]);
+		}
+		fprintf(stdout, "Bn: 0.00000  # meters\n");
+		fprintf(stdout, "Bp: 0.00000  # meters\n");
+		fprintf(stdout, "dBn: 0.00000  # meters/pixel\n");
+		fprintf(stdout, "dBp: 0.00000  # meters/pixel\n");
+		fprintf(stdout, "cnst: 0.00000  # meters\n");
+		fprintf(stdout, "dBnQ: 0.000000  # meters/pixel^2\n");
+		fprintf(stdout, "dBpQ: 0.000000  # meters/pixel^2\n");
+		fprintf(stdout, "C:\n");
+		fprintf(stdout, "  - [ 0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00]\n");
+		fprintf(stdout, "  - [ 0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00]\n");
+		fprintf(stdout, "  - [ 0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00]\n");
+		fprintf(stdout, "  - [ 0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00]\n");
+		fprintf(stdout, "  - [ 0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00]\n");
+		fprintf(stdout, "  - [ 0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00,  0.000000e+00]\n");
+		if (offsets->rOffCorrection.correctionFile[0] != '\0')
+			fprintf(stdout, "offsetCorrectionFile: %s\n", offsets->rOffCorrection.correctionFile);
+		else
+			fprintf(stdout, "offsetCorrectionFile: nil\n");
+	} else {
+		fprintf(stdout, "0. 0. 0. 0. 0. 0.\n&\n");
+	}
+	fflush(stdout);
+	/* Deliberately does not exit() -- the caller (each of the 8 call sites in
+	   computeRParams()) returns -1.0 immediately after calling this, which lets
+	   normal control flow continue (e.g. restoring stdout, moving to the next
+	   -runFile batch entry, or completing rparams.c's ION_AUTO dual-run
+	   comparison/winner-copy step) instead of killing the whole process before
+	   any of that can happen. */
 }
 
 void rbpdBpParamsCoeffs(void *x, int32_t i, double *afunc, int32_t ma)

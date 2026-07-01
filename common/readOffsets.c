@@ -7,6 +7,14 @@
 #include <time.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
 
+extern int32_t indentRegionOutput;
+
+/* Running grand totals of I/O time across the whole run, accumulated by
+   readRangeOrRangeOffsets() and getMosaicInputImage() respectively; printed
+   once by make3DOffsets.c/make3DMosaic.c at the end of their main loops. */
+double totalOffsetsIOTime = 0.0;
+double totalPhaseIOTime = 0.0;
+
 static double now(void)
 {
 	struct timespec ts;
@@ -211,24 +219,125 @@ static void readOffsetFile(float **data, int32_t nr, int32_t na, char *offsetFil
 	/* fprintf(stderr,"- done - \n");	*/
 }
 
+static void readRParamsYaml(FILE *fp, Offsets *offsets)
+{
+	char line[512];
+	int inC = 0, ci = 0;
+	/* zero all output fields */
+	offsets->bn = 0.0; offsets->bp = 0.0;
+	offsets->dBn = 0.0; offsets->dBp = 0.0;
+	offsets->rConst = 0.0;
+	offsets->dBnQ = 0.0; offsets->dBpQ = 0.0;
+	offsets->sigmaRresidual = 0.0;
+	offsets->rOffCorrection.correctionFile[0] = '\0';
+	for (int i = 1; i <= 6; i++)
+		for (int j = 1; j <= 6; j++)
+			offsets->Cr[i][j] = 0.0;
+
+	while (fgets(line, sizeof(line), fp)) {
+		if      (sscanf(line, "sigma: %lf",  &offsets->sigmaRresidual) == 1) { inC = 0; }
+		else if (sscanf(line, "Bn: %lf",     &offsets->bn)             == 1) { inC = 0; }
+		else if (sscanf(line, "Bp: %lf",     &offsets->bp)             == 1) { inC = 0; }
+		else if (sscanf(line, "dBn: %lf",    &offsets->dBn)            == 1) { inC = 0; }
+		else if (sscanf(line, "dBp: %lf",    &offsets->dBp)            == 1) { inC = 0; }
+		else if (strncmp(line, "cnst:", 5) == 0) {
+			double cnstTmp = 0.0;
+			sscanf(line + 5, "%lf", &cnstTmp);
+			if (offsets->deltaB == DELTABNONE)
+				offsets->rConst = cnstTmp;
+			inC = 0;
+		}
+		else if (sscanf(line, "dBnQ: %lf",   &offsets->dBnQ)           == 1) { inC = 0; }
+		else if (sscanf(line, "dBpQ: %lf",   &offsets->dBpQ)           == 1) { inC = 0; }
+		else if (strncmp(line, "C:", 2) == 0) { inC = 1; ci = 0; }
+		else if (inC && strstr(line, "- [") && ci < 6) {
+			char *p = strstr(line, "[");
+			if (p)
+				sscanf(p + 1, "%lf, %lf, %lf, %lf, %lf, %lf",
+				       &offsets->Cr[ci+1][1], &offsets->Cr[ci+1][2],
+				       &offsets->Cr[ci+1][3], &offsets->Cr[ci+1][4],
+				       &offsets->Cr[ci+1][5], &offsets->Cr[ci+1][6]);
+			ci++;
+		}
+		else if (strstr(line, "offsetCorrectionFile:") != NULL) {
+			char *p = strstr(line, "offsetCorrectionFile:") + strlen("offsetCorrectionFile:");
+			while (*p == ' ' || *p == '\t') p++;
+			if (strncmp(p, "nil", 3) != 0) {
+				strncpy(offsets->rOffCorrection.correctionFile, p,
+				        sizeof(offsets->rOffCorrection.correctionFile) - 1);
+				offsets->rOffCorrection.correctionFile[sizeof(offsets->rOffCorrection.correctionFile) - 1] = '\0';
+				int32_t len = strlen(offsets->rOffCorrection.correctionFile);
+				while (len > 0 && (offsets->rOffCorrection.correctionFile[len-1] == '\n' ||
+				                   offsets->rOffCorrection.correctionFile[len-1] == '\r' ||
+				                   offsets->rOffCorrection.correctionFile[len-1] == ' '))
+					offsets->rOffCorrection.correctionFile[--len] = '\0';
+			}
+			inC = 0;
+		}
+		else { inC = 0; }
+	}
+	fprintf(stderr, "%srange sigma*sqrt(X2/n) = %lf (m)\n", indentRegionOutput ? "\t" : "", offsets->sigmaRresidual);
+}
+
 static char *RgOffsetsParamName(char *rParamsFile, char *newFile, int32_t deltaB, char *verticalCorrectionSuffix)
 {
-	char *myFile;
 	char *suffix[3] = {"", ".deltabp", ".quad"};
+	char *yamlSuffix[3] = {".yaml", ".deltabp.yaml", ".deltabquad.yaml"};
 	char tmpSuffix[64], fullSuffix[64];
+	size_t blen;
 
 	if (deltaB > DELTABQUAD || deltaB < DELTABNONE)
 		error("invalide deltaB flag %i", deltaB);
+
+	/* 2026-06-24: rParamsFile is written once by the Python orchestration layer
+	   with a fixed name (typically the .deltabp.yaml form), independent of which
+	   deltaB mode mosaic3d ends up actually requesting at runtime -- so the mode
+	   "embedded" in the given name can't be trusted. Strip any existing mode infix
+	   (.deltabp/.deltabquad) plus the .yaml extension to recover the canonical base
+	   (e.g. "rBaseline"), then re-derive the filename for the CURRENT deltaB. This
+	   was the bug behind mosaic3d silently reading the DELTABCONST fit even when
+	   run without -SVConst (deltaB=NONE), since the old code just returned
+	   whatever name it was given unchanged. getRParams()'s caller falls back to
+	   the as-given rParamsFile if this derived name doesn't exist on disk, so
+	   older frames missing a mode-specific variant still work as before. */
+	blen = strlen(rParamsFile);
+	if (blen > 5 && strcmp(rParamsFile + blen - 5, ".yaml") == 0) {
+		char *yamlInfix[3] = {"", ".deltabp", ".deltabquad"};
+		char base[2048];
+		size_t baseLen = blen - 5; /* strip ".yaml" */
+		int k;
+		strncpy(base, rParamsFile, baseLen);
+		base[baseLen] = '\0';
+		for (k = 1; k <= 2; k++) {
+			size_t ilen = strlen(yamlInfix[k]);
+			if (baseLen > ilen && strcmp(base + baseLen - ilen, yamlInfix[k]) == 0) {
+				base[baseLen - ilen] = '\0';
+				break;
+			}
+		}
+		strcpy(newFile, base);
+		strcat(newFile, yamlInfix[deltaB]);
+		if (verticalCorrectionSuffix != NULL && deltaB != DELTABNONE) {
+			/* e.g. rBaseline.deltabp.yaml -> rBaseline.deltabp.480.yaml */
+			strcat(newFile, ".");
+			strncat(newFile, verticalCorrectionSuffix, 32);
+		}
+		strcat(newFile, ".yaml");
+		return newFile;
+	}
+
+	/* If rParamsFile doesn't end in .yaml, check whether we should build a yaml name.
+	   We do this when the deltaB-specific yaml file would exist but the old file might not.
+	   The caller (getRParams) handles the actual open/fallback logic; here we just construct
+	   the canonical name for the requested deltaB mode. Use old suffix logic. */
 	fullSuffix[0] = '\0';
-	if(verticalCorrectionSuffix != NULL) 
+	if(verticalCorrectionSuffix != NULL)
 	{
 		appendSuffix(suffix[deltaB], ".", tmpSuffix);
 		appendSuffix(tmpSuffix, verticalCorrectionSuffix, fullSuffix);
 		return (appendSuffix(rParamsFile, fullSuffix, newFile));
-	} 
+	}
 	return (appendSuffix(rParamsFile, suffix[deltaB], newFile));
-	
-	
 }
 
 void getRParams(Offsets *offsets)
@@ -249,10 +358,67 @@ void getRParams(Offsets *offsets)
 	//error("STOP HERE");
 	//  Input parm info
 	RgOffsetsParamName(offsets->rParamsFile, paramFile, offsets->deltaB, offsets->verticalCorrectionSuffix);
+
+	/* Case 1: paramFile explicitly ends in .yaml → must use yaml reader */
+	{
+		size_t plen = strlen(paramFile);
+		if (plen > 5 && strcmp(paramFile + plen - 5, ".yaml") == 0) {
+			fp = fopen(paramFile, "r");
+			if (fp == NULL && strcmp(paramFile, offsets->rParamsFile) != 0) {
+				/* The correctly mode-derived name doesn't exist -- e.g. an older
+				   frame only ever processed for one deltaB mode. Fall back to the
+				   name exactly as given (RgOffsetsParamName()'s pre-fix behavior)
+				   rather than erroring just because the re-derived name is missing. */
+				fprintf(stderr, "getRParams: %s not found, falling back to %s\n", paramFile, offsets->rParamsFile);
+				fp = fopen(offsets->rParamsFile, "r");
+			}
+			if (fp == NULL)
+				error("getRParams: cannot open yaml baseline file %s (also tried %s)", paramFile, offsets->rParamsFile);
+			readRParamsYaml(fp, offsets);
+			fclose(fp);
+			return;
+		}
+	}
+
+	/* Case 2: try old text format */
 	fp = fopen(paramFile, "r");
 	if (fp == NULL)
 	{
-		/* If quad or const doesn't exist revert to original */
+		/* Case 3: auto-detect yaml fallback — try two names:
+		     3a: paramFile + ".yaml" (e.g. rBaseline.deltabp.yaml, compatible with old suffix)
+		     3b: rParamsFile + canonical yaml infix (e.g. rBaseline.deltabp.yaml per plan) */
+		{
+			const char *canonInfix[3] = {".yaml", ".deltabp.yaml", ".deltabquad.yaml"};
+			int dBcano = (offsets->deltaB >= 0 && offsets->deltaB <= 2) ? offsets->deltaB : 0;
+			char yamlName[2200];
+
+			/* 3a: old suffix + .yaml */
+			snprintf(yamlName, sizeof(yamlName), "%s.yaml", paramFile);
+			fp = fopen(yamlName, "r");
+			if (fp == NULL) {
+				/* 3b: base name + canonical infix (with optional vcSuffix) */
+				if (offsets->verticalCorrectionSuffix != NULL && dBcano != DELTABNONE) {
+					/* e.g. rBaseline.deltabp.480.yaml */
+					char base[2048];
+					snprintf(base, sizeof(base), "%s%s", offsets->rParamsFile, canonInfix[dBcano]);
+					size_t blen2 = strlen(base);
+					/* insert vcSuffix before .yaml */
+					snprintf(yamlName, sizeof(yamlName), "%.*s.%s.yaml",
+					         (int)(blen2 - 5), base, offsets->verticalCorrectionSuffix);
+				} else {
+					snprintf(yamlName, sizeof(yamlName), "%s%s",
+					         offsets->rParamsFile, canonInfix[dBcano]);
+				}
+				fp = fopen(yamlName, "r");
+			}
+			if (fp != NULL) {
+				fprintf(stderr, "getRParams: using yaml fallback %s\n", yamlName);
+				readRParamsYaml(fp, offsets);
+				fclose(fp);
+				return;
+			}
+		}
+		/* Case 4: revert to DELTABNONE base file (existing behavior) */
 		fp = openInputFile(offsets->rParamsFile);
 		offsets->deltaB = DELTABNONE;
 	}
@@ -280,7 +446,7 @@ void getRParams(Offsets *offsets)
 	readCov(fp, 6, offsets->Cr, &(offsets->sigmaRresidual), line);
 	/* for(i=1; i <=6; i++) fprintf(stderr,"%le %le %le %le %le %le \n",
 		(offsets->Cr[i][1]),(offsets->Cr[i][2]),(offsets->Cr[i][3]),(offsets->Cr[i][4]),(offsets->Cr[i][5]),(offsets->Cr[i][6]));*/
-	fprintf(stderr, "range sigma*sqrt(X2/n) = %lf (m)\n", offsets->sigmaRresidual);
+	fprintf(stderr, "%srange sigma*sqrt(X2/n) = %lf (m)\n", indentRegionOutput ? "\t" : "", offsets->sigmaRresidual);
 	/*
 	  Input baseline estimated with tiepoints.
 	*/
@@ -299,16 +465,16 @@ void getRParams(Offsets *offsets)
 	/* This parameter will get calculated in the SV basline init routine if its used, so only set for computed baseline */
 	//offsets->rConst = 0.; this was overwriting earlier values
 	if (offsets->deltaB == DELTABNONE)
-	{	
+	{
 		if(rConst < LARGEINT)
 		{
 			offsets->rConst = rConst;
-		} 
-		else 
+		}
+		else
 		{
 			error("getRparams: rCoonst not initialized");
 		}
-	}	
+	}
 	offsets->dBnQ = dBnQ;
 	offsets->dBpQ = dBpQ;
 
@@ -353,11 +519,60 @@ void getRParams(Offsets *offsets)
 }
 
 
+/* 2026-06-17: parse yaml output written by azparams -yaml */
+static void readAzParamsYaml(FILE *fp, Offsets *offsets)
+{
+	char line[512];
+	int inC = 0, ci = 0;
+	int i, j;
+
+	offsets->sigmaAresidual = 0.0;
+	offsets->c1 = 0.0;
+	offsets->dbcds = 0.0;
+	offsets->dbhds = 0.0;
+	offsets->doffdx = 0.0;
+	for (i = 1; i <= 4; i++)
+		for (j = 1; j <= 4; j++)
+			offsets->Ca[i][j] = 0.0;
+
+	while (fgets(line, sizeof(line), fp)) {
+		if      (sscanf(line, "sigma: %lf",  &offsets->sigmaAresidual) == 1) { inC = 0; }
+		else if (sscanf(line, "cnst: %lf",   &offsets->c1)             == 1) { inC = 0; }
+		else if (sscanf(line, "dbcds: %lf",  &offsets->dbcds)          == 1) { inC = 0; }
+		else if (sscanf(line, "dbhds: %lf",  &offsets->dbhds)          == 1) { inC = 0; }
+		else if (sscanf(line, "doffdx: %lf", &offsets->doffdx)         == 1) { inC = 0; }
+		else if (strncmp(line, "C:", 2) == 0) { inC = 1; ci = 0; }
+		else if (inC && strstr(line, "- [") && ci < 4) {
+			char *p = strstr(line, "[");
+			if (p)
+				sscanf(p + 1, "%lf, %lf, %lf, %lf",
+				       &offsets->Ca[ci+1][1], &offsets->Ca[ci+1][2],
+				       &offsets->Ca[ci+1][3], &offsets->Ca[ci+1][4]);
+			ci++;
+		}
+		else { inC = 0; }
+	}
+	fprintf(stderr, "azimuth sigma*sqrt(X2/n) = %lf (m)\n", offsets->sigmaAresidual);
+}
+
 static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB)
 {
 	char *suffix[3] = {"", ".const", ".svlinear"};
+	size_t blen;
+
 	if (deltaB > DELTABQUAD || deltaB < DELTABNONE)
 		error("invalid deltaB flag %i", deltaB);
+
+	/* 2026-06-17: if aParamsFile ends in .yaml, insert mode suffix before .yaml */
+	blen = strlen(aParamsFile);
+	if (blen > 5 && strcmp(aParamsFile + blen - 5, ".yaml") == 0) {
+		strncpy(newFile, aParamsFile, blen - 5);
+		newFile[blen - 5] = '\0';
+		strcat(newFile, suffix[deltaB]);
+		strcat(newFile, ".yaml");
+		return newFile;
+	}
+
 	return (appendSuffix(aParamsFile, suffix[deltaB], newFile));
 }
 
@@ -370,14 +585,39 @@ void getAzParams(Offsets *offsets)
 	int32_t lineCount = 0, eod;
 	int32_t i, j;
 	char line[256], paramFile[1024];
-	/*
-	  Open az param file
-	*/
+
 	AzOffsetsParamName(offsets->azParamsFile, paramFile, offsets->deltaB);
+
+	/* 2026-06-17: Case 1: paramFile explicitly ends in .yaml → must use yaml reader */
+	{
+		size_t plen = strlen(paramFile);
+		if (plen > 5 && strcmp(paramFile + plen - 5, ".yaml") == 0) {
+			fp = fopen(paramFile, "r");
+			if (fp == NULL)
+				error("getAzParams: cannot open yaml az params file %s", paramFile);
+			readAzParamsYaml(fp, offsets);
+			fclose(fp);
+			return;
+		}
+	}
+
+	/* Case 2: try old text format */
 	fp = fopen(paramFile, "r");
 	if (fp == NULL)
 	{
-		/* If quad or const doesn't exist revert to original */
+		/* Case 3: auto-detect yaml fallback — try paramFile + ".yaml" */
+		{
+			char yamlName[1200];
+			snprintf(yamlName, sizeof(yamlName), "%s.yaml", paramFile);
+			fp = fopen(yamlName, "r");
+			if (fp != NULL) {
+				fprintf(stderr, "getAzParams: using yaml fallback %s\n", yamlName);
+				readAzParamsYaml(fp, offsets);
+				fclose(fp);
+				return;
+			}
+		}
+		/* Case 4: revert to DELTABNONE base file */
 		fp = openInputFile(offsets->azParamsFile);
 		offsets->deltaB = DELTABNONE;
 		if (fp == NULL)
@@ -416,6 +656,20 @@ void initOffParams(Offsets *offsets){
 	offsets->geo2 = NULL;
 	offsets->rOffCorrection.rangeOffsetCorrection = NULL;
 	offsets->rOffCorrection.correctionFile[0] = '\0';
+	/* 2026-06-24: bnS/bpS are lazily computed by svInitBnBp() (see svInterpBnBp()'s
+	   "if bnS==NULL" check), indexed according to aO/deltaA/na at the time they were
+	   computed. When the same Offsets struct gets reused across multiple different
+	   pairings within one mosaic3d run (e.g. make3DOffsets.c trying several candidate
+	   crossing-orbit images against the same descending frame), aO/deltaA/na get
+	   correctly refreshed here on every call, but bnS/bpS previously didn't -- so the
+	   lazy-init only ever fired on the first pairing a given image was visited with,
+	   and every later pairing silently reused a baseline array indexed for the wrong
+	   azimuth window. Freeing them here forces a fresh, correctly-indexed
+	   recomputation for every pairing. */
+	free(offsets->bnS);
+	free(offsets->bpS);
+	offsets->bnS = NULL;
+	offsets->bpS = NULL;
 }
 
 static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_t band, char *path)
@@ -427,7 +681,6 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	hBand = GDALGetRasterBand(hDS, band);
 	
 	readDataSetMetaData(hDS, &metaData);
-	fprintf(stderr, "Meta Data Read\n");
 	// Write to offsets
 	offsets->nr = GDALGetRasterBandXSize(hBand);
 	offsets->na = GDALGetRasterBandYSize(hBand);
@@ -442,7 +695,7 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	// fprintf(stderr,"PATH %s\n", path);
 	offsets->geo1 = mergePath(get_value(metaData, "geo1"), path);
 	offsets->geo2 = mergePath(get_value(metaData, "geo2"), path);
-	fprintf(stderr, "GEO2 %s\n", offsets->geo2);
+	fprintf(stderr, "%sGEO2 %s\n", indentRegionOutput ? "\t" : "", offsets->geo2);
 	// Get Band
 	return hBand;
 }
@@ -494,7 +747,6 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float a
 	int32_t iAzMin, iAzMax, nRows, k;
 
 	mapBandDescriptionsToBandNumbers(hDS, bandNumbers);
-	fprintf(stderr, "Band numbers: az %i range %i azSigma %i rangeSigma %i\n", bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
 	// Handle various buffer cases
 	buf[0] = '\0';
 	switch (bufferMode)
@@ -507,16 +759,14 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float a
 		data = offsets->da[0];
 		break;
 	case RANGEBUFF:
-		fprintf(stderr, "RANGE BUFF  %s\n", offsets->rFile);
+		fprintf(stderr, "%sRANGE BUFF  %s\n", indentRegionOutput ? "\t" : "", offsets->rFile);
 		path = dirname(strcpy(buf, offsets->rFile));
 		hBand = getBandAndMeta(hDS, offsets, bandNumbers[2], path);
-		fprintf(stderr, "Range offsets meta read\n");
 		initOffsetBuffers(offsets, RGONLY);
-		fprintf(stderr, "Range offsets buffers initialized\n");
 		data = offsets->dr[0];
 		break;
 	case RANGEUSEAZIMUTHBUFF:
-		fprintf(stderr, "RANGE FLIP BUFF %s\n", offsets->rFile);
+		fprintf(stderr, "%sRANGE FLIP BUFF %s\n", indentRegionOutput ? "\t" : "", offsets->rFile);
 		path = dirname(strcpy(buf, offsets->rFile));
 		hBand = getBandAndMeta(hDS, offsets, bandNumbers[2], path);
 		initOffsetBuffers(offsets, AZFORRANGE);
@@ -546,7 +796,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float a
 	if (iAzMin == 0 && iAzMax == offsets->na - 1)
 	{
 		/* Full image read */
-		fprintf(stderr, "\033[32mFull read of %i rows and %i columns\033[0m\n", offsets->na, offsets->nr);
+		fprintf(stderr, "%s\033[32mFull read of %i rows and %i columns\033[0m\n", indentRegionOutput ? "\t" : "", offsets->na, offsets->nr);
 		status = GDALRasterIO(hBand, GF_Read, 0, 0, offsets->nr, offsets->na, data,
 							  offsets->nr, offsets->na, GDT_Float32, 0, 0);
 	}
@@ -556,7 +806,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float a
 		   in-place so row indices match those of a full read */
 		for (k = 0; k < offsets->nr * offsets->na; k++)
 			data[k] = (float)-LARGEINT;
-		fprintf(stderr, "\033[34mPartial read of rows %i to %i (of %i) and %i columns\033[0m\n", iAzMin, iAzMax, offsets->na, offsets->nr);
+		fprintf(stderr, "%s\033[34mPartial read of rows %i to %i (of %i) and %i columns\033[0m\n", indentRegionOutput ? "\t" : "", iAzMin, iAzMax, offsets->na, offsets->nr);
 		status = GDALRasterIO(hBand, GF_Read,
 							  0, iAzMin, offsets->nr, nRows,
 							  data + iAzMin * offsets->nr, offsets->nr, nRows,
@@ -653,7 +903,7 @@ static void checkForIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets, int
 
 	readDataSetMetaData(hDS, &metaData);
 	char *ionosphereCorrection = get_value(metaData, "ionosphereRangeOffsetCorrection");
-	fprintf(stderr, "Ionosphere correction file: %s\n", ionosphereCorrection);
+	fprintf(stderr, "%sReading Ionosphere correction file: %s\n", indentRegionOutput ? "\t" : "", ionosphereCorrection);
 	
 	/* Baseline specified a file but VRT metadata has none */
 	if (ionosphereCorrection == NULL)
@@ -674,7 +924,6 @@ static void checkForIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets, int
 	snprintf(ionospherePath, sizeof(ionospherePath), "%s/%s", dirname(tmp), ionosphereCorrection);
 	if (access(ionospherePath, F_OK) != 0)
 		error("checkForIonosphereCorrection: correction file not found: %s\n", ionospherePath);
-	fprintf(stderr, "checkForIonosphereCorrection: loading %s\n", ionospherePath);
 	//error("STOP: ionospheric correction loading not implemented yet\n");
 	readOffsetCorrection(ionospherePath, offsets, bufferMode);
 }
@@ -904,18 +1153,27 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthM
 	{
 		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
+		double tBlockStart = now();
+		double t0 = tBlockStart;
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+		fprintf(stderr, "%sGDALOpen range vrt time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - t0);
 		// Read data and close
+		t0 = now();
 		if (orbitType == ASCENDING) readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF, azimuthMin, azimuthMax);
 		else readGDALOffsets(hDS, offsets, RANGEBUFF, azimuthMin, azimuthMax);
 		readGDALOffsets(hDS, offsets, RANGEERRORBUFF, azimuthMin, azimuthMax);
-		fprintf(stderr, "********** %s\n", offsets->rOffCorrection.correctionFile);
+		fprintf(stderr, "%sRead range+sigma bands time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - t0);
+		t0 = now();
 		checkForIonosphereCorrection(hDS, offsets,
 									orbitType == ASCENDING ? RANGEUSEAZIMUTHBUFF : RANGEBUFF);
+		fprintf(stderr, "%sIonosphere correction check/read time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - t0);
+		fprintf(stderr, "%sTotal range read time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - tBlockStart);
+		totalOffsetsIOTime += now() - tBlockStart;
 		GDALClose(hDS);
 	}
 	else
 	{
+		double tBlockStart = now();
 		// read offset param
 		datFile = appendSuffix(offsets->rFile, ".dat", buf);
 		//fprintf(stderr, "OPENING DAT %s\n", datFile);
@@ -929,6 +1187,8 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthM
 		readOffsetFile(offsets->dr, offsets->nr, offsets->na, offsets->rFile);
 		eFileR = appendSuffix(offsets->rFile, ".sr", bufd);
 		readOffsetFile(offsets->sr, offsets->nr, offsets->na, eFileR);
+		fprintf(stderr, "%sTotal range read time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - tBlockStart);
+		totalOffsetsIOTime += now() - tBlockStart;
 	}
 }
 
@@ -944,27 +1204,29 @@ void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t 
 	int32_t i, j;
 	dictNode *metaOut = NULL;
   	int xSize, ySize, dataType, status;
+	double tFuncStart = now();
 	/*
 	  Open image
 	*/
-	fprintf(stderr, "Reading %s --- \n", inputImage->file);
 	vrtFile = checkForVrt(inputImage->file, vrtBuf);
 	fimage = (float **)inputImage->image;
-	if(vrtFile != NULL) 
+	if(vrtFile != NULL)
 	{
 		imageLine = inputImage->image[0];
-		fprintf(stderr, "VRT FILE %s exists\n", vrtFile);	
+		fprintf(stderr, "%sReading %s (BAND 1)\n", indentRegionOutput ? "\t" : "", vrtFile);
 		double t0 = now();
 		readRasterVRT(vrtFile, 1, &xSize, &ySize, &dataType, &metaOut, imageLine,
 					  yMin / inputImage->nAzimuthLooks, yMax / inputImage->nAzimuthLooks);
-		fprintf(stderr, "GDAL read time: %.3f s\n", now() - t0);
-		fprintf(stderr, "azimuthSize %i %i rangeSize %i %i\n", inputImage->azimuthSize, ySize,
+		fprintf(stderr, "%sGDAL read time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - t0);
+		fprintf(stderr, "%sazimuthSize %i %i rangeSize %i %i\n", indentRegionOutput ? "\t" : "", inputImage->azimuthSize, ySize,
 			inputImage->rangeSize, xSize);
-		fprintf(stderr, "VRT read\n");
+		fprintf(stderr, "%sVRT read\n", indentRegionOutput ? "\t" : "");
+		fprintf(stderr, "%sTotal phase read time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - tFuncStart);
+		totalPhaseIOTime += now() - tFuncStart;
 		return;
-	} else 
+	} else
 	{
-		fprintf(stderr, "NO VRT FILE\n");	
+		fprintf(stderr, "%sReading %s (NO VRT FILE)\n", indentRegionOutput ? "\t" : "", inputImage->file);
 		if (strstr(inputImage->file, "nophase") == NULL)
 		{
 			fp = fopen(inputImage->file, "r");
@@ -991,7 +1253,9 @@ void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t 
 		}
 		
 	}
-	fprintf(stderr, "completed \n");
+	fprintf(stderr, "%scompleted \n", indentRegionOutput ? "\t" : "");
+	fprintf(stderr, "%sTotal phase read time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - tFuncStart);
+	totalPhaseIOTime += now() - tFuncStart;
 	return;
 }
 

@@ -13,6 +13,7 @@ static void azCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 static void azCoeffsLinear(void *x, int32_t i, double *afunc, int32_t ma);
 static void linearOnlyCoeffs(void *x, int32_t i, double *afunc, int32_t ma);
 static void getBaselineRates(double *dbcds, double *dbhds, char *baseFile, double prf, double slPixSize, int32_t lookDir);
+static void fewPointsAz(int32_t npts, int32_t nData, tiePointsStructure *tiePoints, int32_t yamlOutput);
 
 static void constantOnlyFit(void *x, double y[], double sig[], int32_t npts, double a[], int32_t ma, double **u, double **v, double w[],
 							double *chisq, double dbcds, double dbhds, double result[], int32_t pIndex[], double azconst[]);
@@ -46,7 +47,7 @@ static void computeBaselineRates(inputImageStructure *inputImage, Offsets *offse
 	fprintf(stderr, "--- %e %e \n", *dbc, *dbh);
 }
 
-void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets)
+void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput)
 {
 	double Re, H, RNear, dr;
 	double *a; /* Solution for params */
@@ -136,7 +137,13 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		if (fabs(tiePoints->phase[i]) < 1.0E6)
 			weightSum += tiePoints->weight[i];
 	if (weightSum == 0.0)
-		error("azparams: all tiepoint weights are zero\n");
+	{
+		/* same "no solution" sentinel as the npts<ma check below -- all-zero weights
+		   means every candidate tie point was deliberately down-weighted to nothing,
+		   functionally equivalent to having none. */
+		fewPointsAz(npts, nData, tiePoints, yamlOutput);
+		return;
+	}
 	/*
 	  Run 3 times 1) initial estimate with unknown errors, 2) use estimate to determine residual 3) final solution with sigma detemermine by residual
 	 */
@@ -199,7 +206,10 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 			} /* End if */
 		} /* End for i */
 		if (npts < ma)
-			error("azparams: Insufficient Number (%i)  of Valid tie points \n", npts);
+		{
+			fewPointsAz(npts, nData, tiePoints, yamlOutput);
+			return;
+		}
 		/*
 		  Solve for parameters
 		*/
@@ -235,29 +245,107 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		svdvar(v, ma, w, Cp);
 	} /* end k */
 	/*
-	  Ouput results
+	  Output results
 	 */
-	fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
-	fprintf(stdout, "; X2 %f \n", chisq);
-	/* 12/17/21: Remove chisq since sigP is direct estimate of the variance - note left text X2/n in case other prgrams expect it */
-	fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", sigP); /**sqrt(chisq/(double)npts));*/
-	fprintf(stdout, "; Covariance Matrix \n;");
-
-	for (l1 = 1; l1 <= 4; l1++)
+	/* 2026-06-17: yaml output branch — clean key:value format for readAzParamsYaml() */
+	if (yamlOutput)
 	{
-		fprintf(stdout, ";* C_%1i ", l1);
-		for (l2 = 1; l2 <= 4; l2++)
+		const char *deltaBName[3] = {"NONE", "CONST", "SVLINEAR"};
+		int32_t dBmode = (int32_t)tiePoints->deltaB;
+		fprintf(stdout, "sigma: %.6f  # meters\n", sigP);
+		fprintf(stdout, "nTiepointsUsed: %d\n", npts);
+		fprintf(stdout, "nTiepointsGiven: %d\n", nData);
+		fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+		fprintf(stdout, "deltaB: %s\n", deltaBName[dBmode]);
+		fprintf(stdout, "cnst: %.6f  # meters\n", result[1]);
+		fprintf(stdout, "dbcds: %.6e  # m per (prf*slpA) per SL sample\n", result[2]);
+		fprintf(stdout, "dbhds: %.6e  # m per (prf*slpA) per SL sample\n", result[3]);
+		fprintf(stdout, "doffdx: %.6f  # meters per normalised track position\n", result[4]);
+		fprintf(stdout, "C:\n");
+		for (l1 = 1; l1 <= 4; l1++)
 		{
-			Cij = 0;
-			if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
-				Cij = Cp[pIndex[l1]][pIndex[l2]] * azconst[l1] * azconst[l2];
-			fprintf(stdout, " %10.6e ", Cij);
+			fprintf(stdout, "  - [");
+			for (l2 = 1; l2 <= 4; l2++)
+			{
+				Cij = 0.0;
+				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
+					Cij = Cp[pIndex[l1]][pIndex[l2]] * azconst[l1] * azconst[l2];
+				fprintf(stdout, " %11.4e%s", Cij, l2 < 4 ? "," : " ]");
+			}
+			fprintf(stdout, "\n");
 		}
-		fprintf(stdout, "\n");
 	}
-	fprintf(stdout, ";\n");
-	fprintf(stdout, "%lf %le %le %lf\n", result[1], result[2], result[3], result[4]);
+	else
+	{
+		fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
+		fprintf(stdout, "; X2 %f \n", chisq);
+		/* 12/17/21: Remove chisq since sigP is direct estimate of the variance */
+		fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", sigP);
+		fprintf(stdout, "; Covariance Matrix \n;");
+		for (l1 = 1; l1 <= 4; l1++)
+		{
+			fprintf(stdout, ";* C_%1i ", l1);
+			for (l2 = 1; l2 <= 4; l2++)
+			{
+				Cij = 0;
+				if (pIndex[l1] > 0 && pIndex[l1] <= ma && pIndex[l2] > 0 && pIndex[l2] <= ma)
+					Cij = Cp[pIndex[l1]][pIndex[l2]] * azconst[l1] * azconst[l2];
+				fprintf(stdout, " %10.6e ", Cij);
+			}
+			fprintf(stdout, "\n");
+		}
+		fprintf(stdout, ";\n");
+		fprintf(stdout, "%lf %le %le %lf\n", result[1], result[2], result[3], result[4]);
+	}
 	return;
+}
+
+static void fewPointsAz(int32_t npts, int32_t nData, tiePointsStructure *tiePoints, int32_t yamlOutput)
+{
+	/* Complete the output with a sigma<0 sentinel instead of exiting mid/no-write --
+	   readAzParamsYaml() and the legacy readCov()/getAzParams() path both already parse
+	   sigma unconditionally, and a negative sigma (impossible for a real fit) is an
+	   unambiguous, machine-readable "no solution" signal -- mirrors fewPoints() in
+	   rParams/computeRParams.c. Deliberately does not exit() either, for the same
+	   reason: lets normal control flow continue rather than risking any future caller
+	   that wraps this in a batch/dual-run path the way rparams.c's ION_AUTO mode does. */
+	fprintf(stderr, "azparams: Insufficient Number (%i) of Valid tie points -- no solution\n", npts);
+	if (yamlOutput)
+	{
+		const char *deltaBName[3] = {"NONE", "CONST", "SVLINEAR"};
+		int32_t dBmode = (int32_t)tiePoints->deltaB;
+		fprintf(stdout, "sigma: -1  # no solution -- insufficient tie points\n");
+		fprintf(stdout, "nTiepointsUsed: %d\n", npts);
+		fprintf(stdout, "nTiepointsGiven: %d\n", nData);
+		fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+		fprintf(stdout, "deltaB: %s\n", deltaBName[dBmode]);
+		fprintf(stdout, "cnst: 0.000000  # meters\n");
+		fprintf(stdout, "dbcds: 0.000000e+00  # m per (prf*slpA) per SL sample\n");
+		fprintf(stdout, "dbhds: 0.000000e+00  # m per (prf*slpA) per SL sample\n");
+		fprintf(stdout, "doffdx: 0.000000  # meters per normalised track position\n");
+		fprintf(stdout, "C:\n");
+		fprintf(stdout, "  - [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  0.0000e+00 ]\n");
+		fprintf(stdout, "  - [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  0.0000e+00 ]\n");
+		fprintf(stdout, "  - [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  0.0000e+00 ]\n");
+		fprintf(stdout, "  - [ 0.0000e+00,  0.0000e+00,  0.0000e+00,  0.0000e+00 ]\n");
+	}
+	else
+	{
+		fprintf(stdout, ";\n; Ntiepoints/Ngiven used= %i/%i\n;\n", npts, nData);
+		fprintf(stdout, "; X2 %f \n", 0.0);
+		fprintf(stdout, ";*  sigma*sqrt(X2/n)= %f \n", -1.0);
+		fprintf(stdout, "; Covariance Matrix \n;");
+		for (int32_t l1 = 1; l1 <= 4; l1++)
+		{
+			fprintf(stdout, ";* C_%1i ", l1);
+			for (int32_t l2 = 1; l2 <= 4; l2++)
+				fprintf(stdout, " %10.6e ", 0.0);
+			fprintf(stdout, "\n");
+		}
+		fprintf(stdout, ";\n");
+		fprintf(stdout, "%lf %le %le %lf\n", 0.0, 0.0, 0.0, 0.0);
+	}
+	fflush(stdout);
 }
 
 static void constantOnlyFit(void *x, double y[], double sig[], int32_t npts, double a[], int32_t ma,

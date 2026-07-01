@@ -1,5 +1,6 @@
 #include "stdio.h"
 #include "string.h"
+#include "stdlib.h"
 #include "mosaicSource/common/common.h"
 #include "tiePoints.h"
 #include <sys/types.h>
@@ -146,12 +147,29 @@ int main(int argc, char *argv[])
 	*/
 	addBaselineCorrections(baselineFile, &tiePoints, inputImage, yamlOutput, verbose);
 	/*
-	  Motion corrections
+	  Motion corrections. Always compute the unsquinted solution; additionally compute the
+	  squinted solution when the input geodat carries squint coefficients, so computeBaseline()
+	  can fit and emit both (see mosaicSource/CLAUDE.md "Squint"). The squinted pass runs first
+	  so that tiePoints.phase/vyra end up holding the unsquinted (default) values for the
+	  verbose dump below, matching prior behavior.
 	*/
+	tiePoints.hasSquintSolution = FALSE;
+	tiePoints.phaseSquint = NULL;
 	if (motionFlag == TRUE || vrFlag == TRUE)
 	{
 		if (verbose) fprintf(stderr, "Before motion corrections\n");
-		addMotionCorrections(inputImage, &tiePoints, verbose);
+		if (inputImage.hasSquintPolynomial)
+		{
+			tiePoints.phaseSquint = (double *)malloc(tiePoints.npts * sizeof(double));
+			addMotionCorrections(inputImage, &tiePoints, TRUE, tiePoints.phaseSquint, verbose);
+			tiePoints.hasSquintSolution = TRUE;
+		}
+		{
+			double *phaseNoSquint = (double *)malloc(tiePoints.npts * sizeof(double));
+			addMotionCorrections(inputImage, &tiePoints, FALSE, phaseNoSquint, verbose);
+			memcpy(tiePoints.phase, phaseNoSquint, tiePoints.npts * sizeof(double));
+			free(phaseNoSquint);
+		}
 		if (verbose) fprintf(stderr, "After motion corrections\n");
 	}
 	/*
@@ -278,6 +296,11 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 			*verbose = TRUE;
 		else if (strstr(argString, "motion") != NULL)
 			*motionFlag = TRUE;
+		else if (strstr(argString, "useSquint") != NULL)
+			fprintf(stderr, "note: tiepoints -useSquint is deprecated and ignored -- "
+					"tiepoints now always computes both the unsquinted and (when squint "
+					"data is available) squinted baseline solutions in -yaml output; "
+					"mosaic3d -useSquint selects which one to use.\n");
 		else if (strstr(argString, "timeReverse") != NULL)
 			*timeReverseFlag = TRUE;
 		else if (strstr(argString, "nDays") != NULL)
@@ -320,7 +343,7 @@ static void usage()
 {
 	error(
 		"\n\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n\n"
-		"%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+		"%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
 		"Compute baseline for given tiepoints.",
 		"At least 4 tiepoints must be given in the tiepoints file",
 		"Output is to stdout",
@@ -345,6 +368,8 @@ static void usage()
 		"  dem          = (OMIT if dem not used) dem file for tiepoint elevations",
 		"  motion       = moving tiepoints, tiepoint file lat,lon,z,vx,vy,vz (m/yr)",
 		"  vr           = moving tiepoints, tiepoint file lat,lon,z,vr,vz (m/yr)",
+		"  useSquint    = deprecated, ignored -- both solutions are now always computed",
+		"                 (in -yaml output) when squintCoefficients are in geoInput",
 		"  geoInputFile = geo params file",
 		"  tiepointFile = Tiepoint location file in (lat,lon) or (lat,lon,z)",
 		"  uwPhaseFile  = unwrapped phase image",

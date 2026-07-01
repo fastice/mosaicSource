@@ -55,6 +55,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	extern double Rotation;
 	extern float *AImageBuffer, *DImageBuffer;
 	extern int32_t sepAscDesc;
+	extern int32_t indentRegionOutput;
 	conversionDataStructure *aCp, *dCp;							/* asc/desc coordinate conversion info */
 	inputImageStructure *allImages, *aPhaseImage, *dPhaseImage; /* list of all images, and individual asc/desc images */
 	vhParams *aParams, *dParams;
@@ -86,15 +87,19 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	float **vXimage, **vYimage, **vZimage, **errorX, **errorY;
 	;															 /* velocity and error buffers */
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp; /* Temp solutions */
+	float **nAtmp, **nDtmp;   /* per-pixel distinct image counts for pair over-counting correction */
+	unsigned char *aContrib;  /* flat [ySize×xSize]: did current aPhaseImage contribute at this pixel? */
 	float **scaleX, **scaleY, **scaleZ;							 /*  scale buffers */
 	float dum1, dum2;	
 	float azimuthMin, azimuthMax;										 /* Placeholder dummys for function calls */
 	int32_t validData;											 /* Flag to indicate a valid solution */
 	int32_t iMin, iMax, jMin, jMax;								 /* range in pixels over which to compute solutions */
-	int32_t aa, dd;												 /* Counters for asc/desc images */
+	int32_t aa, dd, nTotal;										 /* Counters for asc/desc images and total numer of images*/
 	int32_t i, j, i1, j1, count;
 	unsigned char sMask;
 	struct timeval start, stop;
+	struct timeval funcStart, funcEnd;
+	gettimeofday(&funcStart, NULL);
 
 	fprintf(outputImage->fpLog, ";\n; Entering make3DMosaic(.c)\n");
 	if (no3d == TRUE)
@@ -113,6 +118,18 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	*/
 	setupBuffers(outputImage, &vXimage, &vYimage, &vZimage, &scaleX, &scaleY, &scaleZ,
 				 &vxTmp, &vyTmp, &vzTmp, &sxTmp, &syTmp, &fScale, &errorX, &errorY);
+	{
+		int i1, j1;
+		nAtmp = mallocImage(outputImage->ySize, outputImage->xSize);
+		nDtmp = mallocImage(outputImage->ySize, outputImage->xSize);
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+			for (j1 = 0; j1 < outputImage->xSize; j1++)
+				nAtmp[i1][j1] = nDtmp[i1][j1] = 0.0f;
+		aContrib = (unsigned char *)calloc(
+			(size_t)outputImage->ySize * outputImage->xSize, sizeof(unsigned char));
+		if (aContrib == NULL)
+			error("make3DMosaic: calloc failed for aContrib\n");
+	}
 	if (dem->stdLat < 50 || dem->stdLat > 80)
 		error("mosaic3d invalid slat for dem");
 	/*
@@ -122,6 +139,12 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	undoNormalization(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, fScale, FALSE);
 	allImages = ascImages; /* Added 5/30 to avoid using asc/desc */
 	aParams = ascParams;
+	nTotal = 0;
+	for (aPhaseImage = allImages; aPhaseImage != NULL; aPhaseImage = aPhaseImage->next)
+	{
+		nTotal++;
+	}
+	fprintf(stderr, "nTotal Images %i", nTotal);
 	/*
 	   MAIN LOOP Loop over ascending images
 	*/
@@ -144,11 +167,25 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		*/
 		if (strstr(aPhaseImage->file, "nophase") != NULL)
 			continue;
-		/* Added this 7/31/2015 to skip over images with no overlap */
-		getRegion(aPhaseImage, &iMin, &iMax, &jMin, &jMax, outputImage);
-		/* Skip if no data in range */
-		if (iMin > iMax || jMin > jMax)
+		/* Skip if no overlap or file missing */
+		indentRegionOutput = FALSE;
+		if (!getRegion(aPhaseImage, &iMin, &iMax, &jMin, &jMax, outputImage))
 			continue;
+		{
+			extern int32_t useSquint;
+			double aSq = (useSquint && aPhaseImage->hasSquintPolynomial)
+				? evaluateSquint(aPhaseImage, aPhaseImage->rangeSize * 0.5, aPhaseImage->azimuthSize * 0.5)
+				: 0.0;
+			if (!useSquint)
+				fprintf(stderr, "\033[1;34maPhaseImage %s %3.0f -- %5.3f -- %4i squint off\033[0m\n",
+						aPhaseImage->file, aParams->nDays, aPhaseImage->par.lambda, aa);
+			else if (aPhaseImage->hasSquintPolynomial)
+				fprintf(stderr, "\033[1;34maPhaseImage %s %3.0f -- %5.3f -- %4i squint on sq=%5.2f\033[0m\n",
+						aPhaseImage->file, aParams->nDays, aPhaseImage->par.lambda, aa, aSq);
+			else
+				fprintf(stderr, "\033[1;34maPhaseImage %s %3.0f -- %5.3f -- %4i squint on sq=\033[31m%5.2f\033[1;34m\033[0m\n",
+						aPhaseImage->file, aParams->nDays, aPhaseImage->par.lambda, aa, aSq);
+		}
 		/*  Set buffer, memory channel for sharedmem, and read image		*/
 		setBuffer(aPhaseImage, AImageBuffer);
 		/*  Setup conversion parameters		*/
@@ -163,6 +200,9 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		*/
 		dd = 0;
 		dParams = aParams->next; /* Start at next element below outer loop */
+		indentRegionOutput = TRUE; /* tab-indent getRegion/computeSceneAlpha/etc. output for the
+		                              rest of this outer iteration, so it visually groups with the
+		                              crossing-pair inner loop's own tab-indented prints below */
 		for (dPhaseImage = aPhaseImage->next; dPhaseImage != NULL; dPhaseImage = dPhaseImage->next, dParams = dParams->next)
 		{
 			dd++;
@@ -177,12 +217,26 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			/*
 			   Moved up 9/14/2016 to avoid init ll - had to modify getRegion to use lat/lon from geodat
 			*/
-			getRegion(dPhaseImage, &iMin, &iMax, &jMin, &jMax, outputImage);
-			if (iMin > iMax || jMin > jMax)
+			if (!getRegion(dPhaseImage, &iMin, &iMax, &jMin, &jMax, outputImage))
 			{
-				/* This file has no overlap so, flag as nophase - for future loops */
+				/* No overlap or file missing — flag as nophase for future outer loops */
 				dPhaseImage->file = strdup("nophase");
 				continue;
+			}
+			{
+				extern int32_t useSquint;
+				double dSq = (useSquint && dPhaseImage->hasSquintPolynomial)
+					? evaluateSquint(dPhaseImage, dPhaseImage->rangeSize * 0.5, dPhaseImage->azimuthSize * 0.5)
+					: 0.0;
+				if (!useSquint)
+					fprintf(stderr, "\t\033[38;5;208mdPhaseImage %s %3.0f -- %5.3f -- %4i squint off\033[0m\n",
+							dPhaseImage->file, dParams->nDays, dPhaseImage->par.lambda, dd);
+				else if (dPhaseImage->hasSquintPolynomial)
+					fprintf(stderr, "\t\033[38;5;208mdPhaseImage %s %3.0f -- %5.3f -- %4i squint on sq=%5.2f\033[0m\n",
+							dPhaseImage->file, dParams->nDays, dPhaseImage->par.lambda, dd, dSq);
+				else
+					fprintf(stderr, "\t\033[38;5;208mdPhaseImage %s %3.0f -- %5.3f -- %4i squint on sq=\033[31m%5.2f\033[38;5;208m\033[0m\n",
+							dPhaseImage->file, dParams->nDays, dPhaseImage->par.lambda, dd, dSq);
 			}
 			if (dPhaseImage->passType == aPhaseImage->passType && sepAscDesc == TRUE)
 				continue;
@@ -198,27 +252,34 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			dPhaseImage->memChan = MEM2;
 			dCp = setupGeoConversions(dPhaseImage, &dum1, &dum2, &dRe, &dReH, &dThetaC, &dReHfixed, &dThetaCfixedReH);
 			dPhaseImage->tolerance = geoTolerance;
-			fprintf(stderr, "aPhaseImage %s %3.0f -- %5.3f -- %4i\n\n", aPhaseImage->file, aParams->nDays, aPhaseImage->par.lambda, aa);
-			fprintf(stderr, "dPhaseImage %s %3.0f -- %5.3f -- %4i\n", dPhaseImage->file, dParams->nDays, dPhaseImage->par.lambda, dd);
 			/* fprintf(stderr,"%i %i %i %i", iMin, iMax, jMin, jMax); */
 			twokD = (4.0 * PI) / dPhaseImage->par.lambda;
 			/*   Compute approximate heading by sampling overlap region  - set iMax,jMax zero if no good solution */
 			computeSceneAlpha(outputImage, aPhaseImage, dPhaseImage, aCp, dCp, dem, &iMin, &iMax, &jMin, &jMax);
 			if (iMax == 0 && jMax == 0)
 				continue; /* no data in range, so skip */
+			/* 2026-06-16: also skip when computeSceneAlpha returns inverted bounds (not caught by 0,0 sentinel) */
+			if (iMin > iMax || jMin > jMax)
+				continue;
 			/*  Read in descending image if needed (i.e., nozero intersect).	*/
 			setBuffer(dPhaseImage, DImageBuffer);
 			getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, dPhaseImage, outputImage, &azimuthMin, &azimuthMax);
+			/* 2026-06-16: skip read when getAzimuthBoundsForXYBox finds no intersection (azimuthMin=azimuthMax=0) */
+			if (azimuthMin == 0.0f && azimuthMax == 0.0f)
+				continue;
 			getMosaicInputImage(dPhaseImage, azimuthMin, azimuthMax);
 			/*
 			  Loop over output grid and compute velocities
 			*/
+			fprintf(stderr, "\t---- \033[1mAsc %i / %i\033[0m \033[1mDes %i\033[0m\n", aa, nTotal, dd);
 			gettimeofday(&start, NULL);
 			count = 0;
 			{
 				int t;
 				for (t = 0; t < nthreads; t++) { localAImgs[t] = *aPhaseImage; localDImgs[t] = *dPhaseImage; }
 			}
+			double dbgSumPeA = 0, dbgSumPeA2 = 0, dbgSumPeD = 0, dbgSumPeD2 = 0;
+			int64_t dbgN = 0;
 #pragma omp parallel \
 			private(j, x, y, lat, lon, zWGS84, \
 			        aZSp, dZSp, arange, drange, aAzimuth, dAzimuth, \
@@ -227,17 +288,21 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			        aPhiZ, dPhiZ, phaseErrorA, phaseErrorD, \
 			        aP, dP, aPe, dPe, scaleA, scaleD, \
 			        vx, vy, vz, scX, scY, dzdx, dzdy, \
-			        dzdtSubmergence, deltaOffCenter, sMask, validData)
+			        dzdtSubmergence, deltaOffCenter, sMask, validData) \
+			reduction(+: dbgSumPeA, dbgSumPeA2, dbgSumPeD, dbgSumPeD2, dbgN)
 			{
 				int myThread = omp_get_thread_num();
 				inputImageStructure *myAImg = &localAImgs[myThread];
 				inputImageStructure *myDImg = &localDImgs[myThread];
 				double A[2][2], B[2][2];
+				int32_t rowAset;
 #pragma omp for schedule(dynamic, 8)
 				for (i = iMin; i < iMax; i++)
 				{
+					rowAset = FALSE; /* force a fresh A on the first valid-data pixel of every
+					                    row -- see make3DOffsets.c */
 					if ((i % 100) == 0)
-						fprintf(stderr, "--+ %i\n", i);
+						fprintf(stderr, "\t--+ %i\n", i);
 					/* y - coordinate */
 					y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
 					for (j = jMin; j < jMax; j++)
@@ -309,8 +374,14 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 									aPhase -= -dzdtSubmergence * cos(aPsi) * twokA * (double)aParams->nDays / 365.25;
 									dPhase -= -dzdtSubmergence * cos(dPsi) * twokD * (double)dParams->nDays / 365.25;
 								}
-								/* Compute conversion matrix A */
-								computeA(lat, lon, x, y, myAImg, myDImg, A);
+								/*  Update A every 3rd pixel; rowAset guarantees a fresh A on the first
+								    valid-data pixel of every row -- see make3DOffsets.c */
+								if ((j % 3) == 0 || rowAset == FALSE)
+								{
+									extern int32_t useSquint;
+									computeA(lat, lon, x, y, myAImg, myDImg, A, useSquint);
+									rowAset = TRUE;
+								}
 								/*
 								  Only pursue solution if sufficient difference  in angles for 3d solution
 								*/
@@ -325,6 +396,11 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 									dP = dPhase * scaleD;
 									aPe = phaseErrorA * scaleA;
 									dPe = phaseErrorD * scaleD;
+									dbgSumPeA  += phaseErrorA;
+									dbgSumPeA2 += phaseErrorA * phaseErrorA;
+									dbgSumPeD  += phaseErrorD;
+									dbgSumPeD2 += phaseErrorD * phaseErrorD;
+									dbgN++;
 									/*  Compute velocity */
 									computeVxy(aP, dP, aPe, dPe, A, B, &vx, &vy, &scX, &scY);
 									/*  Compute vertical velocity	*/
@@ -354,6 +430,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 
 									sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
 									syTmp[i][j] = scY;
+									nDtmp[i][j] += 1.0f;
+									aContrib[i * outputImage->xSize + j] = 1;
 									fScale[i][j] = 1.0; /* Value for zero feathering */
 #pragma omp atomic write
 									aPhaseImage->used = TRUE;
@@ -371,6 +449,16 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 					} /* j loop */
 				}	  /* i loop */
 			} /* End omp parallel */
+			if (dbgN > 0) {
+				double mA = dbgSumPeA / dbgN, mD = dbgSumPeD / dbgN;
+				double sA = sqrt(dbgSumPeA2 / dbgN - mA * mA);
+				double sD = sqrt(dbgSumPeD2 / dbgN - mD * mD);
+				double radToCmA = aPhaseImage->par.lambda / (4 * PI) * 100.0;
+				double radToCmD = dPhaseImage->par.lambda / (4 * PI) * 100.0;
+				fprintf(stderr,
+					"\tPHASEERR n=%ld  peA: %.4f+/-%.4f rad (%.3f cm)  peD: %.4f+/-%.4f rad (%.3f cm)\n",
+					(long)dbgN, mA, sA, mA * radToCmA, mD, sD, mD * radToCmD);
+			}
 				  /*
 					Compute scale array for feathering.
 				  */
@@ -384,7 +472,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			if (outputImage->timeOverlapFlag == TRUE)
 			{
 				combWeight = sqrt(aPhaseImage->weight * dPhaseImage->weight);
-				fprintf(stderr, "\033[1mComb weight = %lf |Ta-Td| %lf\033[0m\n", combWeight, fabs(aPhaseImage->julDay - dPhaseImage->julDay));
+				fprintf(stderr, "\t\033[1mComb weight = %lf |Ta-Td| %lf\033[0m\n", combWeight, fabs(aPhaseImage->julDay - dPhaseImage->julDay));
 			}
 			else
 				combWeight = 1.0;
@@ -393,15 +481,52 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			/* ******************************
 			   Use end of goto used to skip inner loop for nophase */
 		} /* End desc loop */
+		{
+			int i1, j1;
+			for (i1 = 0; i1 < outputImage->ySize; i1++)
+				for (j1 = 0; j1 < outputImage->xSize; j1++)
+					if (aContrib[i1 * outputImage->xSize + j1]) {
+						nAtmp[i1][j1] += 1.0f;
+						aContrib[i1 * outputImage->xSize + j1] = 0;
+					}
+		}
 	}	  /* End asc loop */
 	free(localAImgs);
 	free(localDImgs);
+	free(aContrib);
 	/**************************END OF MAIN LOOP ******************************/
 	fprintf(stderr, "Out of main loop\n");
+	{
+		extern double totalPhaseIOTime;
+		gettimeofday(&funcEnd, NULL);
+		fprintf(stderr, "Total phase I/O time (whole run): %.3f s\n", totalPhaseIOTime);
+		fprintf(stderr, "Total phase processing time (whole run): %.3f s\n",
+		        (funcEnd.tv_sec - funcStart.tv_sec) + (funcEnd.tv_usec - funcStart.tv_usec) * 1e-6);
+	}
 	/*
 	  Adjust scale
 	*/
 	endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, FALSE);
+	/* Correct for pair over-counting: N_A×N_D pairs treated as independent, but only N_A+N_D
+	   images are independent.  Multiply error² by (n_A+n_D)/2 — exact for equal σ and equal
+	   D-matrix magnitudes, which is the same approximation endScale already assumes. */
+	{
+		int i1, j1;
+		float ntotal;
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+			for (j1 = 0; j1 < outputImage->xSize; j1++)
+			{
+				ntotal = nAtmp[i1][j1] + nDtmp[i1][j1];
+				if (ntotal > 0.0f)
+				{
+					errorX[i1][j1] *= 0.5f * ntotal;
+					errorY[i1][j1] *= 0.5f * ntotal;
+				}
+			}
+		for (i1 = 0; i1 < outputImage->ySize; i1++) { free(nAtmp[i1]); free(nDtmp[i1]); }
+		free(nAtmp);
+		free(nDtmp);
+	}
 	fprintf(outputImage->fpLog, ";\n; Returning from make3DOffs(.c)\n");
 	fflush(outputImage->fpLog);
 }
@@ -417,8 +542,12 @@ static double computePhiFlatEarthM3d(double azimuth, vhParams *vhParam, inputIma
 	double normAzimuth, imageLength;
 	double bn, bp, bSq, delta;
 	double theta, thetaDFlat;
+	double sinThetaD, cosThetaD;
+	double v[7], tmpV[7];
+	double sig2Base;
 	double twok;
 	double xsq;
+	int32_t i, j;
 
 	twok = 4.0 * PI / phaseImage->par.lambda;
 	imageLength = (double)phaseImage->azimuthSize;
@@ -432,8 +561,25 @@ static double computePhiFlatEarthM3d(double azimuth, vhParams *vhParam, inputIma
 	theta = acos((Range * Range + ReHfixed * ReHfixed - Re * Re) / (2.0 * ReHfixed * Range));
 	thetaDFlat = theta - thetaCfixedReH;
 
-	delta = -bn * sin(thetaDFlat) - bp * cos(thetaDFlat) + bSq * 0.5 / Range;
-	*phaseError = PI / 4.0;
+	sinThetaD = sin(thetaDFlat);
+	cosThetaD = cos(thetaDFlat);
+	v[1] = -twok * sinThetaD;
+	v[2] = -twok * cosThetaD;
+	v[3] = -twok * sinThetaD * normAzimuth;
+	v[4] = -twok * cosThetaD * normAzimuth;
+	v[5] = -twok * sinThetaD * xsq;
+	v[6] = -twok * cosThetaD * xsq;
+	for (i = 1; i <= 6; i++) {
+		tmpV[i] = 0;
+		for (j = 1; j <= 6; j++)
+			tmpV[i] += vhParam->C[i][j] * v[j];
+	}
+	sig2Base = 0.0;
+	for (j = 1; j <= 6; j++)
+		sig2Base += tmpV[j] * v[j];
+
+	delta = -bn * sinThetaD - bp * cosThetaD + bSq * 0.5 / Range;
+	*phaseError = sqrt(sig2Base + min(6*PI, vhParam->sigma) * min(6*PI, vhParam->sigma));
 	return delta * twok;
 }
 
@@ -497,7 +643,7 @@ static double computePhiZM3d(double *thetaD, double z, double azimuth, vhParams 
 	/*
 	  Assume error more than 1/2 of a fringe, reflects tie point error rather than phase noise
 	*/
-	*phaseError = sqrt(sig2Base + min(PI, vhParam->sigma) * min(PI, vhParam->sigma)); /* note this is returning phase error as sigma */
+	*phaseError = sqrt(sig2Base + min(6*PI, vhParam->sigma) * min(6*PI, vhParam->sigma)); /* note this is returning phase error as sigma */
 	/*
 	   This delta uses a varying ReH because it is the computationally correct version
 	*/

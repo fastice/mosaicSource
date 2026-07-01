@@ -230,7 +230,8 @@ SIMINSAR =	simInSAR/$(MACHTYPE)-$(OSTYPE)/parseSceneFile.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/outputSimulatedImage.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getDisplacement.o \
                 simInSAR/$(MACHTYPE)-$(OSTYPE)/getSlantRangeDEM.o \
-                simInSAR/$(MACHTYPE)-$(OSTYPE)/simInSARBaselineFromSV.o
+                simInSAR/$(MACHTYPE)-$(OSTYPE)/simInSARBaselineFromSV.o \
+                simInSAR/$(MACHTYPE)-$(OSTYPE)/computeSmoothRadius.o
 
 SIMINSARDIRS =	simInSAR  common  $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 

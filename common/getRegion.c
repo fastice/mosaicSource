@@ -1,13 +1,19 @@
 #include "common.h"
+#include <unistd.h>
+
+/* Set by make3DOffsets.c (and similarly-structured callers) while inside the
+   crossing-pair inner loop, so this output visually groups with the rest of
+   that loop's tab-indented prints. Defaults to FALSE for all other callers. */
+int32_t indentRegionOutput = FALSE;
 
 /*
   Clip a convex polygon against a single half-plane  nx*x + ny*y >= d.
   Input polygon has nIn vertices; output written to xOut/yOut.
   Returns number of output vertices (0 = entirely outside).
 */
-static int clipByHalfPlane(double *xIn, double *yIn, int nIn,
-                            double *xOut, double *yOut,
-                            double nx, double ny, double d)
+int clipByHalfPlane(double *xIn, double *yIn, int nIn,
+                     double *xOut, double *yOut,
+                     double nx, double ny, double d)
 {
     int nOut = 0;
     for (int i = 0; i < nIn; i++)
@@ -43,7 +49,7 @@ static int clipByHalfPlane(double *xIn, double *yIn, int nIn,
 
   Returns iMin==iMax==jMin==jMax==0 when there is no real overlap.
 */
-void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax,
+int32_t getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax,
                outputImageStructure *outputImage)
 {
     extern double Rotation;
@@ -55,6 +61,17 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
     double minX, maxX, minY, maxY;
     double pad;
     int n, i;
+
+    /* --- 0. File existence check -------------------------------------------- */
+    if (image->file != NULL && strstr(image->file, "nophase") == NULL) {
+        char vrtBuf[4096];
+        snprintf(vrtBuf, sizeof(vrtBuf), "%s.vrt", image->file);
+        if (access(image->file, F_OK) != 0 && access(vrtBuf, F_OK) != 0) {
+            fprintf(stderr, "getRegion: file not found %s\n", image->file);
+            *iMin = 0; *iMax = 0; *jMin = 0; *jMax = 0;
+            return 0;
+        }
+    }
 
     /* --- 1. Get swath corner points in metres -------------------------------- */
     /* Control points: [1]=ll, [2]=lr, [3]=ul, [4]=ur.
@@ -105,7 +122,7 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
 
     /* --- 5. Convert to output pixel indices ---------------------------------- */
     /* Subtract 1 from min / add 1 to max to avoid truncation cutting the edge row/col */
-	int pad2 = max(500, 10e3/outputImage->deltaX); /* Add a little extra padding to catch any rounding issues at the edges */
+	int pad2 = max(2, 10e3/outputImage->deltaX); /* Add a little extra padding to catch any rounding issues at the edges */
     *iMin = (int)((minY - outputImage->originY) / outputImage->deltaY) - pad2;
     *jMin = (int)((minX - outputImage->originX) / outputImage->deltaX) - pad2;
     *iMax = (int)((maxY - outputImage->originY) / outputImage->deltaY) + pad2;
@@ -115,12 +132,13 @@ void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t
     *iMax = min(outputImage->ySize, *iMax);
     *jMax = min(outputImage->xSize, *jMax);
 
-    fprintf(stderr, "getRegion: clipped bounds x [%.1f %.1f] y [%.1f %.1f] -> i [%i %i] j [%i %i] %f\n",
-            minX, maxX, minY, maxY, *iMin, *iMax, *jMin, *jMax, outputImage->deltaX);
-    return;
+    fprintf(stderr, "%sgetRegion: clipped bounds x [%.1f %.1f] y [%.1f %.1f] -> i [%i %i] j [%i %i] %f\n",
+            indentRegionOutput ? "\t" : "", minX, maxX, minY, maxY, *iMin, *iMax, *jMin, *jMax, outputImage->deltaX);
+    return 1;
 
 no_overlap:
     *iMin = 0; *iMax = 0;
     *jMin = 0; *jMax = 0;
-    fprintf(stderr, "getRegion: no overlap\n");
+    fprintf(stderr, "%sgetRegion: no overlap\n", indentRegionOutput ? "\t" : "");
+    return 0;
 }

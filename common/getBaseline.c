@@ -3,10 +3,20 @@
 #include "common.h"
 #include "math.h"
 
+/* One labeled solution block parsed from a tiepoints -yaml baseline file (noSquint:/squint:) */
+typedef struct
+{
+	double Bn, Bp, dBn, dBp, dBnQ, dBpQ, sigma;
+	double C[7][7];
+	int32_t seen;
+} yamlBaselineBlock;
+
 /*
-  Input baseline info.
+  Input baseline info. useSquint selects which labeled YAML block (noSquint/squint) to use
+  when the baseline file has both -- see mosaicSource/CLAUDE.md "Squint". Ignored for
+  non-YAML baseline files, which predate the squint feature and carry only one solution.
 */
-void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase)
+void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase, int32_t useSquint)
 {
 	FILE *fp;
 	double BnEst, BpEst, dBnEst, dBpEst, dBpEstQ, dBnEstQ;
@@ -36,37 +46,70 @@ void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase)
 			FILE *yfp = fopen(baselineFile, "r");
 			if (yfp == NULL)
 				error("getBaseline: cannot open YAML file %s", baselineFile);
-			params->Bn = 0.0; params->Bp = 0.0;
-			params->dBn = 0.0; params->dBp = 0.0;
-			params->dBnQ = 0.0; params->dBpQ = 0.0;
-			int inC = 0, ci = 0;
+			yamlBaselineBlock noSquint, squint;
+			int32_t hasSquintSolution = 0;
+			memset(&noSquint, 0, sizeof(noSquint));
+			memset(&squint, 0, sizeof(squint));
+			/* section: 0 = top-level (applyFlatEarth/hasSquintSolution/nDays), 1 = noSquint:, 2 = squint: */
+			int32_t section = 0, inC = 0, ci = 0;
+			yamlBaselineBlock *blk = NULL;
 			while (fgets(line, 256, yfp))
 			{
-				if      (sscanf(line, "nDays: %lf",  &params->nDays)  == 1) { inC = 0; }
-				else if (sscanf(line, "sigma: %lf",  &params->sigma)  == 1) { inC = 0; }
-				else if (sscanf(line, "Bn: %lf",     &params->Bn)     == 1) { inC = 0; }
-				else if (sscanf(line, "Bp: %lf",     &params->Bp)     == 1) { inC = 0; }
-				else if (sscanf(line, "dBn: %lf",    &params->dBn)    == 1) { inC = 0; }
-				else if (sscanf(line, "dBp: %lf",    &params->dBp)    == 1) { inC = 0; }
-				else if (sscanf(line, "dBnQ: %lf",   &params->dBnQ)   == 1) { inC = 0; }
-				else if (sscanf(line, "dBpQ: %lf",   &params->dBpQ)   == 1) { inC = 0; }
-				else if (strncmp(line, "applyFlatEarth: true", 20) == 0)
-					{ params->applyFlatEarth = 1; inC = 0; }
-				else if (strncmp(line, "C:", 2) == 0)
-					{ inC = 1; ci = 0; }
-				else if (inC && strstr(line, "- [") != NULL && ci < 6)
+				/* Top-level (0-indent) keys, checked before whitespace-stripping so they
+				   can't be confused with an indented child key of the same name. */
+				if (line[0] != ' ' && line[0] != '\t')
 				{
-					char *p = strstr(line, "[");
-					if (p)
-						sscanf(p + 1, "%lf, %lf, %lf, %lf, %lf, %lf",
-							   &params->C[ci+1][1], &params->C[ci+1][2],
-							   &params->C[ci+1][3], &params->C[ci+1][4],
-							   &params->C[ci+1][5], &params->C[ci+1][6]);
+					if (strncmp(line, "noSquint:", 9) == 0)
+						{ section = 1; blk = &noSquint; inC = 0; continue; }
+					else if (strncmp(line, "squint:", 7) == 0)
+						{ section = 2; blk = &squint; inC = 0; continue; }
+					else if (strncmp(line, "applyFlatEarth: true", 20) == 0)
+						{ params->applyFlatEarth = 1; continue; }
+					else if (strncmp(line, "hasSquintSolution: true", 23) == 0)
+						{ hasSquintSolution = 1; continue; }
+					else if (sscanf(line, "nDays: %lf", &params->nDays) == 1)
+						{ continue; }
+					/* Legacy flat (pre-squint, single-solution) files have no noSquint:/
+					   squint: headers at all -- their Bn:/Bp:/etc. keys sit at 0-indent.
+					   Route those into the noSquint block directly. */
+					section = 1; blk = &noSquint;
+				}
+				char *p = line;
+				while (*p == ' ' || *p == '\t') p++;
+				if      (sscanf(p, "sigma: %lf", &blk->sigma) == 1) { inC = 0; }
+				else if (sscanf(p, "Bn: %lf",     &blk->Bn)     == 1) { inC = 0; }
+				else if (sscanf(p, "Bp: %lf",     &blk->Bp)     == 1) { inC = 0; }
+				else if (sscanf(p, "dBn: %lf",    &blk->dBn)    == 1) { inC = 0; }
+				else if (sscanf(p, "dBp: %lf",    &blk->dBp)    == 1) { inC = 0; }
+				else if (sscanf(p, "dBnQ: %lf",   &blk->dBnQ)   == 1) { inC = 0; }
+				else if (sscanf(p, "dBpQ: %lf",   &blk->dBpQ)   == 1) { inC = 0; }
+				else if (strncmp(p, "C:", 2) == 0)
+					{ inC = 1; ci = 0; blk->seen = 1; }
+				else if (inC && strstr(p, "- [") != NULL && ci < 6)
+				{
+					char *pb = strstr(p, "[");
+					if (pb)
+						sscanf(pb + 1, "%lf, %lf, %lf, %lf, %lf, %lf",
+							   &blk->C[ci+1][1], &blk->C[ci+1][2],
+							   &blk->C[ci+1][3], &blk->C[ci+1][4],
+							   &blk->C[ci+1][5], &blk->C[ci+1][6]);
 					ci++;
 				}
 				else { inC = 0; }
 			}
 			fclose(yfp);
+
+			yamlBaselineBlock *sel = (useSquint && hasSquintSolution) ? &squint : &noSquint;
+			params->Bn = sel->Bn;
+			params->Bp = sel->Bp;
+			params->dBn = sel->dBn;
+			params->dBp = sel->dBp;
+			params->dBnQ = sel->dBnQ;
+			params->dBpQ = sel->dBpQ;
+			params->sigma = sel->sigma;
+			for (i = 1; i <= 6; i++)
+				for (j = 1; j <= 6; j++)
+					params->C[i][j] = sel->C[i][j];
 			return;
 		}
 	}

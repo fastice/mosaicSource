@@ -39,7 +39,7 @@ mosaic3d [options] inputFile demFile outFileBase
 | `-noTide`                              | Skip tidal correction even on shelf pixels |
 | `-tideFile <file>`                     | Tidal model file for shelf corrections |
 | `-verticalCorrection <file>`           | Vertical correction field (e.g. submergence/emergence velocity) in m/yr |
-| `-verticalCorrectionSuffix <suffix>`   | Suffix appended to phase, baseline, and rBaseline filenames for vertical correction |
+| `-verticalCorrectionSuffix <suffix>`   | Suffix appended to baseline/rParams filenames only (not phase) for an alternate vertical-correction scenario |
 | `-irreg <file>`                        | File listing irregularly spaced supplemental velocity datasets |
 | `-landSat <file>`                      | File containing list of Landsat feature-tracking offset inputs |
 | `-rOffsets`                            | Use range+azimuth speckle-tracked offsets for both velocity components where needed |
@@ -69,6 +69,7 @@ mosaic3d [options] inputFile demFile outFileBase
 | `-COG`                                 | Write output as Cloud-Optimised GeoTIFF |
 | `-ompThreads <N>`                      | Number of OpenMP threads for parallel pixel processing (default: 4; overridden by `OMP_NUM_THREADS` environment variable) |
 | `-center`                              | *(obsolete — silently ignored)* |
+| `-useSquint`                           | Apply per-image squint(r,a) heading correction before building the crossing-orbit solving matrix; phase (`make3DMosaic`) only, default off — see "Squint (Residual Doppler) Correction" below |
 
 ### Output Files
 
@@ -250,11 +251,74 @@ $$
 \phi_Z = \frac{4\pi}{\lambda}\left(\sqrt{R^2 - 2R(B_n\sin\theta_D + B_p\cos\theta_D) + B^2} - R\right) - \phi_\text{flat}
 $$
 
-4. Applies tidal and submergence/emergence corrections on floating ice.
+4. Applies tidal (`-tideFile`, floating ice only) and submergence/emergence
+   (`-verticalCorrection`) corrections to each phase:
+
+$$
+\phi_A \mathrel{+}= v_z^{\text{SMB}}\,\cos\psi_A\,\frac{4\pi}{\lambda_A}\,\frac{N_{\text{days},A}}{365.25},
+\qquad
+\phi_D \mathrel{+}= v_z^{\text{SMB}}\,\cos\psi_D\,\frac{4\pi}{\lambda_D}\,\frac{N_{\text{days},D}}{365.25}
+$$
+
+   where $v_z^{\text{SMB}}$ is the vertical rate (m/yr, **positive = up**) read directly,
+   unmodified, from the `-verticalCorrection` grid (`interpVCorrect`, a pure bilinear
+   interpolation with no sign flip) or the tide-height-rate grid (`-tideFile`), and
+   $\psi_A,\psi_D$ are the local incidence angles. **Do not confuse with the solved output**
+   $v_z$ **in step 6 below** — that's flow-driven vertical motion derived from slope×horizontal
+   velocity; $v_z^{\text{SMB}}$ here is an independent, externally supplied vertical rate being
+   *removed* from the phase before solving for horizontal motion. See "Vertical-Motion
+   Correction Sign Convention" below for why `+=` (not `-=`) is correct given the up-positive
+   convention, and "Look-Direction Sign Convention" for why no left/right-looking adjustment
+   is needed.
 5. Constructs the 2×2 geometric conversion matrix $\mathbf{A}$ from the two look
-   directions, and the surface-slope correction matrix $\mathbf{B}$ from the DEM.
+   directions (optionally squint-corrected, see "Squint (Residual Doppler) Correction"
+   below — off by default), and the surface-slope correction matrix $\mathbf{B}$ from the DEM.
 6. Solves for $(v_x, v_y)$ and derives $v_z = v_x \partial z/\partial x + v_y \partial z/\partial y$.
 7. Propagates baseline covariance to a per-pixel phase error $\sigma_\phi$.
+
+#### Heading Angle Convention (`computeHeading`)
+
+$H_A$, $H_D$ (used below) are the **cross-track** heading at the pixel, not the along-track
+flight direction. For a small latitude offset $\delta\text{lat}$, project $(\text{lat}\mp
+\delta\text{lat},\,\text{lon})$ into the image's range/azimuth coordinates to get an azimuth
+displacement $da$ and ground-range displacement $dgr$, then:
+
+$$
+H = \begin{cases}
+\text{atan2}(da,\ dgr) & \text{right-looking} \\
+\text{atan2}(da,\ -dgr) & \text{left-looking}
+\end{cases}
+$$
+
+This sign flip (`common/computeHeading.c`) is the **only** place look direction enters the
+velocity-inversion geometry. It is folded into $H_A$/$H_D$ before $\alpha$/$\beta$ — and hence
+$\mathbf{A}$ — are computed, so no further look-direction handling is needed downstream of this
+point.
+
+#### Squint (Residual Doppler) Correction (`-useSquint`, off by default)
+
+`computeHeading` returns the heading of the idealized, **zero-Doppler (broadside)** cross-track
+direction — real NISAR acquisitions carry a small residual squint (~1.5°–1.7°) that this
+geometry doesn't model. With `-useSquint`, each image's own measured squint, a 6-parameter
+polynomial in range $r$ and azimuth $a$ fit upstream (`nisarhdf`/`SetupNISAR`, see their
+CLAUDE.md) and threaded into the geodat, is evaluated and added directly to that image's own
+heading **before** $\alpha$/$\beta$ — and hence $\mathbf{A}$ — are computed:
+
+$$
+H_A \to H_A + \text{squint}_A(r_A, a_A), \qquad H_D \to H_D + \text{squint}_D(r_D, a_D)
+$$
+
+This is exact (not a post-hoc rotation of the output $(v_x,v_y)$) because $\mathbf{A}$ is a pure
+function of $\alpha,\beta$ with no other squint dependence — correcting the headings and
+changing nothing else reproduces the matrix that would have been built from the true geometry.
+**Phase only** (`make3DMosaic`'s `computeA` call) — `make3DOffsets`'s crossing-orbit range-offset
+solution never applies this, flag or no flag, since offsets are self-consistent regardless of
+squint by construction (the zero-Doppler condition forces true LOS ⊥ true velocity at the
+assigned time, independent of squint). Ships off by default: the underlying analysis found no
+NISAR data processed today needs it; verified (numerically and on a real overlapping
+ascending/descending pair) to shift the recovered direction by the predicted ~1.5°–1.7° with the
+correct sign — see `mosaicSource/CLAUDE.md`'s squint section for the full derivation and
+verification.
 
 #### Matrix A — Geometric Conversion (`computeA`)
 
@@ -298,6 +362,63 @@ $$
 
 where $\psi_A$, $\psi_D$ are the local incidence angles for the ascending and descending images.
 
+#### Vertical-Motion Correction Sign Convention
+
+$v_z^{\text{SMB}} > 0$ means the surface is moving **up** — toward the satellite, which
+**decreases** slant range. Over time interval $\Delta t$ (years), the range change contributed
+by vertical motion alone is therefore:
+
+$$
+\Delta R_{\text{vert}} = -\,v_z^{\text{SMB}}\,\cos\psi\,\Delta t
+$$
+
+(negative because moving toward the satellite shortens the range). This contaminates the raw
+measurement:
+
+$$
+\Delta R_{\text{measured}} = \Delta R_{\text{horizontal}} + \Delta R_{\text{vert}}
+= \Delta R_{\text{horizontal}} - v_z^{\text{SMB}}\,\cos\psi\,\Delta t
+$$
+
+so isolating the horizontal-motion-only range change requires **adding back**
+$v_z^{\text{SMB}}\cos\psi\,\Delta t$:
+
+$$
+\Delta R_{\text{horizontal}} = \Delta R_{\text{measured}} + v_z^{\text{SMB}}\,\cos\psi\,\Delta t
+$$
+
+This is exactly the code's `+=` (the `X -= -Y` idiom seen in the source is algebraically `X += Y`)
+— confirmed correct, not a sign bug, given $v_z^{\text{SMB}}$ is read unmodified from the grid
+(positive = up). The phase form (Step 1) carries the identical sign: this codebase's own
+topographic-phase formula (`computePhiZM3d`, $\phi_Z$ above) increases $\phi$ with increasing
+path length, i.e. $\phi = +\frac{4\pi}{\lambda}\Delta R$, so the same $\Delta R \to
+\Delta R + v_z^{\text{SMB}}\cos\psi\,\Delta t$ correction carries straight through with the
+$4\pi/\lambda$ factor multiplied in, matching the `aPhase`/`dPhase` formula above. Step 2
+(`make3DOffsets`, range offsets in metres) needs no phase-conversion factor and applies the
+identical $\Delta r \mathrel{+}= v_z^{\text{SMB}}\cos\psi\,\Delta t$ form directly. The existing
+`-tideFile` correction (tide height, also positive = up, by the standard oceanographic
+convention) uses this same `+=` form, which `dzdtSubmergence`/`tideCorrection` share verbatim
+in the source (`Mosaic3d/make3DMosaic.c`, `Mosaic3d/make3DOffsets.c`).
+
+#### Look-Direction Sign Convention
+
+The tide/submergence-emergence correction (above) needs **no** adjustment for left- vs
+right-looking sensors. Verified directly against the geometry code:
+
+- $\psi$ (incidence angle) comes from `psiRReZReH`/`thetaRReZReH` (`common/initRoutines.c`) —
+  pure range/Earth-radius/satellite-height geometry (`acos`/`asin` of always-positive ratios),
+  with no `lookDir` term. Incidence angle is the same physical quantity regardless of which side
+  of the track the radar looks, so $\cos\psi$ is always positive and look-direction-independent.
+- $4\pi/\lambda$ is a function of wavelength only — no look-direction term.
+- The one and only look-direction-dependent sign in this whole inversion is the
+  $\text{atan2}(da,\pm dgr)$ flip inside `computeHeading` (see above), which is already baked
+  into $H_A$/$H_D$ — and hence $\mathbf{A}$ — before the correction terms are ever applied to
+  $\phi_A$/$\phi_D$.
+
+In other words, look direction changes how a given LOS phase gets decomposed into
+$(v_x, v_y)$ (via $\mathbf{A}$), not the sign or magnitude of the vertical-motion correction
+applied to that LOS phase beforehand.
+
 #### Full Inversion (`computeVxy`)
 
 Each phase is scaled to velocity units (m/yr):
@@ -334,6 +455,56 @@ $$
 
 where $\mathbf{D} = (\mathbf{I} - \mathbf{AB})^{-1}\mathbf{A}$.
 
+#### Error Analysis: Crossing-Geometry Sensitivity
+
+How errors in $p_A$, $p_D$ propagate into $(v_x, v_y)$ depends strongly on the crossing
+geometry ($\alpha = H_A - H_D$) and on pixel position, and the dependence is qualitatively
+**different** for two distinct error sources. Define $H_{\text{mean}} = (H_A+H_D)/2$ and
+$\gamma = \phi - H_{\text{mean}}$ (pixel azimuth relative to the *mean* track heading, rather
+than to $H_A$ alone as $\beta$ is). Both results below use the flat-terrain approximation
+($\mathbf{B}=0$, i.e. $\mathbf{D}=\mathbf{A}$); a companion tool,
+`insarScripts/bin/plotVerticalSensitivity.py`, visualizes both for real crossing-pair
+geometries.
+
+**1. Common-mode errors** (the same physical quantity contributing to both $p_A$ and $p_D$ —
+e.g. uncompensated vertical motion, see "Vertical-Motion Correction Sign Convention" above,
+where $p_A,p_D$ pick up $\delta\cdot\cot\psi_A,\ \delta\cdot\cot\psi_D$ for a common vertical
+rate $\delta$). For equal contributions $\delta$ to both measurements, $\mathbf{A}\cdot
+(\delta,\delta)^T$ reduces (via sum-to-product identities) to a clean closed form:
+
+$$
+\Delta v_x = \frac{\delta\,\cos\gamma}{\cos(\alpha/2)}, \qquad
+\Delta v_y = \frac{\delta\,\sin\gamma}{\cos(\alpha/2)}
+\qquad\Rightarrow\qquad
+\frac{\Delta v_y}{\Delta v_x} = \tan\gamma
+$$
+
+The split between $v_x$ and $v_y$ depends **only on $\gamma$** (pixel position relative to
+mean heading) — $\alpha$ drops out of the ratio entirely. $\alpha$ instead sets the *overall
+amplitude* via $1/\cos(\alpha/2)$, which diverges as $\alpha\to180°$ (near-antiparallel
+headings — the typical same-platform ascending/descending case) and is modest
+($1/\cos(45°)=\sqrt2$) at $\alpha=90°$ (orthogonal crossing). So near-antiparallel geometry
+amplifies a common-mode bias the most, regardless of where the pixel sits; pixel position only
+determines *which* of $v_x$/$v_y$ absorbs more of it.
+
+**2. Independent (uncorrelated) errors** in $p_A$ and $p_D$ separately (e.g. random
+range/phase measurement noise, $\sigma_{p_A},\sigma_{p_D}$ uncorrelated) follow the
+$\sigma_{v_x},\sigma_{v_y}$ formula above — the **row norms** of $\mathbf{A}$, a different
+combination than case 1's row *sums*. At $\alpha=90°$ exactly, $\sin\alpha=1,\cos\alpha=0$ and
+$\mathbf{A}$ collapses to $\begin{pmatrix}\cos\beta&-\sin\beta\\\sin\beta&\cos\beta\end{pmatrix}$
+— an orthonormal **rotation matrix**, so $\sigma_{v_x}=\sigma_{v_y}$ (for
+$\sigma_{p_A}=\sigma_{p_D}$) at *every* pixel position: perfectly isotropic error propagation.
+Departing from $\alpha=90°$ introduces $\gamma$-dependent anisotropy — e.g. at $\alpha=170°$
+(near-antiparallel), the $\sigma_{v_x}/\sigma_{v_y}$ ratio ranges from $\approx0.12$ to
+$\approx8$ depending on $\gamma$, vs. exactly $1$ at every $\gamma$ for $\alpha=90°$.
+
+**Practical implication:** crossing geometry near $\alpha=90°$ is doubly favorable — it
+minimizes amplification of common-mode bias *and* gives uniform, isotropic sensitivity to
+independent measurement noise, regardless of pixel position. Same-platform
+ascending/descending pairs ($\alpha$ near $180°$) are the worst case on both counts, though
+whether $v_x$ or $v_y$ is hit harder by a given common-mode bias depends entirely on $\gamma$,
+not on $\alpha$ itself.
+
 #### Phase Error (`computePhiZM3d`)
 
 The per-pixel phase error combines baseline parameter uncertainty (propagated through the
@@ -359,7 +530,18 @@ Step 1 but without phase. For each pixel in the intersection region:
 1. Geocodes the pixel and projects to range/azimuth in both images.
 2. Bilinearly interpolates the range offset $\Delta r$ (m) from each offset field.
    Ionospheric range corrections are subtracted if provided.
-3. Applies tidal and submergence corrections on floating ice (scaled by $\cos\psi$).
+3. Applies tidal and submergence/emergence corrections (same $v_z^{\text{SMB}}\cos\psi$ form as
+   Step 1, but without the $4\pi/\lambda$ phase-scaling term, since these are range offsets in
+   metres):
+
+$$
+\Delta r_A \mathrel{+}= v_z^{\text{SMB}}\,\cos\psi_A\,\frac{N_{\text{days},A}}{365.25}, \qquad
+\Delta r_D \mathrel{+}= v_z^{\text{SMB}}\,\cos\psi_D\,\frac{N_{\text{days},D}}{365.25}
+$$
+
+   See "Vertical-Motion Correction Sign Convention" and "Look-Direction Sign Convention" under
+   Step 1 — both apply identically here ($v_z^{\text{SMB}} > 0$ = up; no left/right-looking
+   adjustment needed).
 4. Scales offsets to horizontal velocity units:
 
 $$
@@ -368,7 +550,10 @@ p_D = \frac{365.25\, \Delta r_D}{\Delta t_D \sin\psi_D}
 $$
 
 5. Constructs $\mathbf{A}$ and $\mathbf{B}$ matrices (same as Step 1) and calls
-   `computeVxy` to solve for $(v_x, v_y)$.
+   `computeVxy` to solve for $(v_x, v_y)$. The crossing-geometry error sensitivity
+   ("Error Analysis: Crossing-Geometry Sensitivity" under Step 1) applies identically here —
+   same $\mathbf{A}$, same $\gamma$/$\alpha$ dependence — $\sigma_R$ below plays the role of
+   $\sigma_{p_A}/\sigma_{p_D}$ there.
 6. Per-pixel errors combine the interpolated range offset sigma, DEM-induced range
    error, and baseline parameter uncertainty:
 

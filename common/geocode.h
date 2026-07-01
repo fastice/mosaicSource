@@ -162,6 +162,10 @@ typedef struct inputImageType
 	double tideCorrection; /* Tidal correction for velocity estimation vz m/yr */
 	int32_t tideDiffFlag;
 	xyDEM tideDiff;
+	double squintCoefficients[6]; /* squint(r,a) polynomial, see mosaicSource/CLAUDE.md "Squint" */
+	double squintRefRange;		   /* meters, polynomial reference range */
+	double squintRefAzimuthTime;  /* seconds of day, polynomial reference azimuth time */
+	int32_t hasSquintPolynomial;  /* TRUE if squintCoefficients/Ref* were parsed from the geodat */
 	int32_t removePad; /* strip off first and last removePad columns */
 	float *rAnt;	   /* range and pattern for antenna pattern correction */
 	float *pAnt;

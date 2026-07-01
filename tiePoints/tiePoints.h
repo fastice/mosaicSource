@@ -15,6 +15,8 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
 */
 void computeBaseline(tiePointsStructure *tiePoints, inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose);
 /*
-   Compute motion corrections
+   Compute motion corrections. Writes into phaseOut (parallel array to tiePoints->phase);
+   applySquint selects whether the squint(r,a) heading correction is applied.
 */
-void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints, int32_t verbose);
+void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints,
+						  int32_t applySquint, double *phaseOut, int32_t verbose);

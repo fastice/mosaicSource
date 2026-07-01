@@ -135,6 +135,15 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 		{
 			readOffsets(&(currentParams->offsets));
 			getAzParams(&(currentParams->offsets));
+			if (currentParams->offsets.sigmaAresidual < 0)
+			{
+				/* azparams found no solution (sigma<0 sentinel -- see fewPointsAz() in
+				   computeAzparams.c); mirrors the "no offsets given" skip above since
+				   offsets were attempted but unusable. */
+				fprintf(stderr, "Skipping %s: no azimuth baseline solution (sigmaAresidual<0)\n",
+					currentParams->offsets.azParamsFile);
+				continue;
+			}
 		}
 		/*
 		  Conversions initialization

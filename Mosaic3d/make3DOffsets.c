@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <omp.h>
+#include "sys/time.h"
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
 #include "mosaic3d.h"
@@ -24,6 +25,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	extern int32_t HemiSphere;
 	extern double Rotation;
 	extern int32_t sepAscDesc;
+	extern int32_t indentRegionOutput;
 	inputImageStructure *aOffImage, *dOffImage; /* Nominal asc/desc image */
 	vhParams *dParams;							/* Velocity params */
 	conversionDataStructure *aCp, *dCp;			/* asc/desc coordinate conversion info */
@@ -61,8 +63,11 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	int32_t iMin, iMax, jMin, jMax; /* range in pixels over which to compute solutions */
 	int32_t aa, dd, nTotal;			/* Counters for asc/desc images and total numer of images*/
 	int32_t validData, Aset;		/* Flags to indicate a valide solution, and A updates */
+	int32_t nCrossing;				/* Count of crossing orbit pairs found for aOffImage */
 	int32_t i, j;
 	unsigned char sMask;
+	struct timeval funcStart, funcEnd;
+	gettimeofday(&funcStart, NULL);
 	shelfMask = outputImage->shelfMask;
 	vCorrect = outputImage->verticalCorrection;
 	fprintf(stderr, "fl = %f\n", (double)fl);
@@ -114,12 +119,9 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		/* skip if crossFlag False or weight too small (<5%) */
 		if (aOffImage->crossFlag == FALSE || aOffImage->weight < 0.05 || aParams->offsets.rFile == NULL)
 			continue;
-		/*
-			Check if in output area
-		*/
-		getRegion(aOffImage, &iMin, &iMax, &jMin, &jMax, outputImage);
-		//error("STOP top of outer loop %i %i %i %i\n",iMin, iMax,jMin, jMax);
-		if (iMin > iMax || jMin > jMax)
+		/* Skip if no overlap or file missing */
+		indentRegionOutput = FALSE;
+		if (!getRegion(aOffImage, &iMin, &iMax, &jMin, &jMax, outputImage))
 			continue;
 		fprintf(stderr,"\033[1;34maOffImage->rangeFile %s\033[0m\n", aParams->offsets.rFile);
 		/*
@@ -131,9 +133,19 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		*/
 		aCp = setupGeoConversions(aOffImage, &dum, &aRSLPixSize, &aRe, &aReH, &aThetaC, &ddum1, &ddum2);
 		// This is going to read the full data take for the outer loop image.
-		fprintf(stderr, "iMin, iMax, jMin, jMax %i %i %i %i\n", iMin, iMax, jMin, jMax);
 		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, aOffImage, outputImage, &azimuthMin, &azimuthMax);
 		getRParams(&(aParams->offsets));
+		if (aParams->offsets.sigmaRresidual < 0)
+		{
+			/* rparams found no solution (sigma<0 sentinel) -- set rFile = NULL so this
+			   and every future iteration skip via the existing rFile==NULL check above
+			   (line ~115), the same convention already used for images with no range
+			   offset processing requested at all. */
+			fprintf(stderr, "make3DOffsets: %s has no baseline solution (sigma<0) -- skipping\n",
+			        aParams->offsets.rFile);
+			aParams->offsets.rFile = NULL;
+			continue;
+		}
 		readRangeOrRangeOffsets(&(aParams->offsets), ASCENDING, azimuthMin, azimuthMax);
 		
 		/*
@@ -142,13 +154,14 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		dd = 0;
 		/* All images are in a list so once an image is processed, start with rest of images in the loop */
 		dParams = aParams->next; /* Start at next element below outer loop */
+		indentRegionOutput = TRUE; /* tab-indent getRegion/computeSceneAlpha/etc. output for the
+		                              rest of this outer iteration, so it visually groups with the
+		                              crossing-pair inner loop's own tab-indented prints below */
+		nCrossing = 0;
 		for (dOffImage = aOffImage->next; dOffImage != NULL; dOffImage = dOffImage->next, dParams = dParams->next)
 		{
 			dd++;
 			tOffCenterD = dOffImage->julDay + dParams->nDays * 0.5;
-			fprintf(stderr,"\nSTOP top of inner loop %i %i %i\n", dOffImage->passType, aOffImage->passType, sepAscDesc);
-	fprintf(stderr, "dOffImage->crossFlag: %i %i\n",
-		 (dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE), dOffImage->crossFlag == FALSE);
 			if ((dOffImage->passType == aOffImage->passType && sepAscDesc == TRUE) || dOffImage->crossFlag == FALSE)
 				continue;
 			//error("Could not process image %i",fabs(aOffImage->julDay - dOffImage->julDay) > timeThresh);
@@ -158,14 +171,10 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			if (fabs(aOffImage->julDay - dOffImage->julDay) > timeThresh || dOffImage->weight < 0.05 || dParams->offsets.rFile == NULL)
 				continue;
 			//fprintf(stderr, "time JD %f %f\n", aOffImage->julDay, dOffImage->julDay);
-			/*
-			   Added this 7/31/2015 to skip over images with no overlap
-			*/
-			getRegion(dOffImage, &iMin, &iMax, &jMin, &jMax, outputImage);
-			fprintf(stderr, "iMin, iMax, jMin, jMax %i %i %i %i\n", iMin, iMax, jMin, jMax);
-			
-			if (iMin > iMax || jMin > jMax)
+			/* Skip if no overlap or file missing */
+			if (!getRegion(dOffImage, &iMin, &iMax, &jMin, &jMax, outputImage))
 				continue;
+			fprintf(stderr,"\t\033[38;5;208mdOffImage->rangeFile %s\033[0m\n", dParams->offsets.rFile);
 			/*
 			  Get region of  possible intersection - pass if not interect
 			*/
@@ -184,20 +193,34 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			computeSceneAlpha(outputImage, aOffImage, dOffImage, aCp, dCp, dem, &iMin, &iMax, &jMin, &jMax);
 			if (iMax == 0 && jMax == 0)
 				continue;
+			/* 2026-06-16: also skip when computeSceneAlpha returns inverted bounds (not caught by 0,0 sentinel) */
+			if (iMin > iMax || jMin > jMax)
+				continue;
 			/*
 			  Read in descending image if needed (i.e., nozero intersect).
 			*/
 			getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, dOffImage, outputImage, &azimuthMin, &azimuthMax);
+			/* 2026-06-16: skip read when getAzimuthBoundsForXYBox finds no intersection (azimuthMin=azimuthMax=0) */
+			if (azimuthMin == 0.0f && azimuthMax == 0.0f)
+				continue;
 			getRParams(&(dParams->offsets));
+			if (dParams->offsets.sigmaRresidual < 0)
+			{
+				/* see matching comment at the ASCENDING getRParams() call above */
+				fprintf(stderr, "\tmake3DOffsets: %s has no baseline solution (sigma<0) -- skipping\n",
+				        dParams->offsets.rFile);
+				dParams->offsets.rFile = NULL;
+				continue;
+			}
 			readRangeOrRangeOffsets(&(dParams->offsets), DESCENDING, azimuthMin, azimuthMax);
-			fprintf(stderr, "azimuth bounds %f %f\n", (double)azimuthMin, (double)azimuthMax);
-		
+
 			//error("STOP");
 			
 			/*
 			  Loop over output grid and compute velocities
 			*/
-			fprintf(stderr, "---- Asc %i / %i Des %i iMin: %i iMax: %i jMin: %i jMax: %i\n", aa, nTotal, dd, iMin, iMax, jMin, jMax);
+			nCrossing++;
+			fprintf(stderr, "\t---- \033[1mAsc %i / %i\033[0m \033[1mDes %i\033[0m\n", aa, nTotal, dd);
 			/* Prime svInitBnBp in serial before threads race on bnS/bpS malloc */
 			if (aParams->offsets.deltaB != DELTABNONE) {
 				double bnS, bpS;
@@ -222,10 +245,13 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 				inputImageStructure *myAImg = &localAImgs[myThread];
 				inputImageStructure *myDImg = &localDImgs[myThread];
 				double A[2][2], B[2][2];
-				int32_t threadAset = FALSE;
+				int32_t rowAset;
 #pragma omp for schedule(dynamic, 8)
 				for (i = iMin; i < iMax; i++)
 				{
+					rowAset = FALSE; /* force a fresh A on the first valid-data pixel of every
+					                    row -- j==jMin alone isn't enough since that column's
+					                    data may itself be invalid, leaving A never refreshed */
 					y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
 					for (j = jMin; j < jMax; j++)
 					{
@@ -322,11 +348,20 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 								aDelta -= -dzdtSubmergence * cos(aPsi) * (double)aParams->nDays / 365.25;
 								dDelta -= -dzdtSubmergence * cos(dPsi) * (double)dParams->nDays / 365.25;
 							}
-							/*  Update A every 3rd pixel; threadAset forces computation on each thread's first valid pixel */
-							if (((i % 3) == 0 || (j % 3) == 0) || threadAset == FALSE)
+							/*  Update A every 3rd pixel; rowAset guarantees a fresh A on the first
+							    valid-data pixel of every row (regardless of which chunk a thread was on
+							    previously, avoiding stale/uninitialized carry-over) -- using j==jMin alone
+							    isn't sufficient since that column's own data may be invalid, in which case
+							    A would never get refreshed for the row. */
+							if ((j % 3) == 0 || rowAset == FALSE)
 							{
-								computeA(lat, lon, x, y, myAImg, myDImg, A);
-								threadAset = TRUE;
+								/* Offsets are self-consistent regardless of squint by construction --
+								   the zero-Doppler condition forces true LOS perpendicular to true
+								   velocity at the assigned time, independent of squint (see
+								   mosaicSource/CLAUDE.md "Squint"). So this path never applies the
+								   correction, flag or no flag -- not an oversight. */
+								computeA(lat, lon, x, y, myAImg, myDImg, A, FALSE);
+								rowAset = TRUE;
 							}
 							/*
 							  Only pursue solution if sufficient difference in angles for 3d solution
@@ -374,7 +409,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 						}
 					} /* j loop */
 					if ((i % 100) == 0)
-						fprintf(stderr, "--+ %i\n", i);
+						fprintf(stderr, "\t--+ %i\n", i);
 				} /* i loop */
 			} /* End omp parallel */
 			/*
@@ -388,7 +423,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			if (outputImage->timeOverlapFlag == TRUE)
 			{
 				combWeight = sqrt(aOffImage->weight * dOffImage->weight);
-				fprintf(stderr, "\033[1mComb weight = %lf |Ta-Td| %lf\033[0m\n", combWeight, fabs(aOffImage->julDay - dOffImage->julDay));
+				fprintf(stderr, "\t\033[1mComb weight = %lf |Ta-Td| %lf\033[0m\n", combWeight, fabs(aOffImage->julDay - dOffImage->julDay));
 			}
 			else
 				combWeight = 1.0;
@@ -396,11 +431,22 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			redoNormalization(combWeight, outputImage, iMin, iMax, jMin, jMax, vXimage, vYimage, vZimage, errorX, errorY,
 							  scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, FALSE);
 		} /* End desc loop */
+		if (nCrossing == 0)
+			fprintf(stderr, "No crossing orbit within timeThresh days\n\n");
+		else
+			fprintf(stderr, "Found %i crossing orbit(s)\n\n", nCrossing);
 	}	  /* End asc loop */
 	free(localAImgs);
 	free(localDImgs);
 	/**************************END OF MAIN LOOP ******************************/
 	fprintf(stderr, "Out of main loop\n");
+	{
+		extern double totalOffsetsIOTime;
+		gettimeofday(&funcEnd, NULL);
+		fprintf(stderr, "Total offsets I/O time (whole run): %.3f s\n", totalOffsetsIOTime);
+		fprintf(stderr, "Total offsets processing time (whole run): %.3f s\n",
+		        (funcEnd.tv_sec - funcStart.tv_sec) + (funcEnd.tv_usec - funcStart.tv_usec) * 1e-6);
+	}
 	/*
 	  Adjust scale
 	*/

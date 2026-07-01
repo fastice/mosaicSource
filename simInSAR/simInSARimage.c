@@ -134,6 +134,7 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 	double x1, y1;
 	double rOff, aOff;
 	double vx, vy, vr, psi, dzdx, dzdy, dzdr, dzdtSubmergence;
+	double speed, Xv;
 	double hAngle, xyAngle;
 	int64_t nIterTotal, nIter;
 	int32_t recycle;
@@ -390,6 +391,20 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 							//if (vx > -1.99e9 && vy > -1.99e9)
 							//	fprintf(stderr, "DIAG: hAngle=%.4f xyAngle=%.4f rotAngle=%.4f psi=%.4f(deg=%.1f) vr_horiz=%.4f dzdr=%.6f vr_slant=%.4f vx=%.2f vy=%.2f\n",
 							//		hAngle, xyAngle, hAngle-xyAngle, psi, psi*180./PI, vr_horiz, dzdr, vr, vx, vy);
+							/*
+							  Speed-adaptive smoothing tolerance (-minTol/-percentSpeed/-maxTol):
+							  reuses sin(psi)/deltaToPhase/dT, the same factors already used above
+							  to scale the real velocity into a phase contribution, applied instead
+							  to the clamped tolerance value. Approximate (uses the dominant sin(psi)
+							  projection, ignores the smaller slope term) by design.
+							*/
+							if (scene->smoothRadiusFlag == TRUE && vx > -1.99e9 && vy > -1.99e9)
+							{
+								speed = hypot(vx, vy);
+								Xv = fmin(fmax(scene->minTol, scene->percentSpeed / 100. * speed), scene->maxTol);
+								scene->toleranceImage[iIndex][jLoop] =
+									(float)(Xv * (scene->dT / 365.) * deltaToPhase * sin(psi));
+							}
 						}
 						/*
 						  Convert range diff to phase diff.

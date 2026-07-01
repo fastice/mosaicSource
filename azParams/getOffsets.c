@@ -20,7 +20,9 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
    /*
        Interpolate offsets
    */
-   fprintf(stdout, ";;\n;;Tiepoints row column elevation\n;;\n");
+   /* 2026-06-17: gate header/footer on !quiet so yaml mode (which runs with -quiet) gets clean stdout */
+   if (tiePoints->quiet == FALSE)
+      fprintf(stdout, ";;\n;;Tiepoints row column elevation\n;;\n");
    for (i = 0; i < tiePoints->npts; i++)
    {
       range = (tiePoints->r[i] * inputImage.nRangeLooks - offsets->rO) / offsets->deltaR;
@@ -39,7 +41,8 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
                  tiePoints->z[i], (float)tiePoints->phase[i]);
    }
    fprintf(stderr, "count %i\n", count);
-   fprintf(stdout, ";&\n");
+   if (tiePoints->quiet == FALSE)
+      fprintf(stdout, ";&\n");
    /*    inputImage->nRangeLooks=tiePoints->deltaR;*/
    return;
 }

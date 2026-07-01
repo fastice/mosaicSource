@@ -221,10 +221,26 @@ double computeSig2AzParam(double sinTheta, double cosTheta, double azimuth, doub
 }
 
 /*
+  Evaluate the squint(r,a) polynomial (degrees) for one image at its own
+  range/azimuth pixel coordinates -- see mosaicSource/CLAUDE.md "Squint".
+*/
+double evaluateSquint(inputImageStructure *image, double rangeIndex, double azimuthIndex)
+{
+	double physRange = image->par.rn + image->rangePixelSize * rangeIndex;
+	double physAzTime = (image->par.hr * 3600.0 + image->par.min * 60.0 + image->par.sec)
+					   + azimuthIndex / image->par.prf;
+	double rPrime = physRange - image->squintRefRange;
+	double aPrime = physAzTime - image->squintRefAzimuthTime;
+	double *c = image->squintCoefficients;
+	return c[0] + c[1] * rPrime + c[2] * aPrime + c[3] * aPrime * aPrime
+		 + c[4] * rPrime * aPrime + c[5] * rPrime * rPrime;
+}
+
+/*
   Compute velocity determination matrix
 */
 void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage,
-			  inputImageStructure *dPhaseImage, double A[2][2])
+			  inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint)
 {
 	extern int32_t HemiSphere;
 	double alpha, beta;
@@ -236,9 +252,32 @@ void computeA(double lat, double lon, double x, double y, inputImageStructure *a
 	/* Get geometry params */
 	aCp = &(aPhaseImage->cpAll);
 	dCp = &(dPhaseImage->cpAll);
-	/* Heading angles */
-	aHAngle = computeHeading(lat, lon, 0.0, aPhaseImage, aCp);
-	dHAngle = computeHeading(lat, lon, 0.0, dPhaseImage, dCp);
+	/* Heading angles -- computeHeading() calls llToImageNew() at lat+-dlat, which
+	   overwrites lastTime (the Newton's-method warm-start cache for the main per-pixel
+	   llToImageNew() calls). Save/restore so computeA() doesn't pollute that cache for
+	   the next pixel's main calls -- this is per-thread-private state (aPhaseImage/
+	   dPhaseImage are myAImg/myDImg, the per-thread inputImageStructure copies), so this
+	   is thread-safe. The optional squint correction below makes two more such calls
+	   (to get each image's own range/azimuth pixel coords), covered by the same
+	   save/restore. */
+	{
+		double savedALastTime = aPhaseImage->lastTime;
+		double savedDLastTime = dPhaseImage->lastTime;
+		aHAngle = computeHeading(lat, lon, 0.0, aPhaseImage, aCp);
+		dHAngle = computeHeading(lat, lon, 0.0, dPhaseImage, dCp);
+		if (applySquint && (aPhaseImage->hasSquintPolynomial || dPhaseImage->hasSquintPolynomial))
+		{
+			double aRange, aAzimuth, dRange, dAzimuth;
+			llToImageNew(lat, lon, 0.0, &aRange, &aAzimuth, aPhaseImage);
+			llToImageNew(lat, lon, 0.0, &dRange, &dAzimuth, dPhaseImage);
+			if (aPhaseImage->hasSquintPolynomial)
+				aHAngle += evaluateSquint(aPhaseImage, aRange, aAzimuth) * DTOR;
+			if (dPhaseImage->hasSquintPolynomial)
+				dHAngle += evaluateSquint(dPhaseImage, dRange, dAzimuth) * DTOR;
+		}
+		aPhaseImage->lastTime = savedALastTime;
+		dPhaseImage->lastTime = savedDLastTime;
+	}
 	/* other angles */
 	alpha = aHAngle - dHAngle;
 	xyAngle = atan2(-y, -x);
@@ -469,7 +508,17 @@ static void xyMinMax(double *xR, double *yR, double *minX, double *minY, double 
 }
 
 /*
-  Compute bounding box for area of intersection of and ascending and descending pass
+  Compute bounding box for area of intersection of and ascending and descending pass.
+
+  2026-06-24: was previously intersecting the two swaths' axis-aligned bounding
+  boxes (AABB-of-AABB). For two long, narrow, near-perpendicular swaths this badly
+  overestimates the true overlap -- the real intersection is a small diamond, but
+  an AABB-of-AABB can come out close to the size of either swath's own bounding
+  box. Fixed to clip the descending swath's quadrilateral against each of the
+  ascending swath's 4 edges in turn (Sutherland-Hodgman, same technique already
+  used in getRegion.c's clipByHalfPlane()), then take the bounding box of the
+  resulting true-intersection polygon. The cheap AABB check is kept as a fast
+  reject before doing the more expensive polygon clip.
  */
 void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseImage,
 				  int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax, outputImageStructure *outputImage)
@@ -479,69 +528,93 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 	double minXa, maxXa, minYa, maxYa;
 	double minXd, maxXd, minYd, maxYd;
 	double pad;
-	double xaP[6], yaP[6];
-	double xdP[6], ydP[6];
-	int32_t inA, inD, intersect;
-	int32_t i, j;
+	double xaP[4], yaP[4];
+	double xdP[4], ydP[4];
+	double xA[8], yA[8], xB[8], yB[8];
+	double signedArea, normSign;
+	int32_t intersect;
+	int32_t i, n;
 	*iMin = 0;
 	*iMax = 0;
 	*jMin = 0;
 	*jMax = 0;
 	/*
-	 Compute xy coords of rectangles, with CCW order. Tack center point on the end.
+	 Compute xy coords (km) of the two swath quadrilaterals, ll->lr->ur->ul order.
 	*/
-
-	lltoxy1(aPhaseImage->latControlPoints[1], aPhaseImage->lonControlPoints[1], xaP, yaP, Rotation, outputImage->slat);  // ll
-	lltoxy1(aPhaseImage->latControlPoints[2], aPhaseImage->lonControlPoints[2], xaP + 1, yaP + 1, Rotation, outputImage->slat);  //lr
-	lltoxy1(aPhaseImage->latControlPoints[4], aPhaseImage->lonControlPoints[4], xaP + 2, yaP + 2, Rotation, outputImage->slat); // ur
-	lltoxy1(aPhaseImage->latControlPoints[3], aPhaseImage->lonControlPoints[3], xaP + 3, yaP + 3, Rotation, outputImage->slat); // ul
-	lltoxy1(aPhaseImage->latControlPoints[0], aPhaseImage->lonControlPoints[0], xaP + 5, yaP + 5, Rotation, outputImage->slat);
-	xaP[4] = xaP[0];
-	yaP[4] = yaP[0]; /* Complete polygon */
-	lltoxy1(dPhaseImage->latControlPoints[1], dPhaseImage->lonControlPoints[1], xdP, ydP, Rotation, outputImage->slat);
-	lltoxy1(dPhaseImage->latControlPoints[2], dPhaseImage->lonControlPoints[2], xdP + 1, ydP + 1, Rotation, outputImage->slat);
-	lltoxy1(dPhaseImage->latControlPoints[4], dPhaseImage->lonControlPoints[4], xdP + 2, ydP + 2, Rotation, outputImage->slat);
-	lltoxy1(dPhaseImage->latControlPoints[3], dPhaseImage->lonControlPoints[3], xdP + 3, ydP + 3, Rotation, outputImage->slat);
-	lltoxy1(dPhaseImage->latControlPoints[0], dPhaseImage->lonControlPoints[0], xdP + 5, ydP + 5, Rotation, outputImage->slat);
-	xdP[4] = xdP[0];
-	ydP[4] = ydP[0];
-	intersect = FALSE;
-	/* If any point from one rect falls in the other they intersect */
-	minX = 1e20;
-	minY = 1e20;
-	maxX = -1e20;
-	maxY = -1e20;
-	/*
-	for (i = 0; i < 6; i++)
-	{ // This checks corners and centers 
-		inA = inRect(xdP[i], ydP[i], xaP, yaP);
-		inD = inRect(xaP[i], yaP[i], xdP, ydP);
-		fprintf(stderr, "%i %i %f %f %f %f %f\n", inA, inD, xdP[i],ydP[i], xaP[i],yaP[i], dPhaseImage->latControlPoints[i]);
-		if (inA == TRUE || inD == TRUE)
+	{
+		int cpIdx[4] = {1, 2, 4, 3};
+		for (i = 0; i < 4; i++)
 		{
-			intersect = TRUE;
+			lltoxy1(aPhaseImage->latControlPoints[cpIdx[i]], aPhaseImage->lonControlPoints[cpIdx[i]],
+					&xaP[i], &yaP[i], Rotation, outputImage->slat);
+			lltoxy1(dPhaseImage->latControlPoints[cpIdx[i]], dPhaseImage->lonControlPoints[cpIdx[i]],
+					&xdP[i], &ydP[i], Rotation, outputImage->slat);
 		}
-	}*/
-	/* Compute xy bounds */
+	}
+	/* Fast reject: if the bounding boxes themselves don't overlap, the true
+	   polygons certainly don't either -- skip the polygon clip entirely. */
 	xyMinMax(xdP, ydP, &minXd, &minYd, &maxXd, &maxYd);
 	xyMinMax(xaP, yaP, &minXa, &minYa, &maxXa, &maxYa);
-	// Check if intersects
-    intersect = !(minXa > maxXd || minXd > maxXa || minYa > maxYd || minYd > maxYa);
-	// Return if not intersection
+	intersect = !(minXa > maxXd || minXd > maxXa || minYa > maxYd || minYd > maxYa);
 	if (intersect == FALSE)
-	{
-		*iMin = 0;
-		*iMax = 0;
-		*jMin = 0;
-		*jMax = 0;
 		return;
+	/* True polygon-polygon intersection: clip dPhaseImage's quad against each of
+	   aPhaseImage's 4 edges (treated as half-planes). Inward-normal direction is
+	   derived from aPhaseImage's own signed area so this works regardless of
+	   whether the control points happen to wind CW or CCW in this coordinate
+	   convention. */
+	signedArea = 0.0;
+	for (i = 0; i < 4; i++)
+	{
+		int j = (i + 1) % 4;
+		signedArea += xaP[i] * yaP[j] - xaP[j] * yaP[i];
 	}
-	// Compute bounding box and indices
-	minX = max(minXa, minXd); /* Take inner bounds to restrict to just overlap */
-	maxX = min(maxXa, maxXd);
-	minY = max(minYa, minYd);
-	maxY = min(maxYa, maxYd);
-	// fprintf(stderr, "%f %f %f %f  %f %f\n", minX, maxX, minY,maxY, outputImage->originX, outputImage->originY);
+	normSign = (signedArea >= 0.0) ? -1.0 : 1.0;
+	for (i = 0; i < 4; i++) { xA[i] = xdP[i]; yA[i] = ydP[i]; }
+	n = 4;
+	{
+		int j = 1;
+		double nx = normSign * (yaP[j] - yaP[0]);
+		double ny = -normSign * (xaP[j] - xaP[0]);
+		double d = nx * xaP[0] + ny * yaP[0];
+		n = clipByHalfPlane(xA, yA, n, xB, yB, nx, ny, d);
+	}
+	if (n > 0)
+	{
+		int j = 2;
+		double nx = normSign * (yaP[j] - yaP[1]);
+		double ny = -normSign * (xaP[j] - xaP[1]);
+		double d = nx * xaP[1] + ny * yaP[1];
+		n = clipByHalfPlane(xB, yB, n, xA, yA, nx, ny, d);
+	}
+	if (n > 0)
+	{
+		int j = 3;
+		double nx = normSign * (yaP[j] - yaP[2]);
+		double ny = -normSign * (xaP[j] - xaP[2]);
+		double d = nx * xaP[2] + ny * yaP[2];
+		n = clipByHalfPlane(xA, yA, n, xB, yB, nx, ny, d);
+	}
+	if (n > 0)
+	{
+		int j = 0;
+		double nx = normSign * (yaP[j] - yaP[3]);
+		double ny = -normSign * (xaP[j] - xaP[3]);
+		double d = nx * xaP[3] + ny * yaP[3];
+		n = clipByHalfPlane(xB, yB, n, xA, yA, nx, ny, d);
+	}
+	/* Result of the 4th (even-indexed-from-0) clip lands in xA/yA */
+	if (n <= 0)
+		return; /* AABBs overlapped but the true swaths don't -- no intersection */
+	minX = xA[0]; maxX = xA[0];
+	minY = yA[0]; maxY = yA[0];
+	for (i = 1; i < n; i++)
+	{
+		if (xA[i] < minX) minX = xA[i];
+		if (xA[i] > maxX) maxX = xA[i];
+		if (yA[i] < minY) minY = yA[i];
+		if (yA[i] > maxY) maxY = yA[i];
+	}
 	/* Compute image bounds */
 	pad = 15000.;
 	*iMin = (int32_t)((minY * KMTOM - outputImage->originY - pad) / outputImage->deltaY);
@@ -712,6 +785,7 @@ void computeSceneAlpha(outputImageStructure *outputImage, inputImageStructure *a
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
+	extern int32_t indentRegionOutput;
 	double aHAngle, dHAngle, x, y;
 	double aTmp, dTmp, alpha;
 	double lat, lon;
@@ -743,11 +817,11 @@ void computeSceneAlpha(outputImageStructure *outputImage, inputImageStructure *a
 		if (aHAngle < 999 && dHAngle < 999)
 			alpha = aHAngle - dHAngle;
 		/* Changed from 0.45 to 0.6 06/07/07 */
-		if (fabs(alpha) < 0.7 || fabs(alpha) > (2 * PI - 0.7))
+		if (fabs(alpha) < MINCROSSINGHEADINGSEP || fabs(alpha) > (2 * PI - MINCROSSINGHEADINGSEP))
 		{
 			*iMax = 0;
 			*jMax = 0;
-			fprintf(stderr, "---No solution for headings %f %f %f\n", aHAngle * RTOD, dHAngle * RTOD, alpha * RTOD);
+			fprintf(stderr, "%s---No solution for headings %f %f %f\n", indentRegionOutput ? "\t" : "", aHAngle * RTOD, dHAngle * RTOD, alpha * RTOD);
 		} /* else fprintf(stderr,"*** Solution for headings %f %f %f \n",aHAngle*RTOD,dHAngle*RTOD,alpha*RTOD); */
 	}
 }

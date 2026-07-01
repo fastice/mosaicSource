@@ -14,7 +14,7 @@
   which means there is alot of unused junk to initialize everything correctly.
 */
 
-static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints);
+static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints, int32_t *yamlOutput);
 static void usage();
 
 
@@ -50,6 +50,7 @@ int main(int argc, char *argv[])
 	int32_t bufferSize;
 	int32_t imageCoords;
 	int32_t constOnlyFlag, linFlag;
+	int32_t yamlOutput;
 	int32_t i, j; /* LCV */
 	Abuf1 = NULL;
 	Abuf2 = NULL;
@@ -64,7 +65,7 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
-	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints);
+	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &yamlOutput);
 	/*
 	  Parse input file
 	*/
@@ -100,7 +101,7 @@ int main(int argc, char *argv[])
 	/*
 	  Compute image coords and get z from dem if necessary
 	*/
-	computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, NULL, FALSE);
+	computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, NULL, tiePoints.quiet);
 	/*
 	  Extract phases from phase file.
 	*/
@@ -137,11 +138,11 @@ int main(int argc, char *argv[])
 	/*
 	  Estimate baseline solution and output to stdout
 	*/
-	computeAzParams(&tiePoints, &inputImage, baselineFile, &offsets);
+	computeAzParams(&tiePoints, &inputImage, baselineFile, &offsets, yamlOutput);
 	/*return; */
 }
 
-static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints)
+static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints, int32_t *yamlOutput)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -149,16 +150,22 @@ static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointF
 	int32_t linFlag = FALSE, constOnlyFlag = FALSE;
 	int32_t deltaB = DELTABNONE;
 	int32_t i, n;
-	if (argc < 5 || argc > 18)
+	if (argc < 5 || argc > 19)
 		usage(); /* Check number of args */
 	n = argc - 5;
 	tiePoints->quiet = FALSE;
+	*yamlOutput = FALSE;
 	for (i = 1; i <= n; i++)
 	{
 		argString = strchr(argv[i], '-');
 		if (strstr(argString, "constOnly") != NULL)
 		{
 			constOnlyFlag = TRUE;
+		}
+		else if (strstr(argString, "yaml") != NULL)
+		{
+			/* 2026-06-17: yaml output flag */
+			*yamlOutput = TRUE;
 		}
 		else if (strstr(argString, "linear") != NULL)
 		{
@@ -196,16 +203,17 @@ static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointF
 static void usage()
 {
 	error(
-		"\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+		"\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
 		"Compute parameters to calibrate azimuth offsets",
 		"Usage:",
-		" azparams  -constOnly -linear -useSV -quiet -nDays nDays geodatFile tiepointsFile offsetFile "
+		" azparams  -constOnly -linear -useSV -quiet -yaml -nDays nDays geodatFile tiepointsFile offsetFile "
 		"baselineFile",
 		"where",
 		"  constOnly    = do not estimate baseline dependent terms, can be combined with linear fit",
 		"  linear       = add linear along track fit to either constOnly or the baseline parameter solution",
 		"  useSV     = as any of the four other options except it adds a correction after an SV determined offset removed",
 		"  quiet          = don't echo tiepoints to solution",
+		"  yaml           = write YAML output instead of legacy semicolon format",
 		"  nDays        = temporals basline in days (default=24)",
 		"  geoDatFile   = geo param file",
 		"  tiepointFile = Tiepoint location file in (lat,lon,z,vx,vy,vz)",

@@ -18,6 +18,7 @@
 
 #define MINELEVATION -1000
 #define MINVELOCITY 5
+#define MINCROSSINGHEADINGSEP (30.0 * DTOR) /* min heading separation (rad) for a usable crossing-orbit pair, see computeSceneAlpha */
 #define NUSESTATE 5
 #define GROUNDED 0
 #define SHELF 1
@@ -226,6 +227,8 @@ typedef struct tiePointsType
 	double *r;
 	double *a;
 	double *phase;
+	double *phaseSquint;	   /* squint-corrected phase, parallel to phase; NULL unless hasSquintSolution */
+	int32_t hasSquintSolution; /* TRUE if phaseSquint was computed (squint polynomial available + -motion/-vr) */
 	double *delta;
 	double *vx;
 	double *vy;
@@ -286,7 +289,7 @@ double computeHeading(double lat, double lon, double z, inputImageStructure *inp
 /* Initialize a floating point matrix */
 void initFloatMatrix(float **x, int32_t nr, int32_t nc, float initValue);
 int32_t getDataStringSpecial(FILE *fp, int32_t lineCount, char *line, int32_t *eod, char special, int32_t *specialFound);
-void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase);
+void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase, int32_t useSquint);
 void rotateFlowDirectionToXY(double drn, double dan, double *dxn, double *dyn, double xyAngle, double hAngle);
 void rotateFlowDirectionToRA(double dxn, double dyn, double *dan, double *drn, double xyAngle, double hAngle);
 double limitSlope(double slope, double maxSlope);
@@ -297,7 +300,8 @@ void computeXYvh(inputImageStructure *phaseImage, inputImageStructure *slantRang
 void computeXYdata(double lat, double lon, double *dxn, double *dyn, double *xyAngle, xyDEM xydem, double *slopeMag);
 void errorsToXY(double er, double ea, double *ex, double *ey, double xyAngle, double hAngle);
 double interpXYDEM(double x, double y, xyDEM xydem);
-void getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax, outputImageStructure *outputImage);
+int32_t getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax, outputImageStructure *outputImage);
+int clipByHalfPlane(double *xIn, double *yIn, int nIn, double *xOut, double *yOut, double nx, double ny, double d);
 unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y);
 void computePhiZ(double *phiZ, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double thetaD, double Range, double ReH,
 				 double ReHfixed, double Re, double thetaC, double *phaseError);
@@ -365,7 +369,8 @@ void interpTideError(double *phaseError, inputImageStructure *phaseImage, vhPara
 
 double sphericalElev(double z, double lat, double Re);
 double sphericalToWGSElev(double z, double lat, double Re);
-void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage, inputImageStructure *dPhaseImage, double A[2][2]);
+void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage, inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint);
+double evaluateSquint(inputImageStructure *image, double rangeIndex, double azimuthIndex);
 void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi, xyDEM *xydem);
 void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], double B[2][2], double *vx, double *vy, double *scaleX, double *scaleY);
 void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t yMax);

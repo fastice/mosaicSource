@@ -73,6 +73,15 @@ typedef struct sceneStructureType
 	int32_t tiffFlag;     /* -tiff: write lat/lon as GeoTIFF instead of binary */
 	char  *verticalCorrectionFile; /* -verticalCorrection vcFile; NULL = no correction */
 	xyDEM *verticalCorrection;     /* loaded from verticalCorrectionFile, NULL if not used */
+	/* Variable smoothing-radius map (-minTol/-percentSpeed/-maxTol) */
+	int32_t smoothRadiusFlag;      /* TRUE if -minTol/-percentSpeed/-maxTol given */
+	double minTol;                 /* m/yr floor for adaptive tolerance */
+	double percentSpeed;           /* percent (e.g. 1.0 = 1%) of local speed for adaptive tolerance */
+	double maxTol;                 /* m/yr ceiling for adaptive tolerance */
+	int32_t maxSmoothRadius;       /* pixels; sweep cap, clamped to <= 255 */
+	int32_t smoothNIter;           /* repeated box-filter passes per sweep step (Gaussian-ish) */
+	float **toleranceImage;        /* per-pixel native-units (radian) tolerance, same size as image */
+	unsigned char **radiusImage;   /* per-pixel azimuth-pixel smoothing radius, output of computeSmoothRadiusMap */
 } sceneStructure;
 
 typedef struct displacementStructureType
@@ -130,3 +139,9 @@ void getSlantRangeDEM(char *demFile, demStructure *dem, sceneStructure scene);
   Compute speed-threshold mask from velocity map and write as GeoTIFF.
 */
 void velThreshMask(xyVEL *xyVel, float velThresh, char *outputFile);
+/*
+  Compute scene->radiusImage from scene->image and scene->toleranceImage (see
+  computeSmoothRadius.c for the sweep algorithm). Only meaningful when
+  scene->smoothRadiusFlag is set.
+*/
+void computeSmoothRadiusMap(sceneStructure *scene);

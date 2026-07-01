@@ -1,5 +1,7 @@
 #include "common.h"
 
+extern int32_t indentRegionOutput;
+
 /*
   Update azimuthMin/azimuthMax from a single output-grid pixel (i, j).
   Does nothing if the pixel does not project into the SAR image.
@@ -45,8 +47,10 @@ void getAzimuthBoundsForXYBox(int32_t imin, int32_t imax, int32_t jmin, int32_t 
 
     /* Step size for interior grid — at least 1 to avoid infinite loops */
     int delta = max(1, (int)(12e3 / outputImage->deltaX));
-    fprintf(stderr, "getAzimuthBoundsForXYBox: imin=%i imax=%i jmin=%i jmax=%i delta=%i\n",
-            imin, imax, jmin, jmax, delta);
+    /* might want to uncomment for debugging later
+    fprintf(stderr, "%sgetAzimuthBoundsForXYBox: imin=%i imax=%i jmin=%i jmax=%i delta=%i\n",
+            indentRegionOutput ? "\t" : "", imin, imax, jmin, jmax, delta);
+    */
 
     /* --- Sample the perimeter of the box ---
        This is where the swath boundary crosses the output box, so the
@@ -83,7 +87,7 @@ void getAzimuthBoundsForXYBox(int32_t imin, int32_t imax, int32_t jmin, int32_t 
         /* No intersection found */
         *azimuthMin = 0.0f;
         *azimuthMax = 0.0f;
-        fprintf(stderr, "getAzimuthBoundsForXYBox: no intersection\n");
+        fprintf(stderr, "%sgetAzimuthBoundsForXYBox: no intersection\n", indentRegionOutput ? "\t" : "");
         return;
     }
 
@@ -92,6 +96,8 @@ void getAzimuthBoundsForXYBox(int32_t imin, int32_t imax, int32_t jmin, int32_t 
     *azimuthMin = max(*azimuthMin - pad, 0.0f)                              * currentImage->nAzimuthLooks;
     *azimuthMax = min(*azimuthMax + pad, (float)(currentImage->azimuthSize - 1)) * currentImage->nAzimuthLooks;
 
-    fprintf(stderr, "getAzimuthBoundsForXYBox: azimuthMin=%.1f azimuthMax=%.1f (single-look pixels)\n",
-            *azimuthMin, *azimuthMax);
+    /* might want to uncomment for debugging later
+    fprintf(stderr, "%sgetAzimuthBoundsForXYBox: azimuthMin=%.1f azimuthMax=%.1f (single-look pixels)\n",
+            indentRegionOutput ? "\t" : "", *azimuthMin, *azimuthMax);
+    */
 }

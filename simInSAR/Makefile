@@ -7,7 +7,7 @@ $(shell mkdir -p $(OBJDIR))
 
 CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
-SRCS =	siminsar.c parseSceneFile.c simInSARimage.c outputSimulatedImage.c getDisplacement.c getSlantRangeDEM.c simInSARBaselineFromSV.c
+SRCS =	siminsar.c parseSceneFile.c simInSARimage.c outputSimulatedImage.c getDisplacement.c getSlantRangeDEM.c simInSARBaselineFromSV.c computeSmoothRadius.c
 
 OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
 

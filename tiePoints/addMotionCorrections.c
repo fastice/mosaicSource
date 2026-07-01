@@ -3,9 +3,13 @@
 #include "tiePoints.h"
 
 /*
-  Compute motion correction.
+  Compute motion correction. Writes the corrected phase into phaseOut (parallel to
+  tiePoints->phase, which is read-only here) rather than mutating tiePoints->phase in place,
+  so the caller can run this twice -- once with applySquint FALSE, once TRUE -- to get both
+  the unsquinted and squinted solutions (see computeBaseline.c).
 */
-void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints, int32_t verbose)
+void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *tiePoints,
+						  int32_t applySquint, double *phaseOut, int32_t verbose)
 {
 	extern int32_t HemiSphere;
 	int32_t i, j;
@@ -57,6 +61,16 @@ void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *ti
 		z = sphericalToWGSElev(z, lat, Re); /* 0.0;*/
 		llToImageNew(lat, lon, z, &range1, &azimuth1, &inputImage);
 		hAngle = computeHeading(lat, lon, z, &inputImage, &(inputImage.cpAll));
+		/* computeHeading returns the idealized, zero-squint cross-track LOS heading --
+		   correct it with this image's own measured squint before it's used to project
+		   the tie point's known velocity onto the LOS below, when this call is computing
+		   the squinted solution (see mosaicSource/CLAUDE.md "Squint"). */
+		if (applySquint)
+		{
+			if (!inputImage.hasSquintPolynomial)
+				error("addMotionCorrections: applySquint requested but squint polynomial missing from input geodat");
+			hAngle += evaluateSquint(&inputImage, range1, azimuth1) * DTOR;
+		}
 		/*
 		  Compute angle for ps coordinats from north
 		*/
@@ -89,7 +103,7 @@ void addMotionCorrections(inputImageStructure inputImage, tiePointsStructure *ti
 		if (tiePoints->timeReverseFlag == TRUE)
 			tSign = -1.0;
 		phiDisplacement = tSign * twok * deltaT * (vyra * sin(psi) - tiePoints->vz[i] * cos(psi));
-		tiePoints->phase[i] -= phiDisplacement;
+		phaseOut[i] = tiePoints->phase[i] - phiDisplacement;
 		tiePoints->vyra[i] = vyra;
 	}
 

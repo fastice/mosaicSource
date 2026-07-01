@@ -14,6 +14,7 @@ static void writeOriginalBaselines(tiePointsStructure *tiePoints,
  /*
     Ouput baseline parms
 */
+    if (tiePoints->quiet) return;
     if (tiePoints->dBpFlag == TRUE)
         fprintf(stderr, "; dBp flag set\n");
     if (tiePoints->noRamp == TRUE)

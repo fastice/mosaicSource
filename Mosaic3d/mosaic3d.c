@@ -45,7 +45,7 @@ static void usage();
 static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, char *inputFile, char *demFile, char *irregFile,
 						char *shelfMaskFile, char *extraTieFile,
 						char *tideFile, char *verticalCorrectionFile, float fl, int32_t statsFlag, int32_t threeDOffFlag,
-						double tieThresh, referenceVelocity *refVel);
+						double tieThresh, referenceVelocity *refVel, mosaicArgs *args);
 static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFiles, char **phaseFiles, char **baselineFiles,
 							char **rOffsetFiles, char **rParamsFiles, char **offsetFiles, char **azParamsFiles, float *nDays, float *weights,
 							int32_t *crossFlags, int32_t nFiles, int32_t offsetFlag);
@@ -72,6 +72,7 @@ double Rotation = 45.;
 double SLat = -91.;
 
 int32_t llConserveMem = 1234; /* Kluge to maintain backwards compat 9/13/06 */
+int32_t useSquint = FALSE; /* apply squint(r,a) heading correction (phase/make3DMosaic.c only) */
 
 int main(int argc, char *argv[])
 {
@@ -117,7 +118,7 @@ int main(int argc, char *argv[])
 	/* Write to log */
 	logInputs3d(&outputImage, args.outFileBase, args.inputFile, args.demFile, args.irregFile, args.shelfMaskFile,
 				args.extraTieFile, args.tideFile, args.verticalCorrectionFile, args.fl, args.statsFlag,
-				args.threeDOffFlag, args.tieThresh, &refVel);
+				args.threeDOffFlag, args.tieThresh, &refVel, &args);
 	/*
 	  read inputfile
 	*/
@@ -371,9 +372,8 @@ static void removeOutOfBounds(outputImageStructure *outputImage, inputImageStruc
 	count = 0;
 	for (tmp = *ascImages, ptmp = *ascParams; tmp != NULL; tmp = tmp->next, ptmp = ptmp->next)
 	{
-		getRegion(tmp, &iMin, &iMax, &jMin, &jMax, outputImage);
-		/* Check in or out of bounds */
-		if ((iMin <= iMax && jMin <= jMax))
+		/* Keep only images with overlap and accessible files */
+		if (getRegion(tmp, &iMin, &iMax, &jMin, &jMax, outputImage))
 		{
 			if (newList == NULL)
 			{
@@ -599,7 +599,7 @@ static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFile
 
 static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, char *inputFile, char *demFile, char *irregFile, char *shelfMaskFile,
 						char *extraTieFile, char *tideFile, char *verticalCorrectionFile, float fl, int32_t statsFlag,
-						int32_t threeDOffFlag, double tieThresh, referenceVelocity *refVel)
+						int32_t threeDOffFlag, double tieThresh, referenceVelocity *refVel, mosaicArgs *args)
 {
 	char *logFile;
 	logFile = (char *)malloc(strlen(outFileBase) + 16);
@@ -626,14 +626,23 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 		fprintf(outputImage->fpLog, "; extraTieFile     : %s\n", extraTieFile);
 	else
 		fprintf(outputImage->fpLog, "; extraTieFile     : %s\n", "None");
-	if (outputImage->makeTies == TRUE && tideFile != NULL)
+	if (tideFile != NULL)
 		fprintf(outputImage->fpLog, "; tideFile         : %s\n", tideFile);
+	else
+		fprintf(outputImage->fpLog, "; tideFile         : %s\n", "None");
 	if (verticalCorrectionFile != NULL)
 		fprintf(outputImage->fpLog, "; verticalCorrection         : %s\n", verticalCorrectionFile);
 	else
 		fprintf(outputImage->fpLog, "; verticalCorrection         : %s\n", "None");
+	fprintf(outputImage->fpLog, "; vertCorrSuffix   : %s\n", outputImage->verticalCorrectionSuffix != NULL ? outputImage->verticalCorrectionSuffix : "None");
+	fprintf(outputImage->fpLog, "; landSatFile      : %s\n", args->landSatFile != NULL ? args->landSatFile : "None");
+	fprintf(outputImage->fpLog, "; date1            : %s\n", args->date1 != NULL ? args->date1 : "None");
+	fprintf(outputImage->fpLog, "; date2            : %s\n", args->date2 != NULL ? args->date2 : "None");
 	fprintf(outputImage->fpLog, "; OutputFile base  : %s\n", outFileBase);
 	fprintf(outputImage->fpLog, "; Feather length   : %f\n", fl);
+	fprintf(outputImage->fpLog, "; sigmaAThresh     : %f\n", outputImage->sigmaAThresh);
+	fprintf(outputImage->fpLog, "; timeThresh       : %f\n", args->timeThresh);
+	fprintf(outputImage->fpLog, "; timeThreshPhase  : %f\n", args->timeThreshPhase);
 	fprintf(outputImage->fpLog, "; NoVh Flag        : %i\n", outputImage->noVhFlag);
 	fprintf(outputImage->fpLog, "; rOffset Flag     : %i\n", outputImage->rOffsetFlag);
 	fprintf(outputImage->fpLog, "; No3D Flag        : %i\n", outputImage->no3d);
@@ -643,6 +652,15 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 	fprintf(outputImage->fpLog, "; ThreeD Off Flag    : %i\n", threeDOffFlag);
 	fprintf(outputImage->fpLog, "; TimeOverlapFlag    : %i\n", outputImage->timeOverlapFlag);
 	fprintf(outputImage->fpLog, "; DeltaB    : %i\n", outputImage->deltaB);
+	fprintf(outputImage->fpLog, "; useSquint Flag   : %i\n", useSquint);
+	fprintf(outputImage->fpLog, "; sepAscDesc Flag  : %i\n", sepAscDesc);
+	fprintf(outputImage->fpLog, "; north Flag       : %i\n", args->north);
+	fprintf(outputImage->fpLog, "; writeBlank Flag  : %i\n", args->writeBlank);
+	fprintf(outputImage->fpLog, "; GTiff Flag       : %i\n", args->GTiff);
+	fprintf(outputImage->fpLog, "; COG Flag         : %i\n", args->COG);
+	fprintf(outputImage->fpLog, "; outputRA Flag    : %i\n", outputImage->outputRAFlag);
+	fprintf(outputImage->fpLog, "; vzFlag           : %i\n", outputImage->vzFlag);
+	fprintf(outputImage->fpLog, "; ompThreads       : %d\n", omp_get_max_threads());
 	if (refVel->velFile != NULL)
 	{
 		fprintf(outputImage->fpLog, "; Reference Velocity    : %s\n", refVel->velFile);
@@ -1214,6 +1232,10 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			args->verticalCorrectionFile = argv[i + 1];
 			i++;
 		}
+		else if (strstr(argString, "useSquint") != NULL)
+		{
+			useSquint = TRUE;
+		}
 		else if (strstr(argString, "fl") != NULL)
 		{
 			sscanf(argv[i + 1], "%f", &args->fl);
@@ -1358,7 +1380,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
@@ -1403,6 +1425,7 @@ static void usage()
 	  "\tompThreads N =\t\t Set OpenMP thread count (default 4, or OMP_NUM_THREADS if set in shell)",
 		  "\tinputFile =\t\t File with input params, dem and geodat filenames",
 		  "\tdemFile =\t\t File with nonInsar dem",
+		  "\tuseSquint =\t\t Apply per-image squint(r,a) heading correction (phase/crossing-orbit solution only); default off",
 		  "\toutputImage =\t\t Root of output image (e.g., mosaicOffsets)");
 }
 

@@ -167,6 +167,61 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 }
 
 /*
+  Write scene.radiusImage (per-pixel azimuth-pixel smoothing radius, GDT_Byte) computed by
+  computeSmoothRadiusMap(). Modeled on outputSimImage()'s mask-writing branch, since both are
+  single-byte rasters.
+*/
+static void outputSmoothRadius(sceneStructure scene, char *outputFile)
+{
+	dictNode *metaData = NULL;
+	char *file, buf1[2048];
+	char *fileVRT;
+	char *bandNames[1];
+	char *bandFiles[1];
+	GDALDataType dataTypes[1];
+	FILE *imageFP;
+	int32_t i;
+
+	popuplateMeta(&metaData, scene);
+	if (scene.tiffFlag)
+	{
+		char tifBuf[2048];
+		const char *tifFile;
+		const char *tifFiles[1];
+		float noDataArr[1] = {0.0f};
+		size_t nPx = (size_t)scene.aSize * scene.rSize;
+		unsigned char *flat = (unsigned char *)malloc(nPx);
+		if (flat == NULL)
+			error("outputSmoothRadius: malloc failed for tif buffer\n");
+		for (i = 0; i < scene.aSize; i++)
+			memcpy(flat + (size_t)i * scene.rSize, scene.radiusImage[i], scene.rSize);
+		tifFile = appendSuffix(outputFile, ".smr.tif", tifBuf);
+		fprintf(stderr, "writing tif %s\n", tifFile);
+		writeFlatTiff(tifFile, flat, scene.rSize, scene.aSize, GDT_Byte, 0.0f, metaData);
+		free(flat);
+		tifFiles[0] = tifFile;
+		fileVRT = STR_BUFF("%s.smr.vrt", outputFile);
+		makeTiffVRT(fileVRT, tifFiles, 1, noDataArr, metaData);
+		return;
+	}
+
+	file = appendSuffix(outputFile, ".smr", buf1);
+	fprintf(stderr, "writing %s\n", file);
+	imageFP = fopen(file, "w");
+	if (imageFP == NULL)
+		error("*** outputSmoothRadius: Error opening %s ***\n", file);
+	for (i = 0; i < scene.aSize; i++)
+		fwriteBS(scene.radiusImage[i], scene.rSize, sizeof(unsigned char), imageFP, BYTEFLAG);
+	fclose(imageFP);
+
+	bandFiles[0] = file;
+	bandNames[0] = "SmoothRadius";
+	dataTypes[0] = GDT_Byte;
+	fileVRT = STR_BUFF("%s.vrt", file);
+	writeSingleVRT(scene.rSize, scene.aSize, metaData, fileVRT, bandFiles, bandNames, dataTypes, NULL, -2.e9, 1);
+}
+
+/*
   Output simulated image. Writes two files one for image, and xxx.simdat
   with image header info
 */
@@ -196,6 +251,11 @@ void outputSimulatedImage(sceneStructure scene, char *outputFile, char *demFile,
 	} else {
 		fprintf(stderr, "Output...");
 		outputSimImage(scene, outputFile);
+	}
+	if (scene.smoothRadiusFlag == TRUE)
+	{
+		fprintf(stderr, "Output smoothing-radius map...\n");
+		outputSmoothRadius(scene, outputFile);
 	}
 	//
 	//  Form header filename by adding .simdat suffix to outputFile

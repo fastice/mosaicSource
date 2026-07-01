@@ -482,6 +482,11 @@ void parseInputFile(char *inputFile, inputImageStructure *inputImage)
 	/* pull out pointers, for shorthand */
 	par = &(inputImage->par);
 	sv = &(inputImage->sv);
+	/* inputImage is malloc'd (not calloc'd) by the caller, and the legacy
+	   (non-geojson) path below never touches squint fields -- default to
+	   FALSE here so it's well-defined either way; parseGeojson() may then
+	   override to TRUE if it finds and parses the polynomial. */
+	inputImage->hasSquintPolynomial = FALSE;
 	geojson = checkGeojson(inputFile);
 	// If a geojson version exist use that
 	if(geojson != NULL) {
@@ -617,6 +622,29 @@ void parseGeojson(char *inputFile, inputImageStructure *inputImage)
 	inputImage->par.lambda = OGR_F_GetFieldAsDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "Wavelength"));
 	// State vectors
 	parseStateVectorsGeojson(myFeature, inputImage);
+	// Squint polynomial (optional -- absent in pre-squint geodats and in
+	// the secondary image's geodat, which never has a real fit; see
+	// mosaicSource/CLAUDE.md "Squint"). Flat fields, since OGR's GeoJSON
+	// driver can't read the nested squintAnglePolynomial dict directly.
+	{
+		int32_t cIdx = OGR_F_GetFieldIndex(myFeature, "squintCoefficients");
+		int32_t rIdx = OGR_F_GetFieldIndex(myFeature, "squintRefRange");
+		int32_t aIdx = OGR_F_GetFieldIndex(myFeature, "squintRefAzimuthTime");
+		if (cIdx >= 0 && rIdx >= 0 && aIdx >= 0
+			&& OGR_F_IsFieldSetAndNotNull(myFeature, cIdx)
+			&& OGR_F_IsFieldSetAndNotNull(myFeature, rIdx)
+			&& OGR_F_IsFieldSetAndNotNull(myFeature, aIdx))
+		{
+			int32_t nCoeff;
+			const double *coeff = OGR_F_GetFieldAsDoubleList(myFeature, cIdx, &nCoeff);
+			if (nCoeff != 6)
+				error("parseGeojson: squintCoefficients must have 6 elements, got %i", nCoeff);
+			memcpy(inputImage->squintCoefficients, coeff, 6 * sizeof(double));
+			inputImage->squintRefRange = OGR_F_GetFieldAsDouble(myFeature, rIdx);
+			inputImage->squintRefAzimuthTime = OGR_F_GetFieldAsDouble(myFeature, aIdx);
+			inputImage->hasSquintPolynomial = TRUE;
+		}
+	}
 	// Parse deltaT and correct time.
 	parseDeltaTGeojson(myFeature, inputImage, julDayInt);
 	inputImage->par.rn = inputImage->par.rc - inputImage->rangePixelSize * (inputImage->rangeSize - 1) * 0.5;
