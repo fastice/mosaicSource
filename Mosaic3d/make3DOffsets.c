@@ -64,6 +64,10 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	int32_t aa, dd, nTotal;			/* Counters for asc/desc images and total numer of images*/
 	int32_t validData, Aset;		/* Flags to indicate a valide solution, and A updates */
 	int32_t nCrossing;				/* Count of crossing orbit pairs found for aOffImage */
+	extern int32_t pairOverCount; /* -pairOverCount; default off, see mosaic3d.c */
+	float **nAtmp, **nDtmp;   /* per-pixel outer-image and pair counts for the over-counting correction */
+	float **errorX0, **errorY0; /* errorX/errorY accumulators as this round found them */
+	unsigned char *aContrib;  /* flat [ySize×xSize]: did current aOffImage contribute at this pixel? */
 	int32_t i, j;
 	unsigned char sMask;
 	struct timeval funcStart, funcEnd;
@@ -81,6 +85,22 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	*/
 	setupBuffers(outputImage, &vXimage, &vYimage, &vZimage, &scaleX, &scaleY, &scaleZ,
 				 &vxTmp, &vyTmp, &vzTmp, &sxTmp, &syTmp, &fScale, &errorX, &errorY);
+	nAtmp = NULL;
+	nDtmp = NULL;
+	aContrib = NULL;
+	if (pairOverCount == TRUE)
+	{
+		int i1, j1;
+		nAtmp = mallocImage(outputImage->ySize, outputImage->xSize);
+		nDtmp = mallocImage(outputImage->ySize, outputImage->xSize);
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+			for (j1 = 0; j1 < outputImage->xSize; j1++)
+				nAtmp[i1][j1] = nDtmp[i1][j1] = 0.0f;
+		aContrib = (unsigned char *)calloc(
+			(size_t)outputImage->ySize * outputImage->xSize, sizeof(unsigned char));
+		if (aContrib == NULL)
+			error("make3DOffsets: calloc failed for aContrib\n");
+	}
 	/*
 	  Compute feather scale for existing
 	*/
@@ -91,6 +111,22 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	  Init array. This undoes the prior normalization so errors are all weighted.
 	*/
 	undoNormalization(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, fScale, FALSE);
+	/* Snapshot the error accumulators as this round inherits them (make3DMosaic's phase
+	   solution is typically already in there), so the pair over-counting correction below
+	   inflates only what this round adds -- see inflatePairOverCount() in
+	   common/scalingFunctions.c. */
+	if (pairOverCount == TRUE)
+	{
+		int i1, j1;
+		errorX0 = mallocImage(outputImage->ySize, outputImage->xSize);
+		errorY0 = mallocImage(outputImage->ySize, outputImage->xSize);
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+			for (j1 = 0; j1 < outputImage->xSize; j1++)
+			{
+				errorX0[i1][j1] = errorX[i1][j1];
+				errorY0[i1][j1] = errorY[i1][j1];
+			}
+	}
 	nTotal = 0;
 	for (aOffImage = allImages; aOffImage != NULL; aOffImage = aOffImage->next)
 	{
@@ -220,7 +256,6 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			  Loop over output grid and compute velocities
 			*/
 			nCrossing++;
-			fprintf(stderr, "\t---- \033[1mAsc %i / %i\033[0m \033[1mDes %i\033[0m\n", aa, nTotal, dd);
 			/* Prime svInitBnBp in serial before threads race on bnS/bpS malloc */
 			if (aParams->offsets.deltaB != DELTABNONE) {
 				double bnS, bpS;
@@ -329,8 +364,22 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 							dSig2Base = computeSig2Base(sin(dThetaD), cos(dThetaD), dAzimuth, myDImg, &(dParams->offsets));
 							aSigmaR = interpRangeSigma(arange, aAzimuth, &(aParams->offsets), myAImg, aRange, aThetaD, aRSLPixSize);
 							dSigmaR = interpRangeSigma(drange, dAzimuth, &(dParams->offsets), myDImg, dRange, dThetaD, dRSLPixSize);
-							aSigmaR = sqrt(aSigmaR * aSigmaR + aDemError * aDemError + aSig2Base);
-							dSigmaR = sqrt(dSigmaR * dSigmaR + dDemError * dDemError + dSig2Base);
+							/* interpRangeSigma returns the .sr band -- a LOCAL neighbourhood
+							   scatter that Cullst computes after removing a local plane, so it
+							   measures matching noise only and is blind to long-wavelength
+							   error by construction.  sigmaRresidual is the rparams fit
+							   residual against tie points scattered across the whole frame,
+							   after the ionosphere and motion corrections are applied, so it
+							   is the term that sees that error -- the exact analogue of the
+							   phase path's min(6*PI, vhParam->sigma).  Both are metres of
+							   slant range here (aSigmaR has already been multiplied by
+							   rSLPixSize), so they add in quadrature directly.  The sigma<0
+							   "no solution" sentinel is filtered above (line ~174/243), so a
+							   -1 can never reach this sum. */
+							aSigmaR = sqrt(aSigmaR * aSigmaR + aDemError * aDemError + aSig2Base +
+										   rangeAccuracyVar(&(aParams->offsets)));
+							dSigmaR = sqrt(dSigmaR * dSigmaR + dDemError * dDemError + dSig2Base +
+										   rangeAccuracyVar(&(dParams->offsets)));
 							/*
 							  Tide corrections
 							*/
@@ -370,6 +419,18 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 							{
 								/*  Compute B (note B is really C in the TGARS paper	*/
 								computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
+								if (sMask == SHELF)
+								{
+									/* Zero slope coupling in the crossing-pair solve on ice shelves --
+									   matches speckleTrackMosaic.c's precedent (10/13/17): true
+									   shelf-interior slope is expected to be near-zero, so a large DEM
+									   slope reading here is almost always a stale/misplaced rift or
+									   calving front (DEM vs. current ice extent mismatch), not real
+									   terrain -- trusting it would corrupt the solve the same way
+									   genuine steep terrain does elsewhere. dzdx/dzdy themselves are
+									   left alone for the vz calculation below. */
+									B[0][0] = 0.0; B[0][1] = 0.0; B[1][0] = 0.0; B[1][1] = 0.0;
+								}
 								/*  Scale offsets for velocity computation (scale for m/yr)	*/
 								aP = 365.25 * aDelta / ((double)(aParams->nDays) * sin(aPsi));
 								dP = 365.25 * dDelta / ((double)(dParams->nDays) * sin(dPsi));
@@ -399,6 +460,11 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 								}
 								sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
 								syTmp[i][j] = scY;
+								if (pairOverCount == TRUE)
+								{
+									nDtmp[i][j] += 1.0f;
+									aContrib[i * outputImage->xSize + j] = 1;
+								}
 								fScale[i][j] = 1.0; /* Value for zero feathering */
 							}
 						}
@@ -431,6 +497,16 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 			redoNormalization(combWeight, outputImage, iMin, iMax, jMin, jMax, vXimage, vYimage, vZimage, errorX, errorY,
 							  scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, FALSE);
 		} /* End desc loop */
+		if (pairOverCount == TRUE)
+		{
+			int i1, j1;
+			for (i1 = 0; i1 < outputImage->ySize; i1++)
+				for (j1 = 0; j1 < outputImage->xSize; j1++)
+					if (aContrib[i1 * outputImage->xSize + j1]) {
+						nAtmp[i1][j1] += 1.0f;
+						aContrib[i1 * outputImage->xSize + j1] = 0;
+					}
+		}
 		if (nCrossing == 0)
 			fprintf(stderr, "No crossing orbit within timeThresh days\n\n");
 		else
@@ -438,6 +514,8 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 	}	  /* End asc loop */
 	free(localAImgs);
 	free(localDImgs);
+	if (aContrib != NULL)
+		free(aContrib);
 	/**************************END OF MAIN LOOP ******************************/
 	fprintf(stderr, "Out of main loop\n");
 	{
@@ -446,6 +524,25 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 		fprintf(stderr, "Total offsets I/O time (whole run): %.3f s\n", totalOffsetsIOTime);
 		fprintf(stderr, "Total offsets processing time (whole run): %.3f s\n",
 		        (funcEnd.tv_sec - funcStart.tv_sec) + (funcEnd.tv_usec - funcStart.tv_usec) * 1e-6);
+	}
+	/* Correct for pair over-counting.  Must run before endScale(), on this round's own
+	   error contribution only -- see inflatePairOverCount() in common/scalingFunctions.c. */
+	if (pairOverCount == TRUE)
+	{
+		extern double rhoOffsets; /* defined in common/getRegion.c */
+		int i1;
+		inflatePairOverCount(outputImage, errorX, errorY, errorX0, errorY0, nAtmp, nDtmp, rhoOffsets);
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+		{
+			free(nAtmp[i1]);
+			free(nDtmp[i1]);
+			free(errorX0[i1]);
+			free(errorY0[i1]);
+		}
+		free(nAtmp);
+		free(nDtmp);
+		free(errorX0);
+		free(errorY0);
 	}
 	/*
 	  Adjust scale

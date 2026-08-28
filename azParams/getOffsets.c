@@ -7,15 +7,18 @@
 /*
    Input azimuth offsets  image and extract phases for tiepoint locations.
 */
-void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, Offsets *offsets)
+void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, Offsets *offsets, int32_t skipLoad)
 {
    FILE *fp;
    double range, azimuth;
    int32_t i, count = 0;
    /*
-      Init image
+      Init image. skipLoad reuses offsets->da already read from disk (the
+      -runFile multi-run path reads azimuth.offsets once, then re-interpolates
+      the tiepoints below every run). The interpolation loop always runs.
    */
-   readAzimuthOffsets(offsets);
+   if (!skipLoad)
+      readAzimuthOffsets(offsets);
    offsets->azInit = FALSE;
    /*
        Interpolate offsets

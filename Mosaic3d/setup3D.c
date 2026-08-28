@@ -173,7 +173,7 @@ static void addToList(char *phaseFile, vhParams *dumParams, inputImageStructure 
 /*
    Malloc the rowpointers for the image and point32_t them to the shared buff.
  */
-static void setupADImageBuffers(inputImageStructure **images, float *buf)
+static void setupADImageBuffers(inputImageStructure **images, float *buf, float *ionBuf)
 {
 	inputImageStructure *image;
 	int32_t i;
@@ -185,6 +185,21 @@ static void setupADImageBuffers(inputImageStructure **images, float *buf)
 		for (i = 0; i < image->azimuthSize; i++)
 		{
 			image->image[i] = &(buf[i * image->rangeSize]);
+		}
+		/* Ionosphere row pointers only for images whose baseline named a correction --
+		   leaving ionospherePhase NULL is what tells the pixel loops there is none.
+		   getIonospherePhaseImage() repoints these into ionBuf before each read. */
+		if (image->ionospherePhaseFile[0] != '\0' && ionBuf != NULL)
+		{
+			image->ionospherePhase = (float **)malloc(image->azimuthSize * sizeof(float *));
+			for (i = 0; i < image->azimuthSize; i++)
+			{
+				image->ionospherePhase[i] = &(ionBuf[i * image->rangeSize]);
+			}
+		}
+		else
+		{
+			image->ionospherePhase = NULL;
 		}
 	}
 }
@@ -295,6 +310,8 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 		if (inputImage[i].used == TRUE)
 		{
 			inputImage[i].file = phaseFiles[i];
+			inputImage[i].ionospherePhaseFile[0] = '\0';
+			inputImage[i].ionospherePhase = NULL;
 			dumParams = (vhParams *)malloc(sizeof(vhParams));
 			/*  Read tide correction files where they exist */
 			readTideCorrections(geodatFiles[i], &(inputImage[i]), fpLog, i);
@@ -308,6 +325,11 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 			{
 				extern int32_t useSquint;
 				getBaseline(baselineFiles[i], dumParams, noPhase, useSquint);
+				/* Ionosphere correction, if tiepoints recorded one for this pair. Carried on
+				   the image (not the params) since it lives on the phase image's own grid. */
+				strncpy(inputImage[i].ionospherePhaseFile, dumParams->ionospherePhaseFile,
+						sizeof(inputImage[i].ionospherePhaseFile) - 1);
+				inputImage[i].ionospherePhaseFile[sizeof(inputImage[i].ionospherePhaseFile) - 1] = '\0';
 				if (dumParams->sigma < 0)
 				{
 					/* tiepoints found no solution (sigma<0 sentinel written by
@@ -320,6 +342,7 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 					        "treating as nophase\n", baselineFiles[i]);
 					phaseFiles[i] = "nophase";
 					inputImage[i].file = phaseFiles[i];
+					inputImage[i].ionospherePhaseFile[0] = '\0';
 					dumParams->Bn = 0.;
 					dumParams->Bp = 0.;
 					dumParams->dBn = 0.;
@@ -401,26 +424,62 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 		} /* Case where not in time range */
 	}
 	fprintf(stderr, "NAsc %i  NDesc %i\n", *nAsc, *nDesc);
-	/*
-	  Use the same pool of memory for each image. Allocate different
-	  set of pointers for each row.	  Ascending first.
-	  Malloc two buffers here using based on asc/desc type. Later in
-	  make3dMosaic the buffers will be re-allocated as needed to hold
-	  the two seperate images.
-	*/
-	if (maxRa > 0 || maxRd > 0)
-	{
-		AImageBuffer = malloc(sizeof(float) * max(maxRa, maxRd) * max(maxAa, maxAd));
-		DImageBuffer = malloc(sizeof(float) * max(maxRa, maxRd) * max(maxAa, maxAd));
-	}
-	/*
-	  Setubuffers for the shared memory pool
-	 */
-	if (*nAsc > 0)
-		setupADImageBuffers(ascImages, AImageBuffer);
-	if (*nDesc > 0)
-		setupADImageBuffers(descImages, DImageBuffer);
-
 	fprintf(fpLog, ";\n; Leaving setUp3D");
 	return;
+}
+
+/*
+  Allocate the shared image buffers after non-overlapping images have been
+  removed, so the buffer is sized to the surviving images only.
+*/
+void allocateOffsetBuffers(inputImageStructure *ascImages, inputImageStructure *descImages)
+{
+	extern float *AImageBuffer, *DImageBuffer;
+	extern float *AIonBuffer, *DIonBuffer;
+	inputImageStructure *image;
+	int32_t maxR = 0, maxA = 0;
+	int32_t anyIonosphere = FALSE;
+
+	for (image = ascImages; image != NULL; image = image->next)
+	{
+		if (strstr(image->file, "nophase") == NULL)
+		{
+			maxR = max(maxR, image->rangeSize);
+			maxA = max(maxA, image->azimuthSize);
+			if (image->ionospherePhaseFile[0] != '\0')
+			{
+				anyIonosphere = TRUE;
+			}
+		}
+	}
+	for (image = descImages; image != NULL; image = image->next)
+	{
+		if (strstr(image->file, "nophase") == NULL)
+		{
+			maxR = max(maxR, image->rangeSize);
+			maxA = max(maxA, image->azimuthSize);
+			if (image->ionospherePhaseFile[0] != '\0')
+			{
+				anyIonosphere = TRUE;
+			}
+		}
+	}
+	fprintf(stderr, "allocateOffsetBuffers: maxR %i maxA %i\n", maxR, maxA);
+	if (maxR > 0)
+	{
+		AImageBuffer = malloc(sizeof(float) * maxR * maxA);
+		DImageBuffer = malloc(sizeof(float) * maxR * maxA);
+		/* Only pay for the ionosphere pools when some baseline actually named one, so
+		   runs without a correction have exactly the memory footprint they had before. */
+		if (anyIonosphere == TRUE)
+		{
+			fprintf(stderr, "allocateOffsetBuffers: allocating ionosphere phase buffers\n");
+			AIonBuffer = malloc(sizeof(float) * maxR * maxA);
+			DIonBuffer = malloc(sizeof(float) * maxR * maxA);
+		}
+	}
+	if (ascImages != NULL)
+		setupADImageBuffers(&ascImages, AImageBuffer, AIonBuffer);
+	if (descImages != NULL)
+		setupADImageBuffers(&descImages, DImageBuffer, DIonBuffer);
 }

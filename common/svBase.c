@@ -210,7 +210,15 @@ void svInitAzParams(inputImageStructure *inputImage, Offsets *offsets)
 	}
 	nPts = n - 1;
 	if (nPts < 2 * NAPTS)
-		error("svInitAzParams : insufficient points to fit");
+		/* Still fatal (error() exits 1) -- but say WHICH frame and by how much it
+		   missed. This exits azparams mid-redirect, leaving a zero-byte az.est.yaml
+		   that mosaic3d later reads as all zeros before dying here itself, so the
+		   frame identity is the one thing needed to trace it back. */
+		error("svInitAzParams : insufficient points to fit -- only %i of %i candidate points fell in\n"
+			  "        the overlap of both images, need %i.  geo1=%s  geo2=%s",
+			  nPts, NAPTS * NAPTS, 2 * NAPTS,
+			  offsets->geo1 != NULL ? offsets->geo1 : "(null)",
+			  offsets->geo2 != NULL ? offsets->geo2 : "(null)");
 	/* Updated to recycle memory, 9/15/22 */
 	u = dmatrixRecycle(1, nPts, 1, ma, uRows, uBuffer);
 	v = dmatrixRecycle(1, ma, 1, ma, vRows, vSpace);

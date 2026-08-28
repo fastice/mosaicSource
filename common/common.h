@@ -13,8 +13,8 @@
 #include <gdal.h>
 #include <stddef.h> // For size_t
 
-#define MAXOFFBUF 288000000
-#define MAXOFFLENGTH 60000
+#define MAXOFFBUF 1100000000
+#define MAXOFFLENGTH 100000
 
 #define MINELEVATION -1000
 #define MINVELOCITY 5
@@ -179,6 +179,7 @@ typedef struct vhParamsType
 	double C[7][7];
 	double sigma;
 	int32_t applyFlatEarth;
+	char ionospherePhaseFile[2048]; /* ionospheric phase file recorded by tiepoints; empty if none */
 	int32_t offsetFlag;
 	int32_t rOffsetFlag;
 	char *xyDEMFile;
@@ -229,6 +230,8 @@ typedef struct tiePointsType
 	double *phase;
 	double *phaseSquint;	   /* squint-corrected phase, parallel to phase; NULL unless hasSquintSolution */
 	int32_t hasSquintSolution; /* TRUE if phaseSquint was computed (squint polynomial available + -motion/-vr) */
+	double *ionPhase;		   /* ionospheric phase (radians) at each tie point; NULL unless hasIonosphere */
+	int32_t hasIonosphere;	   /* TRUE if ionPhase was loaded (tiepoints -ionosphere) */
 	double *delta;
 	double *vx;
 	double *vy;
@@ -301,6 +304,9 @@ void computeXYdata(double lat, double lon, double *dxn, double *dyn, double *xyA
 void errorsToXY(double er, double ea, double *ex, double *ey, double xyAngle, double hAngle);
 double interpXYDEM(double x, double y, xyDEM xydem);
 int32_t getRegion(inputImageStructure *image, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax, outputImageStructure *outputImage);
+void getRowBounds(inputImageStructure *image, outputImageStructure *outputImage,
+                   int32_t iMin, int32_t iMax, int32_t jMinFallback, int32_t jMaxFallback,
+                   int32_t *jRowMin, int32_t *jRowMax);
 int clipByHalfPlane(double *xIn, double *yIn, int nIn, double *xOut, double *yOut, double nx, double ny, double d);
 unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y);
 void computePhiZ(double *phiZ, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double thetaD, double Range, double ReH,
@@ -320,6 +326,9 @@ float interpAzSigma(double range, double azimuth, Offsets *offsets, inputImageSt
 float interpRangeOffsetInMeters(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double thetaD, float rSLPixSize,
 						double theta, double *demError);
 float interpRangeSigma(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double thetaD, float rSLPixSize);
+extern int32_t rSigmaResidual;   /* defined in common/getRegion.c */
+extern double rSigmaConst;       /* defined in common/getRegion.c */
+double rangeAccuracyVar(Offsets *offsets);
 float bilinearInterp(float **fimage, double range, double azimuth, int32_t nr, int32_t na, float minvalue, float noData);
 
 void computeXYangle(double lat, double lon, double *xyAngle, xyDEM xydem);
@@ -339,6 +348,9 @@ void redoNormalization(float myWeight, outputImageStructure *outputImage, int32_
 					   float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY, float **scaleX, float **scaleY, float **scaleZ,
 					   float **fScale,
 					   float **vxTmp, float **vyTmp, float **vzTmp, float **sxTmp, float **syTmp, int32_t statsFlag);
+void inflatePairOverCount(outputImageStructure *outputImage, float **errorX, float **errorY,
+						  float **errorX0, float **errorY0, float **nOuter, float **nPairs,
+						  double rho);
 
 void setupBuffers(outputImageStructure *outputImage, float ***vXimage, float ***vYimage, float ***vzImage, float ***scaleX, float ***scaleY,
 				  float ***scaleZ, float ***vxTmp, float ***vyTmp, float ***vzTemp, float ***sxTmp, float ***syTmp, float ***fScale, float ***errorX, float ***errorY);
@@ -374,6 +386,7 @@ double evaluateSquint(inputImageStructure *image, double rangeIndex, double azim
 void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi, xyDEM *xydem);
 void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], double B[2][2], double *vx, double *vy, double *scaleX, double *scaleY);
 void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t yMax);
+void getIonospherePhaseImage(inputImageStructure *inputImage, float *buf, int32_t yMin, int32_t yMax);
 void errorsToXY(double er, double ea, double *ex, double *ey, double xyAngle, double hAngle);
 void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseImage, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax,
 				  outputImageStructure *outputImage);
@@ -392,6 +405,7 @@ double earthRadius(double lat, double rp, double re);
 double earthRadiusCurvatureWGS84(double lat);
 double earthRadiusWGS84(double lat);
 void interpPhaseImage(inputImageStructure *inputImage, double range, double azimuth, double *phase);
+void interpIonPhaseImage(inputImageStructure *inputImage, double range, double azimuth, double *ionPhase);
 void polintVec(double xa[], double y1[], double y2[], double y3[], double y4[], double y5[], double y6[],
 			   double x, double *yr1, double *yr2, double *yr3, double *yr4, double *yr5, double *yr6);
 double getHeight(double lat, double lon, demStructure *dem, double Re, int32_t heightFlag);

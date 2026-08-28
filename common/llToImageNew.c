@@ -9,6 +9,7 @@
 /* added 8/13/16 to handle large numbers of state vectors. This is so polintt uses a 5 point interpolation - make sure not change with updating where its used */
 
 static void computeSatHeightNew(conversionDataStructure *cp, inputImageStructure *inputImage, int32_t memMode);
+static void computeFootprintPolygon(inputImageStructure *inputImage);
 
 void initllToImageNew(inputImageStructure *inputImage)
 {
@@ -74,19 +75,115 @@ void initllToImageNew(inputImageStructure *inputImage)
 	computeSatHeightNew(cp, inputImage, memMode);
 	inputImage->isInit = TRUE;
 	inputImage->tolerance = 1e-6;
+	computeFootprintPolygon(inputImage);
 }
 
+/*
+  Compute the frame's 4-corner footprint polygon (x/y km) once per inputImage and
+  cache it in inputImage->footprintX/Y, instead of recomputing it on every checkLL()
+  call (i.e. once per candidate tie/geocoding point -- up to 500k times for tiepoints,
+  and far more for mosaic3d's per-pixel geocoding). The corners are re-ordered by
+  angle around their centroid before storing: inputImage->latControlPoints[1..4]/
+  lonControlPoints[1..4] (parseInputFile.c parseControlPointsGeoJson()'s
+  index={0,0,3,1,2} remap) was chosen to make the old axis-aligned min/max computation
+  order-independent, not to trace the corners in perimeter order, which the
+  point-in-polygon test in checkLL() requires.
+*/
+static void computeFootprintPolygon(inputImageStructure *inputImage)
+{
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	extern double SLat;
+	double sLat, cx[4], cy[4], ang[4], centX, centY;
+	int32_t i, j, idx[4] = {0, 1, 2, 3}, tmp;
+
+	sLat = (SLat < -90.) ? ((HemiSphere == NORTH) ? 70.0 : 71.0) : SLat;
+	for (i = 0; i < 4; i++)
+		lltoxy1(inputImage->latControlPoints[i + 1], inputImage->lonControlPoints[i + 1],
+				&cx[i], &cy[i], Rotation, sLat);
+	centX = (cx[0] + cx[1] + cx[2] + cx[3]) / 4.0;
+	centY = (cy[0] + cy[1] + cy[2] + cy[3]) / 4.0;
+	for (i = 0; i < 4; i++)
+		ang[i] = atan2(cy[i] - centY, cx[i] - centX);
+	for (i = 0; i < 3; i++)
+		for (j = i + 1; j < 4; j++)
+			if (ang[idx[j]] < ang[idx[i]])
+			{
+				tmp = idx[i];
+				idx[i] = idx[j];
+				idx[j] = tmp;
+			}
+	for (i = 0; i < 4; i++)
+	{
+		inputImage->footprintX[i] = cx[idx[i]];
+		inputImage->footprintY[i] = cy[idx[i]];
+	}
+}
+
+/* Standard ray-casting point-in-polygon test; polyX/polyY must be a simple
+   (non-self-intersecting) ring, either winding order. */
+static int32_t pointInPolygon(double px, double py, double *polyX, double *polyY, int32_t n)
+{
+	int32_t i, j, inside = FALSE;
+	for (i = 0, j = n - 1; i < n; j = i++)
+	{
+		if (((polyY[i] > py) != (polyY[j] > py)) &&
+			(px < (polyX[j] - polyX[i]) * (py - polyY[i]) / (polyY[j] - polyY[i]) + polyX[i]))
+			inside = !inside;
+	}
+	return inside;
+}
+
+static double distToSegment(double px, double py, double x1, double y1, double x2, double y2)
+{
+	double dx = x2 - x1, dy = y2 - y1;
+	double len2 = dx * dx + dy * dy;
+	double t, cx, cy;
+	if (len2 < 1.0e-9)
+		return sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1));
+	t = ((px - x1) * dx + (py - y1) * dy) / len2;
+	t = max(0.0, min(1.0, t));
+	cx = x1 + t * dx;
+	cy = y1 + t * dy;
+	return sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+}
+
+/*
+  Reject candidate points that fall outside the frame's actual footprint. Was an
+  axis-aligned bounding box (min/max of the 4 corners, +-50km pad) -- for a long,
+  curving, near-polar frame that box clips along a constant-x (or constant-y) line
+  wherever the true (curved/rotated) footprint diverges from the box edge, cutting off
+  real swath data at one end while still letting through off-swath points elsewhere.
+  Replaced with a real point-in-polygon test against the 4 corner points (angle-sorted
+  and cached once per inputImage in initllToImageNew()/computeFootprintPolygon() above
+  -- this function runs per candidate point, up to 500k times for tiepoints and far
+  more for mosaic3d's per-pixel geocoding, so the corner conversion/sort must not be
+  redone here), with the same 50km pad applied as a distance-to-boundary tolerance
+  instead of a box expansion.
+*/
 static int32_t checkLL(double lat, double lon, inputImageStructure *inputImage)
 {
-	if (lon > 180.)
-		lon -= 360.;
-	
-	if (lat > (inputImage->maxLat + 0.5) || lat < (inputImage->minLat - 0.5) ||
-		lon > (inputImage->maxLon + 0.5) || lon < (inputImage->minLon - 0.5)) {
-		//fprintf(stderr, "%f %f %f %f %f %f\n", lat, lon,inputImage->minLat, inputImage->maxLat,inputImage->minLon, inputImage->maxLon );
-		return FALSE;
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	extern double SLat;
+	double x, y, sLat, dmin;
+	int32_t i;
+
+	sLat = (SLat < -90.) ? ((HemiSphere == NORTH) ? 70.0 : 71.0) : SLat;
+	lltoxy1(lat, lon, &x, &y, Rotation, sLat);
+
+	if (pointInPolygon(x, y, inputImage->footprintX, inputImage->footprintY, 4))
+		return TRUE;
+
+	dmin = 1.0e30;
+	for (i = 0; i < 4; i++)
+	{
+		double d = distToSegment(x, y, inputImage->footprintX[i], inputImage->footprintY[i],
+								  inputImage->footprintX[(i + 1) % 4], inputImage->footprintY[(i + 1) % 4]);
+		if (d < dmin)
+			dmin = d;
 	}
-	return TRUE;
+	return (dmin <= 50.0); /* pad, km */
 }
 
 /* static double lastTime=0.0;*/
@@ -155,18 +252,42 @@ void llToImageNew(double lat, double lon, double h, double *range, double *azimu
 		if (fabs(dT) < inputImage->tolerance)
 			break;
 	}
-	// Final call 
+	// Final call
 	polintVec(&(sv->times[n]), &(sv->x[n]), &(sv->y[n]), &(sv->z[n]), &(sv->vx[n]), &(sv->vy[n]), &(sv->vz[n]),
 			  myTime, &xs, &ys, &zs, &vsx, &vsy, &vsz);
 	*range = (sqrt(dot(drx, dry, drz, drx, dry, drz)) - cp->RNear) * cp->toRangePixel;
 	*azimuth = ((myTime - cp->sTime) * cp->prf) / inputImage->nAzimuthLooks;
 	//fprintf(stderr, "\033[33mllToImageNew: lat %f lon %f h %f range %f azimuth %f time %f\n\033[0m", lat, lon, h, *range, *azimuth, myTime);
+	/* The zero-Doppler/range solve above (dot(dr,v)=0, range=|dr|) is symmetric under
+	   reflection of the target through the orbital plane, so it cannot by itself
+	   distinguish a real target from its mirror image on the wrong side of the
+	   ground track -- checkLL()'s bounding box is too loose to catch this for long,
+	   high-latitude frames. Disambiguate with the same cross-track sign convention
+	   already used to steer the forward geolocation in smlocateZD.c
+	   (elook = lookDir*acos(...), so sign(sin(elook)) == sign(lookDir)) and to flip
+	   the cross-track baseline component in svBase.c's svBnBp(): ph = V x U (U the
+	   satellite's own outward unit position vector) is the cross-track direction, and
+	   for a correctly-illuminated target dot(target-satellite, ph) always carries the
+	   same sign as lookDir. */
+	{
+		double normS = sqrt(dot(xs, ys, zs, xs, ys, zs));
+		double phx, phy, phz;
+		cross(vsx, vsy, vsz, xs / normS, ys / normS, zs / normS, &phx, &phy, &phz);
+		double side = dot(drx, dry, drz, phx, phy, phz);
+		if ((side < 0 && inputImage->lookDir == RIGHT) || (side > 0 && inputImage->lookDir == LEFT))
+		{
+			*range = -9999.0;
+			*azimuth = -9999.0;
+			inputImage->lastTime = myTime;
+			return;
+		}
+	}
 	/* allow tol ml pixel buffer in case indexing into slc - allow some tol for calcs like heading - other checks will avoid bad coords */
 	if (*range < -tol || *range > (inputImage->rangeSize + tol) || *azimuth < -tol || *azimuth > (inputImage->azimuthSize + tol))
 	{
 		*range = -9999.0;
 		*azimuth = -9999.0;
-	} 
+	}
 	inputImage->lastTime = myTime;
 }
 

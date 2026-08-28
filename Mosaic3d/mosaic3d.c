@@ -36,6 +36,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 					 referenceVelocity *refVel, outputImageStructure *outputImage);
 static void write3Doutput(outputImageStructure outputImage, char *outFileBase);
 static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg, char *date1,  char *date2);
+static void removeStaleOutputs(char *outFileBase, int32_t writingTiff);
 static int32_t writeMetaFile(inputImageStructure *image, outputImageStructure *outputImage, vhParams *params, char *outFileBase,
 							 char *demFile, int32_t writeBlank);
 void caldat(int32_t julian, int32_t *mm, int32_t *id, int32_t *iyyy);
@@ -73,6 +74,48 @@ double SLat = -91.;
 
 int32_t llConserveMem = 1234; /* Kluge to maintain backwards compat 9/13/06 */
 int32_t useSquint = FALSE; /* apply squint(r,a) heading correction (phase/make3DMosaic.c only) */
+/* Inflate crossing-pair errors by (n_A+n_D)/2 to account for the N_A x N_D pairs not being
+   independent (see inflatePairOverCount, common/scalingFunctions.c).  Default ON, matching
+   the behaviour of the GNSS-validated products; -noPairOverCount disables it.  Without any
+   inflation the crossing-orbit errors come out several-fold BELOW the observed GNSS scatter
+   (measured: median ex 0.136 vs 2.803 for the same sector of the validated product), so the
+   correction is needed; it is only its magnitude that was wrong.  See mosaicSource/CLAUDE.md. */
+int32_t pairOverCount = TRUE;
+/* Include the rparams tie-point fit residual (offsets.sigmaRresidual, metres of
+   slant range) in the range-offset error budget, in quadrature with the local
+   matching sigma.  This is the exact analogue of the phase path's
+   min(6*PI, vhParam->sigma) term (make3DMosaic.c), which has always been there.
+   Without it the offsets budget contains ONLY interpRangeSigma -- the .sr band,
+   a local neighbourhood scatter computed after a local plane is removed -- so it
+   describes matching noise and is structurally blind to long-wavelength error
+   (ionosphere, orbit ramps).  Measured against Sentinel-1 over stable ground,
+   that made the offsets formal error ~6x too small AND smaller than the phase
+   one, inverting the inverse-variance weighting so crossing offsets dragged the
+   combined solution.  Default ON; -noRSigmaResidual restores the old budget. */
+extern int32_t rSigmaResidual;
+extern int32_t pairCountLegacy;  /* defined in common/getRegion.c */
+/* -rSigmaConst X : add a FIXED X metres of slant range to every offsets frame's
+   error budget, in quadrature (see rangeAccuracyVar, common/interpOffsets.c).
+   Prefer this to -rSigmaResidual: it raises the offsets budget relative to
+   phase -- the miscalibration that corrupts the combined product -- without
+   disturbing the relative weighting between offset frames, which the per-frame
+   residual does at a measured cost to velocity accuracy. */
+extern double rSigmaConst;
+/* -rhoPhase X / -rhoOffsets X : correlation parameter driving
+   inflatePairOverCount()'s factor
+       f = rho*nPairs + (1 - rho)*(nOuter + nInner)/2
+   (see common/scalingFunctions.c, and common/getRegion.c for the full rationale).
+   BOTH default to 0.5, set from the measured threshold dependence: holding the
+   images fixed and raising the crossing threshold 3.3x leaves the measured
+   accuracy flat (MAD ratio 0.99), so the formal error should be flat too --
+   rho = 0 gives 0.52-0.56, rho = 0.5 gives 0.91-0.95.  It is standing in for
+   correlation between pairs that share an image, which the approximate
+   (n_A+n_D)/2 count misses once a time threshold makes the pairing graph
+   non-complete.  Note rho = 0.5 with n_A = n_D reproduces the legacy
+   -pairCountLegacy formula exactly (verified on real data to 0.01%). */
+extern double rhoPhase;
+extern double rhoOffsets;
+extern int32_t noMask; /* ignore any embedded VRT dataset mask band on offset inputs; defined once in common/getRegion.c since every program shares readOffsets.c */
 
 int main(int argc, char *argv[])
 {
@@ -157,6 +200,8 @@ int main(int argc, char *argv[])
 	/* Remove images that are outside output area */
 	removeOutOfBounds(&outputImage, &ascImages, &ascParams, &nAsc);
 	removeOutOfBounds(&outputImage, &descImages, &descParams, &nDesc);
+	/* Allocate image buffers sized to surviving images only */
+	allocateOffsetBuffers(ascImages, descImages);
 	/*
 	  Read shelf mask
 	*/
@@ -194,6 +239,22 @@ int main(int argc, char *argv[])
 	/*
 	  Init output image memory
 	*/
+	/* Single contributing image, nothing else touching the output grid: the weighted
+	   multi-image accumulation buffers/math are provably a no-op (see
+	   mosaicSource/CLAUDE.md "single-image fast path"), so mallocOutputImage() and
+	   speckleTrackMosaic() can skip them. Deliberately narrow/auto-detected (no CLI
+	   flag) rather than covering every mode. outputImage.no3d must be TRUE too:
+	   make3DMosaic() is called unconditionally below whenever (nAsc+nDesc)>0 (it is
+	   NOT gated by noVhFlag) and only skips touching the accumulation buffers via its
+	   own early "if (no3d == TRUE) return;" -- without that, it would call
+	   setupBuffers()/computeScale() on the buffers this path leaves NULL. */
+	outputImage.singleImageFastPath =
+		(outputImage.rOffsetFlag == TRUE && (nAsc + nDesc) == 1 &&
+		 args.threeDOffFlag == FALSE && outputImage.noVhFlag == TRUE &&
+		 outputImage.no3d == TRUE &&
+		 args.landSatFile == NULL && args.irregFile == NULL &&
+		 outputImage.makeTies == FALSE && args.statsFlag == FALSE &&
+		 refVel.initMapFlag == FALSE && outputImage.timeOverlapFlag == FALSE);
 	malloc3DBuffers();
 	mallocOutputImage(&outputImage);
 	/* Consolodate lists */
@@ -212,13 +273,51 @@ int main(int argc, char *argv[])
 	}
 	//  Init and input DEM
 	fprintf(outputImage.fpLog, ";\n; About to Read XYDEM %s\n", args.demFile);
-	readXYDEM(args.demFile, &dem);
+	/* readXYDEM() ("Read a full XY DEM") loads the entire DEM file regardless of how
+	   much of it the output grid actually needs -- for a circumpolar DEM (e.g. the
+	   full ~20741x20741 Antarctic Copernicus DEM) that can be several times larger
+	   than a single-track output grid actually requires. Crop to the output grid's
+	   own extent instead, via the readXYDEMcrop() this file already delegates to
+	   (readXYDEMcrop.c:readXYImageGDALCropped()/getCropBounds() already support
+	   real cropping; readXYDEM() just always passes the 0,0,0,0 "no crop" sentinel).
+	   Units are km, matching getCropBounds()'s internal convention (outputImage's
+	   own origin/size/spacing are metres). Padded by demPadKm for the DEM
+	   interpolation stencil (xyGetZandSlope.c/interpXYDEM.c) and any small mismatch
+	   between the DEM's own projection parameters and the output grid's -- cheap
+	   insurance given the crop is already ~10x smaller than the full DEM. */
+	if ((nAsc + nDesc) == 0 && LSImages == NULL)
+	{
+		/* Tiepoint-only run with no input frames -- e.g. a bedrock/-extraTies
+		   tie that just echoes the extra tie points (writeExtraTies() in
+		   writeTieFile.c). There is no meaningful output grid: findOutBounds()
+		   hits its "no data case", then autosizes from zero images, leaving a
+		   garbage/overflowed extent (xSize can be INT_MIN). Cropping the DEM to
+		   that grid throws "Area requested does not fit in DEM" and aborts the
+		   tie generation (this is what broke bedrock tiefiles when the crop was
+		   added -- readXYDEM used to load the whole DEM). writeExtraTies still
+		   needs the DEM (getXYHeight for z, dem->stdLat for the projection) and
+		   the extra ties span the whole region, so read the FULL DEM here. */
+		readXYDEM(args.demFile, &dem);
+	}
+	else
+	{
+		double demPadKm = 10.0;
+		double demXmin = outputImage.originX * MTOKM - demPadKm;
+		double demXmax = (outputImage.originX + outputImage.xSize * outputImage.deltaX) * MTOKM + demPadKm;
+		double demYmin = outputImage.originY * MTOKM - demPadKm;
+		double demYmax = (outputImage.originY + outputImage.ySize * outputImage.deltaY) * MTOKM + demPadKm;
+		readXYDEMcrop(args.demFile, &dem, demXmin, demXmax, demYmin, demYmax);
+	}
 	for (tmpP = params; tmpP != NULL; tmpP = tmpP->next)
 		tmpP->xydem = dem;
 	fprintf(outputImage.fpLog, ";\n; Returned from readXYDEM\n");
 	fflush(outputImage.fpLog);
 	// Init values
-	init3DImages(&outputImage, &refVel);
+	/* init3DImages() unconditionally touches image/image2/image3/scale/scale2/scale3,
+	   which mallocOutputImage() left NULL for singleImageFastPath -- mallocOutputImage()
+	   already did the equivalent sentinel init for that path's own buffers. */
+	if (outputImage.singleImageFastPath == FALSE)
+		init3DImages(&outputImage, &refVel);
 	/*
 	  Step 0: Switched to first map since to accomdate discard of large dt.
 	  *******************************START Landsat mosaics******************************
@@ -251,9 +350,16 @@ int main(int argc, char *argv[])
 	{
 		makeVhMosaic(images, params, &outputImage, args.fl);
 	}
-	else
+	/* Same misattribution as the speckleTrackMosaic branch below -- split for the
+	   same reason. Existing message text left verbatim, typo included, so anything
+	   grepping for it keeps working. */
+	else if (outputImage.noVhFlag == TRUE)
 	{
 		fprintf(outputImage.fpLog, ";\n; NoVh flag set, not Enterng makeVhMosaic\n;\n");
+	}
+	else
+	{
+		fprintf(outputImage.fpLog, ";\n; No ascending/descending images for this piece, not Enterng makeVhMosaic\n;\n");
 	}
 	/*
 	  Step 3: Include fully speckle-tracked data
@@ -262,9 +368,18 @@ int main(int argc, char *argv[])
 	{
 		speckleTrackMosaic(images, params, &outputImage, args.fl, &refVel, args.statsFlag);
 	}
-	else
+	/* Two distinct reasons to skip, and the message has to say which. Reporting the
+	   flag unconditionally is wrong whenever the flag is set but the sector simply
+	   has no images -- a reader then sees "rOffset flag False" in a log whose own
+	   header block says "rOffset Flag : 1", which is a contradiction that invites
+	   the conclusion that speckle tracking never ran anywhere in the mosaic. */
+	else if (outputImage.rOffsetFlag == FALSE)
 	{
 		fprintf(outputImage.fpLog, ";\n; rOffset flag False, not Entering speckleTrackMosaic\n;\n");
+	}
+	else
+	{
+		fprintf(outputImage.fpLog, ";\n; No ascending/descending images for this piece, not Entering speckleTrackMosaic\n;\n");
 	}
 	/********************************END Landsat mosaics******************************	*/
 	/*
@@ -297,6 +412,10 @@ int main(int argc, char *argv[])
 	{
 		if (haveData == TRUE || refVel.initMapFlag == TRUE)
 		{
+			/* Drop any stale output of the OTHER format so a dir that
+			   switches between binary and GeoTIFF does not keep leftover
+			   files of the format no longer being written. */
+			removeStaleOutputs(args.outFileBase, (args.COG == TRUE || args.GTiff == TRUE));
 			if(args.COG == FALSE && args.GTiff == FALSE) {
 				write3Doutput(outputImage, args.outFileBase);
 			}
@@ -653,6 +772,17 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 	fprintf(outputImage->fpLog, "; TimeOverlapFlag    : %i\n", outputImage->timeOverlapFlag);
 	fprintf(outputImage->fpLog, "; DeltaB    : %i\n", outputImage->deltaB);
 	fprintf(outputImage->fpLog, "; useSquint Flag   : %i\n", useSquint);
+	fprintf(outputImage->fpLog, "; noMask Flag      : %i\n", noMask);
+	{
+		extern int32_t pairOverCount, rSigmaResidual, pairCountLegacy;
+		extern double rSigmaConst, rhoPhase, rhoOffsets;
+		fprintf(outputImage->fpLog, "; pairOverCount    : %i\n", pairOverCount);
+		fprintf(outputImage->fpLog, "; rSigmaResidual   : %i\n", rSigmaResidual);
+		fprintf(outputImage->fpLog, "; rSigmaConst      : %f\n", rSigmaConst);
+		fprintf(outputImage->fpLog, "; pairCountLegacy  : %i\n", pairCountLegacy);
+		fprintf(outputImage->fpLog, "; rhoPhase         : %f\n", rhoPhase);
+		fprintf(outputImage->fpLog, "; rhoOffsets       : %f\n", rhoOffsets);
+	}
 	fprintf(outputImage->fpLog, "; sepAscDesc Flag  : %i\n", sepAscDesc);
 	fprintf(outputImage->fpLog, "; north Flag       : %i\n", args->north);
 	fprintf(outputImage->fpLog, "; writeBlank Flag  : %i\n", args->writeBlank);
@@ -805,6 +935,48 @@ static void write3DFlatVRTs(outputImageStructure outputImage, char *outFileBase,
 	writeBinaryVRT(vrtFile, errFiles, errDescs, 2,
 	               outputImage.xSize, outputImage.ySize, geoTransform, epsg, noDataValue);
 	free(vrtFile);
+}
+
+/* Remove stale output files of the OTHER format (binary <-> GeoTIFF) so a
+   velocity directory that is re-run with a different output format does not keep
+   leftover files of the format no longer being written. Called just before the
+   write, so removing the shared ".vrt" here is safe -- the chosen writer rewrites
+   it. remove() on a missing file is a harmless no-op, so the stem list can be a
+   superset covering the XY/RA (vx/vy vs vr/va) and vz/dT variants. */
+static void removeStaleOutputs(char *outFileBase, int32_t writingTiff)
+{
+	const char *stems[] = {"vx", "vy", "vr", "va", "vz", "dT", "ex", "ey", "er", "ea"};
+	const int32_t nStems = (int32_t)(sizeof(stems) / sizeof(stems[0]));
+	char path[LINEMAX];
+	int32_t i;
+	if (writingTiff)
+	{
+		/* Writing .tif: drop binary flat files, their .geodat sidecars, and the
+		   binary VRT sidecars. */
+		const char *vrts[] = {".vrt", ".vz.vrt", ".dT.vrt", ".err.vrt"};
+		for (i = 0; i < nStems; i++)
+		{
+			snprintf(path, sizeof(path), "%s.%s", outFileBase, stems[i]);
+			remove(path);
+			snprintf(path, sizeof(path), "%s.%s.geodat", outFileBase, stems[i]);
+			remove(path);
+		}
+		for (i = 0; i < (int32_t)(sizeof(vrts) / sizeof(vrts[0])); i++)
+		{
+			snprintf(path, sizeof(path), "%s%s", outFileBase, vrts[i]);
+			remove(path);
+		}
+	}
+	else
+	{
+		/* Writing binary: drop the GeoTIFF counterparts (write3Doutput itself
+		   rewrites the shared .vrt and the binary .vz.vrt/.err.vrt). */
+		for (i = 0; i < nStems; i++)
+		{
+			snprintf(path, sizeof(path), "%s.%s.tif", outFileBase, stems[i]);
+			remove(path);
+		}
+	}
 }
 
 static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
@@ -1123,9 +1295,16 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	int32_t deltaB;
 	char *verticalCorrectionSuffix;
 
-	if (argc < 4 || argc > 30)
+	/* Raised 30 -> 44 (2026-08-26) when -rSigmaConst, which takes a VALUE and so
+	   costs two argv slots, pushed a routine production command over the limit --
+	   it failed by printing the usage text, which reads as an unrecognised flag
+	   rather than an arg-count overflow.  Every optional flag added over the years
+	   has eaten into this headroom; the message had also gone stale at 27.
+	   Raised again 44 -> 52 for -rhoPhase/-rhoOffsets, two more value-taking
+	   flags at two argv slots each. */
+	if (argc < 4 || argc > 52)
 	{
-		fprintf(stderr, "Arg count > 27: %i\n", argc);
+		fprintf(stderr, "Arg count out of range (max 52): %i\n", argc);
 		usage(); /* Check number of args */
 	}
 	n = argc - 4;
@@ -1179,6 +1358,21 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			fprintf(stderr, "xyDEM flag obsolete - xydem is the default");
 		else if (strstr(argString, "writeBlank") != NULL)
 			args->writeBlank = TRUE;
+		/* The rho flags MUST be tested before "rOffsets"/"offsets" below.  This
+		   parser dispatches on strstr, so a longer flag containing a shorter
+		   one is silently swallowed by the shorter test.  "-rhoOffsets" escapes
+		   "offsets" only because of the capital O, which is far too fragile a
+		   thing to depend on. */
+		else if (strstr(argString, "rhoPhase") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &rhoPhase);
+			i++;
+		}
+		else if (strstr(argString, "rhoOffsets") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &rhoOffsets);
+			i++;
+		}
 		else if (strstr(argString, "rOffsets") != NULL)
 			rOffsetFlag = TRUE;
 		else if (strstr(argString, "offsets") != NULL)
@@ -1235,6 +1429,37 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		else if (strstr(argString, "useSquint") != NULL)
 		{
 			useSquint = TRUE;
+		}
+		/* longest-first: -noPairOverCount must be tested before -pairOverCount */
+		else if (strstr(argString, "noPairOverCount") != NULL)
+		{
+			pairOverCount = FALSE;
+		}
+		else if (strstr(argString, "pairOverCount") != NULL)
+		{
+			pairOverCount = TRUE;
+		}
+		else if (strstr(argString, "pairCountLegacy") != NULL)
+		{
+			pairCountLegacy = TRUE;
+		}
+		/* longest-first, as above */
+		else if (strstr(argString, "noRSigmaResidual") != NULL)
+		{
+			rSigmaResidual = FALSE;
+		}
+		else if (strstr(argString, "rSigmaResidual") != NULL)
+		{
+			rSigmaResidual = TRUE;
+		}
+		else if (strstr(argString, "rSigmaConst") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &rSigmaConst);
+			i++;
+		}
+		else if (strstr(argString, "noMask") != NULL)
+		{
+			noMask = TRUE;
 		}
 		else if (strstr(argString, "fl") != NULL)
 		{
@@ -1380,7 +1605,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
@@ -1426,6 +1651,13 @@ static void usage()
 		  "\tinputFile =\t\t File with input params, dem and geodat filenames",
 		  "\tdemFile =\t\t File with nonInsar dem",
 		  "\tuseSquint =\t\t Apply per-image squint(r,a) heading correction (phase/crossing-orbit solution only); default off",
+		  "\tnoMask =\t\t Ignore any embedded VRT dataset mask band on offset inputs; default off (mask honored when present)",
+		  "\tnoPairOverCount =\t\t Disable the (n_A+n_D)/2 crossing-orbit error inflation for pair non-independence; default is enabled",
+		  "\trSigmaConst X =\t\t Diagnostic: add a FIXED X metres instead of each frame's own residual; default 0 = off",
+		  "\tpairCountLegacy =\t\t Control: use the pre-2026-08 over-count formula (nOuter+nPairs)/2 instead of (nOuter+nPairs/nOuter)/2; default off",
+		  "\trhoPhase X =\t\t Pair-correlation parameter for the PHASE crossing over-count factor; default 0.6",
+		  "\trhoOffsets X =\t\t Pair-correlation parameter for the crossing-OFFSETS over-count factor; default 0.6",
+		  "\tnoRSigmaResidual =\t\t Omit the rparams tie-point fit residual from the range-offset budget, leaving only the local .sr matching sigma; default is to include it",
 		  "\toutputImage =\t\t Root of output image (e.g., mosaicOffsets)");
 }
 
@@ -1440,7 +1672,13 @@ static void findOutBounds(outputImageStructure *outputImage, inputImageStructure
 	landSatImage *LStmp;
 	int32_t j;
 	/*
-	  No data case for tiepoints
+	  No data case for tiepoints: no input frames (e.g. a bedrock/-extraTies tie
+	  that only echoes external tie points). There is no meaningful output grid.
+	  Keep xSize/ySize at 0 -- the mosaic pixel loops then run zero iterations,
+	  contributing nothing (writeTieFile still echoes the -extraTies) -- but do
+	  NOT fall through to the autosize block below: autosizing from zero images
+	  leaves min/max at their 1e30 sentinels, and (int32_t)1e30 is out of range
+	  and overflows to a negative xSize/ySize. Skip it explicitly here.
 	*/
 	if (ascImages == NULL && descImages == NULL && LSImages == NULL && writeBlank == FALSE)
 	{
@@ -1450,9 +1688,16 @@ static void findOutBounds(outputImageStructure *outputImage, inputImageStructure
 		outputImage->originY = 0;
 		outputImage->deltaX = 1.;
 		outputImage->deltaY = 1.;
+		/* autoSize=TRUE tells writeTieFile() to output ALL tie points (huge
+		   +/-1e9 bounds) instead of clipping to this degenerate output grid --
+		   the extraTies span the whole region and must not be filtered out.
+		   The original code got this by falling through to the autosize block
+		   below (which sets *autoSize=TRUE); we skip that block to avoid its
+		   integer overflow, so set the same flag explicitly here. */
+		*autoSize = TRUE;
 	}
 	/* If ouput size zero, auto size */
-	if (outputImage->xSize == 0 || outputImage->ySize == 0)
+	else if (outputImage->xSize == 0 || outputImage->ySize == 0)
 	{
 		minXLS = (double)LARGEINT;
 		maxXLS = -(double)LARGEINT;
@@ -1555,6 +1800,66 @@ static void mallocOutputImage(outputImageStructure *outputImage)
 	outputImage->imageType = POWER;
 	bufSize = outputImage->ySize * sizeof(float *);
 	fprintf(stderr, "%i\n", bufSize);
+
+	if (outputImage->singleImageFastPath == TRUE)
+	{
+		/* One contributing image, nothing else touching the grid: the weighted
+		   accumulation buffers (image/image2/image3/scale/scale2/scale3) and the
+		   per-image weighting scratch (sxTmp/syTmp/fScale) are provably unnecessary
+		   -- see the singleImageFastPath comment in geocode.h and speckleTrackMosaic.c.
+		   Leave them NULL entirely instead of allocating ~700MB-scale buffers per
+		   grid dimension that would never be read. */
+		outputImage->image = NULL;
+		outputImage->image2 = NULL;
+		outputImage->image3 = NULL;
+		outputImage->scale = NULL;
+		outputImage->scale2 = NULL;
+		outputImage->scale3 = NULL;
+		outputImage->sxTmp = NULL;
+		outputImage->syTmp = NULL;
+		outputImage->fScale = NULL;
+		outputImage->vxTmp = (float **)malloc(bufSize);
+		outputImage->vyTmp = (float **)malloc(bufSize);
+		outputImage->vzTmp = (float **)malloc(bufSize);
+		outputImage->errorX = (float **)malloc(bufSize);
+		outputImage->errorY = (float **)malloc(bufSize);
+
+		bufSize = outputImage->xSize * outputImage->ySize * sizeof(float);
+		bufx = (float *)malloc(bufSize);
+		bufy = (float *)malloc(bufSize);
+		bufz = (float *)malloc(bufSize);
+		bufex = (float *)malloc(bufSize);
+		bufey = (float *)malloc(bufSize);
+
+		for (i = 0; i < outputImage->ySize; i++)
+		{
+			outputImage->vxTmp[i] = (float *)&(bufx[i * outputImage->xSize]);
+			outputImage->vyTmp[i] = (float *)&(bufy[i * outputImage->xSize]);
+			outputImage->vzTmp[i] = (float *)&(bufz[i * outputImage->xSize]);
+			outputImage->errorX[i] = (float *)&(bufex[i * outputImage->xSize]);
+			outputImage->errorY[i] = (float *)&(bufey[i * outputImage->xSize]);
+		}
+
+		/* Sentinel-fill up front: speckleTrackMosaic()'s fast path only visits rows
+		   within its per-row-tightened footprint bound, so pixels outside it (and
+		   never-touched rows entirely) must already read back as "no data" once
+		   image/image2/image3 are aliased onto these buffers. */
+		for (j = 0; j < outputImage->ySize; j++)
+		{
+			for (k = 0; k < outputImage->xSize; k++)
+			{
+				outputImage->vxTmp[j][k] = -LARGEINT;
+				outputImage->vyTmp[j][k] = -LARGEINT;
+				outputImage->vzTmp[j][k] = -LARGEINT;
+				outputImage->errorX[j][k] = -LARGEINT;
+				outputImage->errorY[j][k] = -LARGEINT;
+			}
+		}
+		fprintf(outputImage->fpLog, "; Returned from  mallocOutputImage (singleImageFastPath)\n");
+		fflush(outputImage->fpLog);
+		return;
+	}
+
 	outputImage->image = (void **)malloc(bufSize);
 	outputImage->image2 = (void **)malloc(bufSize);
 	outputImage->image3 = (void **)malloc(bufSize);

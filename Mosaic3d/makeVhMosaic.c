@@ -45,6 +45,7 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 	double range, azimuth; /* range,azimuth coords */
 	double Range;		   /* Slant Range */
 	double phase;		   /* Interpolated phase value */
+	double ionPhase;	   /* Interpolated ionospheric phase, when one was supplied */
 	double x, y, zSp, zWGS84;
 	double thetaC, thetaD; /* Center look angle and deviation from center */
 	double ReHfixed, thetaCfixedReH;
@@ -128,6 +129,9 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 			continue;
 		}
 		getMosaicInputImage(currentImage, 0, (int32_t)LARGEINT);
+		/* NULL buffer: keep the pool setupADImageBuffers assigned, as with the phase image
+		   above (this function never calls setBuffer()). */
+		getIonospherePhaseImage(currentImage, NULL, 0, (int32_t)LARGEINT);
 		/*
 		  Read offset file if needed.
 		*/
@@ -167,7 +171,7 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 		{ int t; for (t = 0; t < nthreads; t++) localImgs[t] = *currentImage; }
 #pragma omp parallel private(j, x, y, lat, lon, zSp, zWGS84, dzda, dzdr, \
 		range, azimuth, Range, theta, thetaD, psi, cotanpsi, ReH, \
-		hAngle, phase, phiZ, phaseError, delta, scalePhase, \
+		hAngle, phase, ionPhase, phiZ, phaseError, delta, scalePhase, \
 		sigmaR, sigmaA, va, vr, vz, da, xyAngle, dzdtSubmergence, \
 		sMask, er, ea, ex, ey, scX, scY, vx, vy, validData)
 		{
@@ -191,7 +195,11 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 					*/
 					xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, myImg);
 					validData = FALSE;
-					if (zSp > (MINELEVATION + 1) && zSp < 9999.)
+					/* Validate on zWGS84 (true elevation), not zSp -- see speckleTrackMosaic.c
+					   for the full explanation (zSp carries a latitude-dependent spherical-earth
+					   correction that isn't appropriate to bounds-check as an elevation sanity
+					   check). Matches make3DMosaic.c/make3DOffsets.c. */
+					if (zWGS84 > (MINELEVATION + 1) && zWGS84 < 10000.0)
 					{ /* If valid z ....*/
 						/*
 						   Compute phase for topography.
@@ -223,6 +231,19 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 							else
 								computePhiZ(&phiZ, azimuth, currentParams, myImg, thetaD, Range, ReH, ReHfixed, Re, thetaCfixedReH, &phaseError);
 							phase = phase - phiZ;
+							/*
+							  Ionosphere correction, still in radians and before the scalePhase
+							  conversion below. Subtracted, not added -- see make3DMosaic.c and
+							  tiePoints/computeBaseline.c for the sign convention.
+							*/
+							if (myImg->ionospherePhase != NULL)
+							{
+								interpIonPhaseImage(myImg, range, azimuth, &ionPhase);
+								if (ionPhase > -0.98 * LARGEINT)
+								{
+									phase -= ionPhase;
+								}
+							}
 							/*
 							  Shelf correction if mask indicates
 							*/

@@ -54,6 +54,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	extern int32_t HemiSphere;
 	extern double Rotation;
 	extern float *AImageBuffer, *DImageBuffer;
+	extern float *AIonBuffer, *DIonBuffer;
 	extern int32_t sepAscDesc;
 	extern int32_t indentRegionOutput;
 	conversionDataStructure *aCp, *dCp;							/* asc/desc coordinate conversion info */
@@ -66,6 +67,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	double arange, drange;		   /* asc/desc range coordinates in image coords */
 	double aAzimuth, dAzimuth;
 	double aPhase, dPhase;
+	double aIonPhase, dIonPhase;
 	double aReH, dReH, aRe, dRe;								   /* Asc/desc Earth radii and radii + alt */
 	double aReHfixed, aThetaCfixedReH, dReHfixed, dThetaCfixedReH; /* Fixed geo params */
 	double scX, scY;											   /* X,Y scale factors */
@@ -87,7 +89,9 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	float **vXimage, **vYimage, **vZimage, **errorX, **errorY;
 	;															 /* velocity and error buffers */
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp; /* Temp solutions */
-	float **nAtmp, **nDtmp;   /* per-pixel distinct image counts for pair over-counting correction */
+	extern int32_t pairOverCount; /* -pairOverCount; default off, see mosaic3d.c */
+	float **nAtmp, **nDtmp;   /* per-pixel outer-image and pair counts for the over-counting correction */
+	float **errorX0, **errorY0; /* errorX/errorY accumulators as this round found them */
 	unsigned char *aContrib;  /* flat [ySize×xSize]: did current aPhaseImage contribute at this pixel? */
 	float **scaleX, **scaleY, **scaleZ;							 /*  scale buffers */
 	float dum1, dum2;	
@@ -118,6 +122,10 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	*/
 	setupBuffers(outputImage, &vXimage, &vYimage, &vZimage, &scaleX, &scaleY, &scaleZ,
 				 &vxTmp, &vyTmp, &vzTmp, &sxTmp, &syTmp, &fScale, &errorX, &errorY);
+	nAtmp = NULL;
+	nDtmp = NULL;
+	aContrib = NULL;
+	if (pairOverCount == TRUE)
 	{
 		int i1, j1;
 		nAtmp = mallocImage(outputImage->ySize, outputImage->xSize);
@@ -137,6 +145,21 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	*/
 	computeScale((float **)vXimage, fScale, outputImage->ySize, outputImage->xSize, fl, (float)1.0, (double)(-LARGEINT));
 	undoNormalization(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, fScale, FALSE);
+	/* Snapshot the error accumulators as this round inherits them, so the pair
+	   over-counting correction below inflates only what this round adds -- see
+	   inflatePairOverCount() in common/scalingFunctions.c. */
+	if (pairOverCount == TRUE)
+	{
+		int i1, j1;
+		errorX0 = mallocImage(outputImage->ySize, outputImage->xSize);
+		errorY0 = mallocImage(outputImage->ySize, outputImage->xSize);
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+			for (j1 = 0; j1 < outputImage->xSize; j1++)
+			{
+				errorX0[i1][j1] = errorX[i1][j1];
+				errorY0[i1][j1] = errorY[i1][j1];
+			}
+	}
 	allImages = ascImages; /* Added 5/30 to avoid using asc/desc */
 	aParams = ascParams;
 	nTotal = 0;
@@ -193,6 +216,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		aPhaseImage->tolerance = geoTolerance;
 		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, aPhaseImage, outputImage, &azimuthMin, &azimuthMax);
 		getMosaicInputImage(aPhaseImage, azimuthMin, azimuthMax);
+		getIonospherePhaseImage(aPhaseImage, AIonBuffer, azimuthMin, azimuthMax);
 		aPhaseImage->memChan = MEM1;
 		twokA = (4.0 * PI) / aPhaseImage->par.lambda;
 		/*
@@ -268,6 +292,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			if (azimuthMin == 0.0f && azimuthMax == 0.0f)
 				continue;
 			getMosaicInputImage(dPhaseImage, azimuthMin, azimuthMax);
+			getIonospherePhaseImage(dPhaseImage, DIonBuffer, azimuthMin, azimuthMax);
 			/*
 			  Loop over output grid and compute velocities
 			*/
@@ -283,7 +308,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 #pragma omp parallel \
 			private(j, x, y, lat, lon, zWGS84, \
 			        aZSp, dZSp, arange, drange, aAzimuth, dAzimuth, \
-			        aPhase, dPhase, aReH, dReH, aRange, dRange, \
+			        aPhase, dPhase, aIonPhase, dIonPhase, aReH, dReH, aRange, dRange, \
 			        aTheta, dTheta, aThetaD, dThetaD, aPsi, dPsi, \
 			        aPhiZ, dPhiZ, phaseErrorA, phaseErrorD, \
 			        aP, dP, aPe, dPe, scaleA, scaleD, \
@@ -358,6 +383,28 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								}
 								aPhase = aPhase - aPhiZ;
 								dPhase = dPhase - dPhiZ;
+								/*  Ionosphere corrections, still in radians and before the
+								    velocity scaling below. The file holds the ionospheric phase
+								    itself, in the same sign convention as the phase image, so it
+								    is SUBTRACTED -- unlike the range-offset ionosphere correction
+								    in make3DOffsets.c, which is a pre-negated correction that is
+								    added. See tiePoints/computeBaseline.c for the derivation. */
+								if (myAImg->ionospherePhase != NULL)
+								{
+									interpIonPhaseImage(myAImg, arange, aAzimuth, &aIonPhase);
+									if (aIonPhase > -0.98 * LARGEINT)
+									{
+										aPhase -= aIonPhase;
+									}
+								}
+								if (myDImg->ionospherePhase != NULL)
+								{
+									interpIonPhaseImage(myDImg, drange, dAzimuth, &dIonPhase);
+									if (dIonPhase > -0.98 * LARGEINT)
+									{
+										dPhase -= dIonPhase;
+									}
+								}
 								/*  Tide corrections	*/
 								if (sMask == SHELF)
 								{
@@ -389,6 +436,13 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								{
 									/*  Compute B (note B is really C in the TGARS paper	*/
 									computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
+									if (sMask == SHELF)
+									{
+										/* Zero slope coupling in the crossing-pair solve on ice shelves --
+										   see make3DOffsets.c for the full explanation (matches
+										   speckleTrackMosaic.c's 10/13/17 precedent). */
+										B[0][0] = 0.0; B[0][1] = 0.0; B[1][0] = 0.0; B[1][1] = 0.0;
+									}
 									/*  Scale phases for velocity computation (scale for m/yr)	*/
 									scaleA = 365.25 / (twokA * aParams->nDays * sin(aPsi));
 									scaleD = 365.25 / (twokD * dParams->nDays * sin(dPsi));
@@ -430,8 +484,11 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 
 									sxTmp[i][j] = scX; /* This is summing up 1/sigma^2*/
 									syTmp[i][j] = scY;
-									nDtmp[i][j] += 1.0f;
-									aContrib[i * outputImage->xSize + j] = 1;
+									if (pairOverCount == TRUE)
+									{
+										nDtmp[i][j] += 1.0f;
+										aContrib[i * outputImage->xSize + j] = 1;
+									}
 									fScale[i][j] = 1.0; /* Value for zero feathering */
 #pragma omp atomic write
 									aPhaseImage->used = TRUE;
@@ -481,6 +538,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 			/* ******************************
 			   Use end of goto used to skip inner loop for nophase */
 		} /* End desc loop */
+		if (pairOverCount == TRUE)
 		{
 			int i1, j1;
 			for (i1 = 0; i1 < outputImage->ySize; i1++)
@@ -493,7 +551,8 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 	}	  /* End asc loop */
 	free(localAImgs);
 	free(localDImgs);
-	free(aContrib);
+	if (aContrib != NULL)
+		free(aContrib);
 	/**************************END OF MAIN LOOP ******************************/
 	fprintf(stderr, "Out of main loop\n");
 	{
@@ -503,30 +562,29 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 		fprintf(stderr, "Total phase processing time (whole run): %.3f s\n",
 		        (funcEnd.tv_sec - funcStart.tv_sec) + (funcEnd.tv_usec - funcStart.tv_usec) * 1e-6);
 	}
+	/* Correct for pair over-counting.  Must run before endScale(), on this round's own
+	   error contribution only -- see inflatePairOverCount() in common/scalingFunctions.c. */
+	if (pairOverCount == TRUE)
+	{
+		extern double rhoPhase; /* defined in common/getRegion.c */
+		int i1;
+		inflatePairOverCount(outputImage, errorX, errorY, errorX0, errorY0, nAtmp, nDtmp, rhoPhase);
+		for (i1 = 0; i1 < outputImage->ySize; i1++)
+		{
+			free(nAtmp[i1]);
+			free(nDtmp[i1]);
+			free(errorX0[i1]);
+			free(errorY0[i1]);
+		}
+		free(nAtmp);
+		free(nDtmp);
+		free(errorX0);
+		free(errorY0);
+	}
 	/*
 	  Adjust scale
 	*/
 	endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, FALSE);
-	/* Correct for pair over-counting: N_A×N_D pairs treated as independent, but only N_A+N_D
-	   images are independent.  Multiply error² by (n_A+n_D)/2 — exact for equal σ and equal
-	   D-matrix magnitudes, which is the same approximation endScale already assumes. */
-	{
-		int i1, j1;
-		float ntotal;
-		for (i1 = 0; i1 < outputImage->ySize; i1++)
-			for (j1 = 0; j1 < outputImage->xSize; j1++)
-			{
-				ntotal = nAtmp[i1][j1] + nDtmp[i1][j1];
-				if (ntotal > 0.0f)
-				{
-					errorX[i1][j1] *= 0.5f * ntotal;
-					errorY[i1][j1] *= 0.5f * ntotal;
-				}
-			}
-		for (i1 = 0; i1 < outputImage->ySize; i1++) { free(nAtmp[i1]); free(nDtmp[i1]); }
-		free(nAtmp);
-		free(nDtmp);
-	}
 	fprintf(outputImage->fpLog, ";\n; Returning from make3DOffs(.c)\n");
 	fflush(outputImage->fpLog);
 }

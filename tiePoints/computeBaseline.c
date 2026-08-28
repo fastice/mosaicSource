@@ -1,5 +1,6 @@
 #include <math.h>
 #include "mosaicSource/common/common.h"
+#include "mosaicSource/common/writeTieResidualsGpkg.h"
 #include "tiePoints.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
@@ -29,6 +30,7 @@ typedef struct
 	double chisq, sigma;
 	double Bn, Bp, dBn, dBp, dBnQ, dBpQ;
 	double C[7][7];
+	tieResidualsType residuals; /* only populated when fitBaseline() is called with debugFlag */
 } BaselineFit;
 
 /*
@@ -37,7 +39,7 @@ typedef struct
   computeBaseline() so it can be run twice -- see computeBaseline() below.
 */
 static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
-							   inputImageStructure inputImage, int32_t verbose)
+							   inputImageStructure inputImage, int32_t verbose, int32_t debugFlag)
 {
 	double Re, H, RNear, thetaC, dr, rOffset;
 	double *a; /* Solution for params */
@@ -59,6 +61,9 @@ static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
 	int32_t pIndex[7];
 	conversionDataStructure *cP;
 	BaselineFit fit;
+	int32_t *origIndex = NULL;
+	double *residual = NULL;
+	void (*coeffsFn)(void *, int32_t, double *, int32_t) = NULL;
 
 	memset(&fit, 0, sizeof(fit));
 	fit.insufficientPoints = FALSE;
@@ -109,6 +114,8 @@ static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
 	sigB = dvector(1, ma);
 	C6 = dmatrix(1, 6, 1, 6);
 	Cp = dmatrix(1, ma, 1, ma);
+	if (debugFlag)
+		origIndex = (int32_t *)malloc(npts * sizeof(int32_t));
 	/*
 	  Loop twice, first using flattening value of bsq, and then value
 	  from first fit. Should easily converge with just two iterations
@@ -139,6 +146,8 @@ static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
 			if (fabs(phaseArr[i]) < 1.0E6)
 			{ /* Use only good points */
 				i1 = j + 1;
+				if (debugFlag)
+					origIndex[i1 - 1] = i;
 				z = tiePoints->z[i];
 				r0 = RNear + rOffset + tiePoints->r[i] * dr;
 				azimuth = (int)tiePoints->a[i];
@@ -201,30 +210,42 @@ static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
 		if (tiePoints->dBpFlag == TRUE)
 		{
 			if (tiePoints->quadB == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &dBpQBaselineCoeffs);
+				coeffsFn = &dBpQBaselineCoeffs;
 			else if (tiePoints->bpFlag == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpBaselineCoeffs);
+				coeffsFn = &bpBaselineCoeffs;
 			else if (tiePoints->bnbpFlag == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpbnBaselineCoeffs);
+				coeffsFn = &bpbnBaselineCoeffs;
 			else if (tiePoints->bpdBpFlag == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpdBpBaselineCoeffs);
+				coeffsFn = &bpdBpBaselineCoeffs;
 			else if (tiePoints->bnbpdBpFlag == TRUE)
-			{
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bnbpdBpBaselineCoeffs);
-			}
+				coeffsFn = &bnbpdBpBaselineCoeffs;
 			else
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &dBpBaselineCoeffs);
+				coeffsFn = &dBpBaselineCoeffs;
 		}
 		else
 		{
 			if (tiePoints->bpFlag == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpBaselineCoeffs);
+				coeffsFn = &bpBaselineCoeffs;
 			else if (tiePoints->bnbpFlag == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &bpbnBaselineCoeffs);
+				coeffsFn = &bpbnBaselineCoeffs;
 			else if (tiePoints->noRamp == TRUE)
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &noRampBaselineCoeffs);
+				coeffsFn = &noRampBaselineCoeffs;
 			else
-				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &baselineCoeffs);
+				coeffsFn = &baselineCoeffs;
+		}
+		svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, coeffsFn);
+		if (debugFlag && k == 2)
+		{
+			double afunc[7];
+			residual = (double *)malloc(npts * sizeof(double));
+			for (i1 = 1; i1 <= npts; i1++)
+			{
+				(*coeffsFn)((void *)x, i1, afunc, ma);
+				double model = 0.0;
+				for (int32_t m = 1; m <= ma; m++)
+					model += afunc[m] * a[m];
+				residual[i1 - 1] = y[i1] - model;
+			}
 		}
 		svdvar(v, ma, w, Cp);
 		if (tiePoints->dBpFlag == FALSE && !tiePoints->bpFlag && !tiePoints->bnbpFlag)
@@ -361,6 +382,13 @@ static BaselineFit fitBaseline(tiePointsStructure *tiePoints, double *phaseArr,
 			fit.C[l1][l2] = Cij;
 		}
 
+	if (debugFlag)
+	{
+		fit.residuals.npts = npts;
+		fit.residuals.origIndex = origIndex;
+		fit.residuals.residual = residual;
+	}
+
 	return fit;
 }
 
@@ -422,6 +450,30 @@ static void writeYamlSolutionBlock(BaselineFit *fit)
 }
 
 /*
+  Write the top-level ionosphere keys. Always emitted so the output unambiguously records
+  the decision (matching rparams, which always writes offsetCorrectionFile: nil when it
+  did not use one). The two sigmas only appear when both fits actually ran.
+*/
+static void writeYamlIonosphereKeys(int32_t haveIonFit, int32_t useIon, char *ionosphereFile,
+									double sigmaIon, double sigmaNoIon)
+{
+	if (useIon == TRUE)
+	{
+		fprintf(stdout, "ionosphereCorrectionFile: %s\n", ionosphereFile);
+	}
+	else
+	{
+		fprintf(stdout, "ionosphereCorrectionFile: nil\n");
+	}
+	fprintf(stdout, "usingIon: %s\n", useIon ? "True" : "False");
+	if (haveIonFit == TRUE)
+	{
+		fprintf(stdout, "sigmaWithIonCorrection: %f\n", sigmaIon);
+		fprintf(stdout, "sigmaWithoutIonCorrection: %f\n", sigmaNoIon);
+	}
+}
+
+/*
   Write a sigma<0 "no solution" sentinel block -- see getBaseline.c, which treats
   sigma<0 as an unambiguous, machine-readable "no solution" signal for callers.
 */
@@ -454,12 +506,107 @@ static void writeYamlSentinelBlock(void)
   block getBaseline() reads. Legacy (non-YAML) text output only ever reflects the
   unsquinted solution, matching prior behavior.
 */
-void computeBaseline(tiePointsStructure *tiePoints,
-					 inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose)
+/*
+  Write the debug residuals gpkg for one or both (noSquint/squint) fits. Called only
+  after both fits have succeeded (or the legacy-only noSquint fit, in non-yaml mode) --
+  never for a fit whose insufficientPoints is TRUE, matching the sentinel/exit(1)
+  guards already in place above for the real YAML/legacy output.
+*/
+static void writeDebugResiduals(char *debugFile, tiePointsStructure *tiePoints,
+								BaselineFit *noSquintFit, BaselineFit *squintFit,
+								int32_t hasSquintSolution)
 {
-	BaselineFit noSquintFit, squintFit;
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	OGRDataSourceH ds = openTieResidualsGpkg(debugFile, FALSE);
+	writeTieResidualsLayer(ds, hasSquintSolution ? "residuals_noSquint" : "residuals",
+							tiePoints, &noSquintFit->residuals,
+							"phase_residual_rad", "Baseline fit residual (radians)",
+							Rotation, tiePoints->stdLat, HemiSphere);
+	free(noSquintFit->residuals.origIndex);
+	free(noSquintFit->residuals.residual);
+	if (hasSquintSolution) {
+		writeTieResidualsLayer(ds, "residuals_squint", tiePoints, &squintFit->residuals,
+								"phase_residual_rad",
+								"Baseline fit residual (radians, squint-corrected)",
+								Rotation, tiePoints->stdLat, HemiSphere);
+		free(squintFit->residuals.origIndex);
+		free(squintFit->residuals.residual);
+	}
+	closeTieResidualsGpkg(ds);
+}
 
-	noSquintFit = fitBaseline(tiePoints, tiePoints->phase, inputImage, verbose);
+void computeBaseline(tiePointsStructure *tiePoints,
+					 inputImageStructure inputImage, int32_t yamlOutput, int32_t verbose,
+					 char *debugFile, int32_t ionosphereMode, double ionSigmaMargin,
+					 char *ionosphereFile)
+{
+	BaselineFit noSquintFit, squintFit, ionFit;
+	int32_t debugFlag = (debugFile != NULL);
+	int32_t haveIonFit = FALSE, useIon = FALSE;
+	double sigmaIon = -1.0, sigmaNoIon = -1.0;
+	double *phaseIon = NULL;
+	int32_t i;
+
+	noSquintFit = fitBaseline(tiePoints, tiePoints->phase, inputImage, verbose, debugFlag);
+	/*
+	  Ionosphere: fit a second time against the ionosphere-corrected phase and keep whichever
+	  fit is better. Only the noSquint solution participates -- S1 (the only source of these
+	  corrections today) carries no squint polynomial, so hasSquintSolution is always FALSE
+	  here. If that ever changes, the ion choice would need to be made per squint block.
+	*/
+	if (ionosphereMode != ION_NONE && tiePoints->hasIonosphere == TRUE)
+	{
+		phaseIon = (double *)malloc(tiePoints->npts * sizeof(double));
+		for (i = 0; i < tiePoints->npts; i++)
+		{
+			/* ISCE convention: phaseCorrected = phase - ion (topsApp applies its own screen
+			   as a*exp(-1.0*J*b), b = topophase.ion). NOTE this is a SUBTRACT, unlike the
+			   range-offset ionosphere correction in rParams/getROffsets.c and
+			   Mosaic3d/make3DOffsets.c, which is a pre-negated correction that gets added. */
+			if (fabs(tiePoints->phase[i]) >= 1.0E6 || tiePoints->ionPhase[i] < -0.98 * LARGEINT)
+			{
+				phaseIon[i] = (double)(-LARGEINT); /* invalid -- fitBaseline drops it */
+			}
+			else
+			{
+				phaseIon[i] = tiePoints->phase[i] - tiePoints->ionPhase[i];
+			}
+		}
+		ionFit = fitBaseline(tiePoints, phaseIon, inputImage, verbose, debugFlag);
+		haveIonFit = TRUE;
+		sigmaIon = ionFit.insufficientPoints ? -1.0 : ionFit.sigma;
+		sigmaNoIon = noSquintFit.insufficientPoints ? -1.0 : noSquintFit.sigma;
+		if (ionFit.insufficientPoints == FALSE)
+		{
+			if (ionosphereMode == ION_FORCE || noSquintFit.insufficientPoints)
+			{
+				useIon = TRUE;
+			}
+			else
+			{
+				useIon = (ionFit.sigma < noSquintFit.sigma * (1.0 - ionSigmaMargin));
+			}
+		}
+		fprintf(stderr, "sigma with ion correction: %f  without: %f  (margin %.3f) -- using %s\n",
+				sigmaIon, sigmaNoIon, ionSigmaMargin, useIon ? "with ion" : "without ion");
+		/* Keep the winner in noSquintFit so everything below is unchanged. */
+		if (useIon == TRUE)
+		{
+			if (debugFlag && noSquintFit.insufficientPoints == FALSE)
+			{
+				free(noSquintFit.residuals.origIndex);
+				free(noSquintFit.residuals.residual);
+			}
+			noSquintFit = ionFit;
+		}
+		else if (debugFlag && ionFit.insufficientPoints == FALSE)
+		{
+			free(ionFit.residuals.origIndex);
+			free(ionFit.residuals.residual);
+		}
+		free(phaseIon);
+	}
 
 	if (!yamlOutput) {
 		/* Legacy text format has no notion of squint -- unsquinted solution only,
@@ -467,16 +614,23 @@ void computeBaseline(tiePointsStructure *tiePoints,
 		if (noSquintFit.insufficientPoints)
 			exit(1);
 		writeLegacyTextSolution(tiePoints, &noSquintFit);
+		if (useIon == TRUE)
+		{
+			fprintf(stdout, ";* ionosphereCorrectionFile %s\n", ionosphereFile);
+		}
+		if (debugFlag)
+			writeDebugResiduals(debugFile, tiePoints, &noSquintFit, NULL, FALSE);
 		return;
 	}
 
 	if (tiePoints->hasSquintSolution)
-		squintFit = fitBaseline(tiePoints, tiePoints->phaseSquint, inputImage, verbose);
+		squintFit = fitBaseline(tiePoints, tiePoints->phaseSquint, inputImage, verbose, debugFlag);
 
 	if (noSquintFit.insufficientPoints || (tiePoints->hasSquintSolution && squintFit.insufficientPoints)) {
 		fprintf(stdout, "applyFlatEarth: true\n");
 		fprintf(stdout, "hasSquintSolution: %s\n", tiePoints->hasSquintSolution ? "true" : "false");
 		fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+		writeYamlIonosphereKeys(haveIonFit, useIon, ionosphereFile, sigmaIon, sigmaNoIon);
 		fprintf(stdout, "noSquint:\n");
 		writeYamlSentinelBlock();
 		if (tiePoints->hasSquintSolution) {
@@ -489,12 +643,15 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	fprintf(stdout, "applyFlatEarth: true\n");
 	fprintf(stdout, "hasSquintSolution: %s\n", tiePoints->hasSquintSolution ? "true" : "false");
 	fprintf(stdout, "nDays: %.6f  # days\n", tiePoints->nDays);
+	writeYamlIonosphereKeys(haveIonFit, useIon, ionosphereFile, sigmaIon, sigmaNoIon);
 	fprintf(stdout, "noSquint:\n");
 	writeYamlSolutionBlock(&noSquintFit);
 	if (tiePoints->hasSquintSolution) {
 		fprintf(stdout, "squint:\n");
 		writeYamlSolutionBlock(&squintFit);
 	}
+	if (debugFlag)
+		writeDebugResiduals(debugFile, tiePoints, &noSquintFit, &squintFit, tiePoints->hasSquintSolution);
 }
 
 void baselineCoeffs(void *x, int32_t i, double *afunc, int32_t ma)

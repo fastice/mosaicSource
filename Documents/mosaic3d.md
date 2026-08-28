@@ -70,6 +70,7 @@ mosaic3d [options] inputFile demFile outFileBase
 | `-ompThreads <N>`                      | Number of OpenMP threads for parallel pixel processing (default: 4; overridden by `OMP_NUM_THREADS` environment variable) |
 | `-center`                              | *(obsolete — silently ignored)* |
 | `-useSquint`                           | Apply per-image squint(r,a) heading correction before building the crossing-orbit solving matrix; phase (`make3DMosaic`) only, default off — see "Squint (Residual Doppler) Correction" below |
+| `-noMask`                              | Ignore any embedded VRT dataset mask band on offset inputs (e.g. `autocleanNISAR.py`'s `range/azimuth.offsets.good` masks); default off, so a mask is honored when present — masked pixels are read as no-data |
 
 ### Output Files
 
@@ -629,6 +630,105 @@ where $\sigma_{x,i}$ is the per-pixel velocity error from step $i$. The final
 `endScale` pass converts accumulated weighted sums to normalised velocities and
 error estimates. Edge blending between overlapping images uses a distance-weighted
 feather zone of length `fl`.
+
+### Interpreting the formal errors (`ex`, `ey`)
+
+`mosaic3d` propagates per-observation sigmas through the inversion, applies a crossing-pair
+over-count correction, and reports the result as `ex`/`ey`.
+
+**The over-count correction.** Every crossing pair is accumulated as an independent observation,
+but a pixel seen by $n_A$ ascending and $n_D$ descending images yields only $n_A+n_D$ independent
+measurements, not $n_A n_D$. After each mosaicking round, that round's own contribution to the
+error accumulator is inflated by
+
+$$f = \rho\,P + (1-\rho)\,\frac{n_A+n_D}{2}$$
+
+where $P$ is the contributing pair count and $\rho$ parameterises how correlated the per-pair
+errors are. $\rho$ defaults to **0.5** on both paths. Only the error accumulator is scaled;
+velocities are unaffected.
+
+Nominally $\rho$ is the share of variance common to *every* image, but in practice it is doing a
+larger job: standing in for correlation between pairs that **share an image**. A frame's baseline
+residual attaches to that frame, so all $d$ pairs the frame joins inherit it. The exact treatment
+is $f=\sum_i d_i^2/(2P)$ over contributing images, but that requires a per-pixel record of *which*
+images contributed — a bitmask growing with archive size, impractical at Antarctic scale. $\rho$
+is the fixed-cost stand-in.
+
+The value is set from the measured threshold dependence. Holding the images fixed and raising the
+crossing threshold (t12 $\to$ t10000, 3.3× more pairs) leaves the measured accuracy unchanged — S1
+difference MAD ratio 0.99, std ratio 0.97 — so the formal error should be flat too:
+
+| $\rho$ | formal ratio t10000/t12 | interpretation |
+|---|---|---|
+| 0 | 0.52–0.56 | spurious ~2× "improvement" from redundant pairs |
+| **0.5** | **0.91–0.95** | close to flat |
+| 1 | 0.97–1.02 | flattest, but asserts coverage never helps |
+
+$\rho=1$ tracks best but is too strong — it would mean additional *images* never help either,
+which these runs cannot test since every threshold used the same images. 0.5 keeps most of the
+correction while retaining some averaging benefit.
+
+**What $\rho$ does not fix:** the heavy tails below. That gap would exist with a single pair, since
+it comes from localised bad data rather than from pair counting. That $\rho=0.5$ also happens to
+land $k(\mathrm{std})$ near 1 is a coincidence of magnitude, not a justification.
+
+**The reported value approximates a robust scale, not a standard deviation.** Validated against a
+Sentinel-1 reference over stable ground (S1 speed $\le$ 50 m/yr, ~407k pixels at 1600 m),
+`ex`/`ey` match $1.4826\times\mathrm{MAD}$ of the observed difference to within a few percent —
+ratio 0.97/1.08 in $v_x/v_y$ for crossing phase, 1.01/1.16 for the combined product. Against the
+*standard deviation* of the same differences the ratio is 2.2–3.1. Both hold at once because the
+distribution is strongly non-Gaussian: $\sigma/\mathrm{MAD}\approx2.3$ for phase and $\approx4.6$
+for crossing offsets in $v_y$, where a Gaussian gives exactly 1.0.
+
+**They therefore do not define a confidence interval.** Measured coverage of the S1 − NISAR
+difference, stable ground, averaged over the 12- and 37-day crossing thresholds. (Tabulated at
+$\rho=0$, where `ex`/`ey` sit at the robust scale; at the shipped $\rho=0.5$ the errors are ~2×
+larger, so the `ex` columns shift toward higher coverage while the MAD columns are unchanged.)
+
+| product | comp | <1 MAD | <2 MAD | <1 `ex` | <3 `ex` | >3 `ex` | >5 `ex` |
+|---|---|---|---|---|---|---|---|
+| phase | $v_x$ | 64.7% | 86.4% | 64.5% | 92.9% | 7.05% | 2.23% |
+| phase | $v_y$ | 63.7% | 83.7% | 59.2% | 90.8% | 9.23% | 3.25% |
+| offsets | $v_x$ | 64.4% | 86.6% | 88.3% | 98.7% | 1.34% | 0.30% |
+| offsets | $v_y$ | 64.3% | 82.0% | 82.2% | 94.7% | 5.29% | 2.24% |
+| both | $v_x$ | 64.7% | 86.6% | 63.4% | 92.8% | 7.17% | 2.21% |
+| both | $v_y$ | 63.8% | 83.4% | 57.1% | 89.9% | 10.07% | 3.54% |
+
+A Gaussian gives 68.3% and 95.4% for the first two columns. The core is close to normal; the
+~11-point shortfall at 2 MAD is mass displaced into the tail. So "1σ" does not carry its usual
+$\approx$68% meaning, and 2σ/3σ intervals are progressively more optimistic.
+
+That said, the picture is not uniformly pessimistic — it is bimodal. Comparison against S1 reveals
+**broad areas where the difference is at or below the formal error, contrasted with smaller areas
+that exceed it substantially**: for crossing phase, 59–65% of pixels fall within 1×`ex` and 91–93%
+within 3×, while 7–9% exceed 3× and 2–3% exceed 5×. Crossing offsets, whose errors are more
+conservative, sit at 82–88% within 1×`ex` with only 1–5% beyond 3×.
+
+The cause is structural rather than a calibration failure: the budget contains per-observation
+terms (matching noise, tie-point fit residual, baseline covariance, DEM error) but **no term for
+gross failures** — unwrapping errors, correlation mismatches, bad frames. Those are spatially
+localised and carry a disproportionate share of the variance (for crossing offsets in $v_y$, the
+worst 1% of pixels hold ~48%). No per-observation model can identify *which* pixels those are, so
+`ex`/`ey` is nearly flat — p10 to p90 spans a factor of 2.5 — where the true error varies by more
+than an order of magnitude.
+
+Note this is **orthogonal to the over-count parameter** above. $\rho$ governs how the error scales
+with *pair count*; the tail is a property of the per-observation error distribution and would be
+present with a single pair. Raising $\rho$ far enough would make the reported sigma match the
+observed RMS, but only by using a redundancy parameter to absorb a blunder population instead of
+modelling it. The shipped $\rho=0.5$ is justified by the threshold behaviour; that it also lands
+$k(\mathrm{std})$ near 1 is incidental and should not be cited as evidence for the value.
+
+Practical guidance:
+
+- Use `ex`/`ey` for **relative weighting** — inverse-variance combination depends only on the
+  ratio between contributions, which is the part that is reliable.
+- Treat the **absolute** level as approximate. At the shipped $\rho=0.5$ it sits near the RMS of
+  the difference; at $\rho=0$ it sits near the robust scale. Neither is a confidence interval.
+- For **RMS-based requirement verification**, quote the measured difference against an independent
+  reference together with the outlier fraction, rather than substituting `ex`/`ey`.
+- A large `ex`/`ey` is informative; a small one is **not a guarantee**, since the dominant tail
+  failure modes are invisible to the budget.
 
 ---
 

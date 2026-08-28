@@ -153,6 +153,9 @@ typedef struct inputImageType
 	double maxX;
 	double minY;
 	double maxY;
+	double footprintX[4]; /* corner control points, x/y km, angle-sorted into a simple
+							  polygon by initllToImageNew() -- see checkLL() in llToImageNew.c */
+	double footprintY[4];
 	conversionDataStructure **conversionData;
 	conversionDataStructure cpAll;
 	SARData par;
@@ -182,6 +185,10 @@ typedef struct inputImageType
 	int32_t useNew;
 	stateV sv;
 	void **image;
+	/* Optional ionospheric phase (radians) on the same grid as image; NULL unless the
+	   baseline file named one -- see getBaseline.c / getIonospherePhaseImage(). */
+	float **ionospherePhase;
+	char ionospherePhaseFile[2048];
 	int32_t isInit;
 	float noData;
 	double lastTime; /* Last time used for geocoding */
@@ -240,6 +247,12 @@ typedef struct outputImageType
 	int32_t deltaB; /* used to indicate sv baselines */
 	int32_t outputRAFlag; /* output vr/va instead of rotating to vx/vy */
 	double sigmaAThresh;
+	/* Set once in mosaic3d main before mallocOutputImage(), when exactly one image
+	   feeds a plain -rOffsets run (no phase/Landsat/irregular data, no stats/initMap/
+	   makeTies/timeOverlap mode). Lets mallocOutputImage()/speckleTrackMosaic() skip
+	   the multi-image weighted-accumulation buffers and math entirely, since with one
+	   contributor there's nothing to average against. */
+	int32_t singleImageFastPath;
 } outputImageStructure;
 
 typedef struct demType

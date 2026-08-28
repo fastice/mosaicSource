@@ -38,17 +38,33 @@ rparams [options] geodatFile tiepointsFile offsetFile baselineFile
 | `-deltaBQ`           | Estimate quadratic correction to state-vector baseline |
 | `-deltaBC`           | Estimate constant correction to Bp component of baseline |
 | `-quiet`             | Suppress tiepoint echo to stdout |
+| `-outputFile <path>` | Write the solution to `<path>` instead of stdout. Mutually exclusive with `-runFile` (which already names an output per run). |
+| `-debug`             | Write every tie point used in the fit, plus its residual, to a GeoPackage (see "Debug output" below) |
+| `-noMask`            | Ignore any embedded VRT dataset mask band on the offset file (e.g. `autocleanNISAR.py`'s `range.offsets.good` mask); default off, so a mask is honored when present |
 
 > **Note:** `-bnbpOnly`, `-bpdBpOnly`, and `-bnbpdBpOnly` are mutually exclusive.
 
 ### Output
 
-Results are written to **stdout** in a commented format:
+Results are written to **stdout** (or to `-outputFile`, if given) in a commented format:
 
 - Tiepoint locations and extracted range offsets (with `;` prefix)
 - Fit residual sigma (`sigma*sqrt(X2/n)`)
 - 6×6 parameter covariance matrix
 - Final estimated baseline parameters: `Bn  Bp  dBn  dBp  const  dBnQ  dBpQ`
+
+### Debug output (`-debug`)
+
+Writes a `.gpkg` point layer named `residuals` containing every tie point used in the
+fit: `id`, `lat`, `lon`, `x_km`/`y_km` (polar-stereo), `range`, `azimuth`, `z`,
+`weight`, and `range_residual_m` (the fit residual in meters). Filename defaults to
+`rparams.<mode>.gpkg` (`<mode>` reflects the active `deltaB`/`bnbpOnly`/etc. flag); if
+`-outputFile <path>` is given, the debug file is `<path>.residuals.gpkg` instead. In
+`-runFile` mode the debug filename is always derived from each run's own `outfile`
+(`<outfile>.residuals.gpkg`), and for the ION_AUTO ionosphere-comparison mode only the
+winning attempt's residuals are written. See `mosaicSource/CLAUDE.md` "Debug residual
+GeoPackage output" for the shared writer implementation (also used by `tiepoints` and
+`azparams`).
 
 ---
 

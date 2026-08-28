@@ -352,8 +352,8 @@ void computeB(double x, double y, double z, double B[2][2], double *dzdx, double
 	}
 	else
 	{
-		*dzdx = limitSlope((zx1 - zx2) / (KMTOM * dx), 0.1);
-		*dzdy = limitSlope((zy1 - zy2) / (KMTOM * dy), 0.1);
+		*dzdx = limitSlope((zx1 - zx2) / (KMTOM * dx), 0.25);
+		*dzdy = limitSlope((zy1 - zy2) / (KMTOM * dy), 0.25);
 	}
 	/* Form B matrix */
 	tanAPsi = tan(aPsi);
@@ -385,7 +385,7 @@ void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], do
 	  Invert C
 	*/
 	detC = C[0][0] * C[1][1] - C[0][1] * C[1][0];
-	if (detC < 0.25)
+	if (detC < 0.5)
 	{
 		*vx = -LARGEINT;
 		*vy = -LARGEINT;
@@ -558,6 +558,39 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 	intersect = !(minXa > maxXd || minXd > maxXa || minYa > maxYd || minYd > maxYa);
 	if (intersect == FALSE)
 		return;
+	/* Reorder each quad to a proper CCW convex polygon before clipping.
+	   Long polar tracks (e.g. 160° longitude span) produce a self-intersecting
+	   quadrilateral with the default cpIdx={1,2,4,3} ordering, which breaks the
+	   Sutherland-Hodgman half-plane clip.  Sorting by angle from centroid gives
+	   a valid convex hull for any 4-point set. */
+	{
+		double cx, cy, ang[4], tx, ty;
+		int ii, jj, imin;
+		cx = (xaP[0]+xaP[1]+xaP[2]+xaP[3])*0.25;
+		cy = (yaP[0]+yaP[1]+yaP[2]+yaP[3])*0.25;
+		for (ii=0; ii<4; ii++) ang[ii] = atan2(yaP[ii]-cy, xaP[ii]-cx);
+		for (ii=0; ii<3; ii++) {
+			imin = ii;
+			for (jj=ii+1; jj<4; jj++) if (ang[jj]<ang[imin]) imin=jj;
+			if (imin!=ii) {
+				tx=xaP[ii]; xaP[ii]=xaP[imin]; xaP[imin]=tx;
+				ty=yaP[ii]; yaP[ii]=yaP[imin]; yaP[imin]=ty;
+				tx=ang[ii]; ang[ii]=ang[imin]; ang[imin]=tx;
+			}
+		}
+		cx = (xdP[0]+xdP[1]+xdP[2]+xdP[3])*0.25;
+		cy = (ydP[0]+ydP[1]+ydP[2]+ydP[3])*0.25;
+		for (ii=0; ii<4; ii++) ang[ii] = atan2(ydP[ii]-cy, xdP[ii]-cx);
+		for (ii=0; ii<3; ii++) {
+			imin = ii;
+			for (jj=ii+1; jj<4; jj++) if (ang[jj]<ang[imin]) imin=jj;
+			if (imin!=ii) {
+				tx=xdP[ii]; xdP[ii]=xdP[imin]; xdP[imin]=tx;
+				ty=ydP[ii]; ydP[ii]=ydP[imin]; ydP[imin]=ty;
+				tx=ang[ii]; ang[ii]=ang[imin]; ang[imin]=tx;
+			}
+		}
+	}
 	/* True polygon-polygon intersection: clip dPhaseImage's quad against each of
 	   aPhaseImage's 4 edges (treated as half-planes). Inward-normal direction is
 	   derived from aPhaseImage's own signed area so this works regardless of
@@ -606,15 +639,15 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 	/* Result of the 4th (even-indexed-from-0) clip lands in xA/yA */
 	if (n <= 0)
 		return; /* AABBs overlapped but the true swaths don't -- no intersection */
-	minX = xA[0]; maxX = xA[0];
-	minY = yA[0]; maxY = yA[0];
-	for (i = 1; i < n; i++)
-	{
-		if (xA[i] < minX) minX = xA[i];
-		if (xA[i] > maxX) maxX = xA[i];
-		if (yA[i] < minY) minY = yA[i];
-		if (yA[i] > maxY) maxY = yA[i];
-	}
+	/* Use the AABB overlap of both swaths rather than the clipped polygon's bbox.
+	   For long polar orbits (e.g. 160° longitude span) the convex hull clips into
+	   a false polar-cap region that lies outside both images' checkLL bounds, causing
+	   computeSceneAlpha to find no valid headings.  The AABB overlap is coarser but
+	   always contains the true crossing corner where both images have real data. */
+	minX = (minXd > minXa) ? minXd : minXa;
+	maxX = (maxXd < maxXa) ? maxXd : maxXa;
+	minY = (minYd > minYa) ? minYd : minYa;
+	maxY = (maxYd < maxYa) ? maxYd : maxYa;
 	/* Compute image bounds */
 	pad = 15000.;
 	*iMin = (int32_t)((minY * KMTOM - outputImage->originY - pad) / outputImage->deltaY);

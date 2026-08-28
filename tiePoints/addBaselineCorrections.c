@@ -188,9 +188,16 @@ void addBaselineCorrections(char *baselineFile, tiePointsStructure *tiePoints, i
     BnvC = Bn1 + Bn2;
     dBnv = dBn1 + dBn2;
     dBnQv = dBnQ1 + dBnQ2;
+    /* BpvC/dBpv/dBpQv are written unconditionally into tiePoints->BpCorig/
+       dBporig/dBpQorig below (and read by fitBaseline as the initial Bp/dBp/dBpQ),
+       so they must be initialized even when dBpFlag is FALSE -- otherwise they are
+       stack garbage. The constant term is always Bp1+Bp2; the along-track dBp terms
+       are only populated in the -dBp path (0 otherwise). */
+    BpvC = Bp1 + Bp2;
+    dBpv = 0.0;
+    dBpQv = 0.0;
     if (tiePoints->dBpFlag == TRUE)
     {
-        BpvC = Bp1 + Bp2;
         dBpv = dBp1 + dBp2;
         dBpQv = dBpQ1 + dBpQ2;
     }

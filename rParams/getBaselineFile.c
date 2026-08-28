@@ -14,11 +14,20 @@ static void writeOriginalBaselines(tiePointsStructure *tiePoints,
  /*
     Ouput baseline parms
 */
-    if (tiePoints->quiet) return;
-    if (tiePoints->dBpFlag == TRUE)
-        fprintf(stderr, "; dBp flag set\n");
-    if (tiePoints->noRamp == TRUE)
-        fprintf(stderr, "; noRamp flag set\n");
+    /* -quiet suppresses only the tiepoint echo (see getROffsets.c); the
+       baseline-data block below is required structure that getRParams()
+       (common/readOffsets.c) parses, so it must always be written. */
+    if (!tiePoints->quiet)
+    {
+        if (tiePoints->dBpFlag == TRUE)
+        {
+            fprintf(stderr, "; dBp flag set\n");
+        }
+        if (tiePoints->noRamp == TRUE)
+        {
+            fprintf(stderr, "; noRamp flag set\n");
+        }
+    }
     fprintf(stdout, ";\n; Number of lines of baseline data\n;\n 3\n");
     fprintf(stdout, ";\n; First flattening baseline\n;\n");
     fprintf(stdout, "%8.4f  %8.4f  %8.4f %10.7f\n", Bn1, Bp1, dBn1, dBp1);

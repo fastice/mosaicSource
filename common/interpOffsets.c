@@ -200,3 +200,68 @@ static void computeCoordsForInterp(inputImageStructure *inputImage, Offsets *off
 	*azimuthOff = (slcAzimuth - offsets->aO) / offsets->deltaA;
 	return;
 }
+
+/*
+  Variance (m^2 of slant range) to add to the range-offset error budget for
+  error the .sr band cannot represent.
+
+  interpRangeSigma() returns the .sr band -- a LOCAL neighbourhood scatter that
+  Cullst computes after removing a local plane -- so it describes matching noise
+  and is structurally blind to long-wavelength error (ionosphere, orbit ramps).
+  Measured against Sentinel-1 over stable ground, the offsets formal error came
+  out ~6x too small and, worse, SMALLER than the phase formal error, inverting
+  the inverse-variance weighting in computeVxy() so crossing offsets dragged the
+  combined solution.  See mosaicSource/CLAUDE.md.
+
+  Two ways to supply the missing term, and the difference matters:
+
+  -rSigmaConst X   adds a fixed X metres to EVERY frame.  Raises the offsets
+                   budget relative to phase -- which is the miscalibration that
+                   corrupts the combined product -- while leaving the relative
+                   weighting BETWEEN offset frames untouched.
+
+  -rSigmaResidual  adds each frame's own rparams tie-point fit residual
+                   (offsets.sigmaRresidual).  DEFAULT ON.  The exact analogue of
+                   the phase path's min(6*PI, vhParam->sigma), and it adapts to
+                   the sensor automatically, which a fixed constant cannot.
+
+  How the two terms divide the work is SENSOR-DEPENDENT, and that is the point:
+
+    NISAR   ionosphere inflates the residual to ~0.22 m, ~5x the .sr term, so it
+            dominates and the budget becomes essentially per-frame.  That is
+            correct: such data really is frame-limited, and noisy frames get
+            down-weighted wholesale.
+    TSX     X-band, virtually no ionosphere, so .sr captures essentially all the
+            noise and should mirror the residual.  Worst case the two
+            double-count, i.e. sigma overestimated by ~sqrt(2).
+    S1      a mix of the two regimes.
+
+  So the weighting is per-frame where the frame-level error dominates and
+  per-pixel where it does not, sliding between them on its own.  A sqrt(2)
+  overestimate in the X-band limit is an acceptable price for that.
+
+  Note the side effect, which is expected rather than a defect: .sr varies
+  spatially within a frame (measured p90/p10 ~ 7x in sigma, ~48x in weight), and
+  adding a term much larger than it flattens that spatial discrimination -- 99%
+  of it for NISAR, 76% for an S1-like 0.04 m residual.  Where the frame-level
+  error genuinely dominates, flat weighting IS the right answer.
+
+  -rSigmaConst X   adds a fixed X metres instead.  Diagnostic only: it cannot
+                   adapt across sensors and flattens the spatial weighting just
+                   as thoroughly.  Takes precedence when set.
+
+  The sigma<0 "no solution" sentinel is filtered by the callers before this is
+  reached.
+*/
+double rangeAccuracyVar(Offsets *offsets)
+{
+	if (rSigmaConst > 0.0)
+	{
+		return rSigmaConst * rSigmaConst;
+	}
+	if (rSigmaResidual == TRUE && offsets->sigmaRresidual > 0.0)
+	{
+		return offsets->sigmaRresidual * offsets->sigmaRresidual;
+	}
+	return 0.0;
+}

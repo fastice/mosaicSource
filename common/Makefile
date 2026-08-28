@@ -15,7 +15,7 @@ SRCS =	addIrregData.c bilinearInterp.c buffers.c computeHeading.c computePhiFlat
 	initMatrix.c initRoutines.c interpOffsets.c interpPhaseImage.c interpTideDiff.c interpVCorrect.c interpXYDEM.c interpolateOffsetCorrection.c \
 	llToImageNew.c lltoxy.c lltoxy1.c outputGeocodedImage.c parseInputFile.c parseIrregFile.c parseSLCvrt.c polintVec.c \
 	rangeAzimuthToLL.c readOffsets.c readOffsetCorrection.c readOldPar.c readShelf.c readTiePoints.c readXYDEM.c rotateFlowDirectionToRA.c rotateFlowDirectionToXY.c \
-	scalingFunctions.c smlocateZD.c svBase.c vectorFunc.c xyGetZandSlope.c xytoll1.c xytoll.c
+	scalingFunctions.c smlocateZD.c svBase.c vectorFunc.c writeTieResidualsGpkg.c xyGetZandSlope.c xytoll1.c xytoll.c
 
 OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
 

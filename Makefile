@@ -139,6 +139,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 			common/$(MACHTYPE)-$(OSTYPE)/smlocateZD.o \
 			common/$(MACHTYPE)-$(OSTYPE)/svBase.o \
 			common/$(MACHTYPE)-$(OSTYPE)/vectorFunc.o \
+			common/$(MACHTYPE)-$(OSTYPE)/writeTieResidualsGpkg.o \
 			common/$(MACHTYPE)-$(OSTYPE)/xyGetZandSlope.o \
 			common/$(MACHTYPE)-$(OSTYPE)/xytoll1.o \
 			common/$(MACHTYPE)-$(OSTYPE)/xytoll.o

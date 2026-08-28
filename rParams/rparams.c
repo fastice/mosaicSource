@@ -34,9 +34,16 @@
 #define ION_NONE    1   /* -noIonosphere: never apply correction */
 #define ION_FORCE   2   /* -forceIonosphere: always apply if file exists */
 
+/* Ignore any embedded VRT dataset mask band on offset inputs; default off
+   (mask honored when present). Defined once in common/getRegion.c since
+   common/readOffsets.c is linked into every program in mosaicSource/. */
+extern int32_t noMask;
+
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile,
 					 char **baselineFile, tiePointsStructure *tiepoints, char **shelfMaskFile, int32_t *ionosphereMode,
-					 char **runFile, int32_t *yamlOutput);
+					 char **runFile, int32_t *yamlOutput, int32_t *debugFlag, char **outputFile);
+static const char *rparamsModeString(tiePointsStructure *tiePoints);
+static void writeRParamsDebug(char *debugFile, tiePointsStructure *tiePoints, tieResidualsType *fit);
 static void setMapProjectionForHemisphere(tiePointsStructure *tiePoints);
 
 
@@ -99,6 +106,42 @@ static void readRunFile(const char *specFile, runSpec_t *runs, int *nRuns)
 	if (*nRuns == 0) error("rparams: runFile %s has no valid entries", specFile);
 }
 
+/* Short filename-safe tag for the active fit mode -- mirrors the branch dispatch in
+   computeRParams.c, used to build the fallback "rparams.<mode>.gpkg" debug filename
+   when -outputFile was not given. */
+static const char *rparamsModeString(tiePointsStructure *tiePoints)
+{
+	if (tiePoints->deltaB == DELTABCONST)
+		return "deltaBConst";
+	if (tiePoints->deltaB == DELTABQUAD)
+		return "deltaBQuad";
+	if (tiePoints->bnbpdBpFlag == TRUE)
+		return "bnbpdBp";
+	if (tiePoints->bpdBpFlag == TRUE)
+		return "bpdBp";
+	if (tiePoints->constOnlyFlag == TRUE)
+		return "constOnly";
+	if (tiePoints->quadB == TRUE)
+		return "quadB";
+	return "default";
+}
+
+/* Write one run's debug residuals gpkg and free the fit's heap arrays. No-op if fit
+   came from a fewPoints()/-1.0 (no-solution) attempt, since debugFitOut is left
+   zeroed by computeRParams() in that case. */
+static void writeRParamsDebug(char *debugFile, tiePointsStructure *tiePoints, tieResidualsType *fit)
+{
+	if (fit->origIndex == NULL || fit->residual == NULL)
+		return;
+	OGRDataSourceH ds = openTieResidualsGpkg(debugFile, FALSE);
+	writeTieResidualsLayer(ds, "residuals", tiePoints, fit,
+							"range_residual_m", "Baseline fit residual (meters)",
+							Rotation, tiePoints->stdLat, HemiSphere);
+	closeTieResidualsGpkg(ds);
+	free(fit->origIndex);
+	free(fit->residual);
+}
+
 int main(int argc, char *argv[])
 {
 	extern char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
@@ -119,6 +162,7 @@ int main(int argc, char *argv[])
 	int32_t imageCoords;
 	int32_t linFlag;
 	int32_t yamlOutput = 0;
+	int32_t debugFlag = 0;
 	int32_t i, j; /* LCV */
 	char *runFile = NULL;
 	Abuf1 = NULL;
@@ -134,7 +178,10 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
-	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile, &ionosphereMode, &runFile, &yamlOutput);
+	outputFile = NULL;
+	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile, &ionosphereMode, &runFile, &yamlOutput, &debugFlag, &outputFile);
+	if (outputFile != NULL && runFile != NULL)
+		error("rparams: -outputFile and -runFile are mutually exclusive");
 	/*
 	  Parse input file
 	*/
@@ -212,12 +259,37 @@ int main(int argc, char *argv[])
 		}
 		fprintf(stderr, "Rg/Az offsets %10.5f %10.5f\n", tiePoints.cnstR, tiePoints.cnstA);
 
+		char *debugFile = NULL;
+		char debugFileBuf[4096];
+		if (debugFlag)
+		{
+			if (outputFile != NULL)
+				snprintf(debugFileBuf, sizeof(debugFileBuf), "%s.residuals.gpkg", outputFile);
+			else
+				snprintf(debugFileBuf, sizeof(debugFileBuf), "rparams.%s.gpkg", rparamsModeString(&tiePoints));
+			debugFile = debugFileBuf;
+		}
+
+		FILE *outFp = NULL;
+		int savedStdoutForFile = -1;
+		if (outputFile != NULL)
+		{
+			outFp = fopen(outputFile, "w");
+			if (outFp == NULL)
+				error("rparams: cannot open -outputFile %s", outputFile);
+			savedStdoutForFile = dup(STDOUT_FILENO);
+			dup2(fileno(outFp), STDOUT_FILENO);
+		}
+
 		if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_FORCE)
 		{
+			tieResidualsType fit = {0};
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fit);
+			if (debugFlag)
+				writeRParamsDebug(debugFile, &tiePoints, &fit);
 		}
 		else if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_AUTO)
 		{
@@ -227,12 +299,13 @@ int main(int argc, char *argv[])
 			int fd2 = mkstemp(tmp2);
 			if (fd1 < 0 || fd2 < 0) error("rparams: mkstemp failed\n");
 			int saved_stdout = dup(STDOUT_FILENO);
+			tieResidualsType fitIon = {0}, fitNoIon = {0};
 
 			dup2(fd1, STDOUT_FILENO);
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
-			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fitIon);
 			fflush(stdout);
 
 			dup2(fd2, STDOUT_FILENO);
@@ -240,7 +313,7 @@ int main(int argc, char *argv[])
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, TRUE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
 			offsets.rOffCorrection.correctionFile[0] = '\0';
-			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fitNoIon);
 			fflush(stdout);
 
 			dup2(saved_stdout, STDOUT_FILENO);
@@ -268,13 +341,30 @@ int main(int argc, char *argv[])
 				        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			unlink(tmp1);
 			unlink(tmp2);
+			if (debugFlag)
+			{
+				writeRParamsDebug(debugFile, &tiePoints, use_ion ? &fitIon : &fitNoIon);
+				free((use_ion ? &fitNoIon : &fitIon)->origIndex);
+				free((use_ion ? &fitNoIon : &fitIon)->residual);
+			}
 		}
 		else
 		{
+			tieResidualsType fit = {0};
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE, 0);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fit);
+			if (debugFlag)
+				writeRParamsDebug(debugFile, &tiePoints, &fit);
+		}
+
+		if (outFp != NULL)
+		{
+			fflush(stdout);
+			dup2(savedStdoutForFile, STDOUT_FILENO);
+			close(savedStdoutForFile);
+			fclose(outFp);
 		}
 		return 0;
 	}
@@ -407,13 +497,26 @@ int main(int argc, char *argv[])
 		strncpy(savedCorrFile, offsets.rOffCorrection.correctionFile, sizeof(savedCorrFile) - 1);
 		savedCorrFile[sizeof(savedCorrFile) - 1] = '\0';
 
+		/* -runFile mode always derives the debug filename from this run's own
+		   outfile -- a fixed progname.mode name would collide across runs. */
+		char runDebugFileBuf[RPARAMS_PATH_LEN + 32];
+		char *runDebugFile = NULL;
+		if (debugFlag)
+		{
+			snprintf(runDebugFileBuf, sizeof(runDebugFileBuf), "%s.residuals.gpkg", runs[i].outfile);
+			runDebugFile = runDebugFileBuf;
+		}
+
 		/* Run estimation — skipLoad=1 reuses offsets->dr loaded by probe */
 		if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_FORCE)
 		{
+			tieResidualsType fit = {0};
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fit);
+			if (debugFlag)
+				writeRParamsDebug(runDebugFile, &tiePoints, &fit);
 		}
 		else if (offsets.rOffCorrection.rangeOffsetCorrection != NULL && ionosphereMode == ION_AUTO)
 		{
@@ -423,12 +526,13 @@ int main(int argc, char *argv[])
 			int fd2 = mkstemp(tmp2);
 			if (fd1 < 0 || fd2 < 0) error("rparams: mkstemp failed\n");
 			int saved_stdout = dup(STDOUT_FILENO);
+			tieResidualsType fitIon = {0}, fitNoIon = {0};
 
 			dup2(fd1, STDOUT_FILENO);
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, FALSE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
-			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			double sigma_ion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fitIon);
 			fflush(stdout);
 
 			dup2(fd2, STDOUT_FILENO);
@@ -436,7 +540,7 @@ int main(int argc, char *argv[])
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, TRUE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
 			offsets.rOffCorrection.correctionFile[0] = '\0';
-			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			double sigma_noion = computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fitNoIon);
 			fflush(stdout);
 
 			dup2(saved_stdout, STDOUT_FILENO);
@@ -464,13 +568,22 @@ int main(int argc, char *argv[])
 				        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			unlink(tmp1);
 			unlink(tmp2);
+			if (debugFlag)
+			{
+				writeRParamsDebug(runDebugFile, &tiePoints, use_ion ? &fitIon : &fitNoIon);
+				free((use_ion ? &fitNoIon : &fitIon)->origIndex);
+				free((use_ion ? &fitNoIon : &fitIon)->residual);
+			}
 		}
 		else
 		{
+			tieResidualsType fit = {0};
 			getBaselineFile(baselineFile, &tiePoints, inputImage);
 			getROffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE, 1);
 			addVelCorrections(&inputImage, &tiePoints);
-			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput);
+			computeRParams(&tiePoints, inputImage, baselineFile, &offsets, yamlOutput, debugFlag, &fit);
+			if (debugFlag)
+				writeRParamsDebug(runDebugFile, &tiePoints, &fit);
 		}
 
 		/* Restore correctionFile (may have been cleared by ION_AUTO no-ion branch) */
@@ -516,6 +629,12 @@ static void usage()
 		"  -forceIonosphere   Always apply ionosphere correction if file exists\n"
 		"  -quiet             Don't echo tiepoints to solution\n"
 		"  -yaml              Write baseline output in YAML format\n"
+		"  -noMask            Ignore any embedded VRT dataset mask band on offsetFile; default off (mask honored when present)\n"
+		"  -debug             Write every tiepoint used in the fit, plus its residual, to a\n"
+		"                     GeoPackage (<outputFile>.residuals.gpkg, or rparams.<mode>.gpkg\n"
+		"                     if -outputFile not given; in -runFile mode, always <outfile>.residuals.gpkg)\n"
+		"  -outputFile <path> Write the solution to <path> instead of stdout; also names the\n"
+		"                     -debug GeoPackage. Mutually exclusive with -runFile\n"
 		"\nPositional arguments (single-run):\n"
 		"  geodatFile         Geodat parameter file\n"
 		"  tiepointsFile      Tiepoint location file (lat,lon,z,vx,vy,vz)\n"
@@ -533,7 +652,8 @@ static void usage()
 
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile,
 					 char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints,
-					 char **shelfMaskFile, int32_t *ionosphereMode, char **runFile, int32_t *yamlOutput)
+					 char **shelfMaskFile, int32_t *ionosphereMode, char **runFile, int32_t *yamlOutput,
+					 int32_t *debugFlag, char **outputFile)
 {
 	int32_t bnbpFlag = FALSE, bpFlag = FALSE, bnbpdBpFlag = FALSE, bpdBpFlag = FALSE;
 	int32_t constOnlyFlag = FALSE, quadB = FALSE, deltaB = DELTABNONE;
@@ -543,6 +663,8 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 	*shelfMaskFile = NULL;
 	*runFile = NULL;
 	*yamlOutput = 0;
+	*debugFlag = FALSE;
+	*outputFile = NULL;
 	tiePoints->quiet = FALSE;
 
 	/* First pass: detect -runFile so we know how many positional args to expect */
@@ -611,6 +733,17 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 			tiePoints->quiet = TRUE;
 		else if (strcmp(argv[i], "-yaml") == 0)
 			*yamlOutput = 1;
+		else if (strcmp(argv[i], "-debug") == 0)
+			*debugFlag = TRUE;
+		else if (strcmp(argv[i], "-outputFile") == 0)
+		{
+			if (++i >= argc - nPos) usage();
+			*outputFile = argv[i];
+		}
+		else if (strcmp(argv[i], "-noMask") == 0)
+		{
+			noMask = TRUE;
+		}
 		else
 		{
 			fprintf(stderr, "Unknown option: %s\n", argv[i]);

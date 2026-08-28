@@ -134,6 +134,37 @@ static void outputSimImage(sceneStructure scene, char *outputFile)
 		if(scene.byteOrder == MSB) byteSwapOption = "ByteOrder=MSB"; else byteSwapOption = "ByteOrder=LSB";
 	}
 	bandFiles[0] = file;
+	/* GeoTIFF path for the mask only: write <file>.tif + <file>.vrt, matching the
+	   "<source>.tif" naming the Python writers use. The phase/height branch keeps the
+	   raw path -- it feeds a different set of consumers that have no tiff support. */
+	if (scene.tiffFlag && scene.maskFlag == TRUE)
+	{
+		char tifBuf[2048];
+		const char *tifFile;
+		const char *tifFiles[1];
+		float noDataArr[1] = {0.0f};
+		size_t nPx = (size_t)scene.aSize * scene.rSize;
+		unsigned char *flat = (unsigned char *)malloc(nPx);
+		if (flat == NULL)
+			error("outputSimImage: malloc failed for tif buffer\n");
+		for (i = 0; i < scene.aSize; i++)
+			for (j = 0; j < scene.rSize; j++)
+				flat[(size_t)i * scene.rSize + j] = (unsigned char)scene.image[i][j];
+		tifFile = appendSuffix(file, ".tif", tifBuf);
+		fprintf(stderr, "writing tif %s\n", tifFile);
+		popuplateMeta(&metaData, scene);
+		writeFlatTiff(tifFile, flat, scene.rSize, scene.aSize, GDT_Byte, 0.0f, metaData);
+		free(flat);
+		free(buf);
+		tifFiles[0] = tifFile;
+		fileVRT = STR_BUFF("%s.vrt", file);
+		/* Name the band explicitly: the tif is <root>.mask.tif, so makeTiffVRT's
+		   filename-derived name would be "mask", not the "Mask" the raw path
+		   (writeSingleVRT below) writes and the Python readers ask for. */
+		makeTiffVRTNamed(fileVRT, tifFiles, (const char **)bandNames, 1, noDataArr, metaData);
+		free(fileVRT);
+		return;
+	}
 	// Open file
 	imageFP = fopen(file, "w");
 	if (imageFP == NULL)

@@ -2,6 +2,8 @@
 #include "string.h"
 #include "common.h"
 #include "math.h"
+#include <libgen.h>
+#include <unistd.h>
 
 /* One labeled solution block parsed from a tiepoints -yaml baseline file (noSquint:/squint:) */
 typedef struct
@@ -10,6 +12,52 @@ typedef struct
 	double C[7][7];
 	int32_t seen;
 } yamlBaselineBlock;
+
+/*
+  Store the ionospheric phase file named by a tiepoints baseline file into
+  params->ionospherePhaseFile. A relative name is resolved against the baseline file's own
+  directory, so the two travel together; an absolute path is used as given. "nil" (the
+  no-correction marker tiepoints writes) leaves the field empty.
+
+  The check that the file exists happens here rather than at read time so a mis-plumbed
+  path fails immediately with a clear message, matching checkForIonosphereCorrection() on
+  the range-offset side (readOffsets.c).
+*/
+static void setIonospherePhaseFile(vhParams *params, char *ionName, char *baselineFile)
+{
+	char tmp[2048];
+
+	while (*ionName == ' ' || *ionName == '\t')
+	{
+		ionName++;
+	}
+	int32_t len = strlen(ionName);
+	while (len > 0 && (ionName[len - 1] == '\n' || ionName[len - 1] == '\r' || ionName[len - 1] == ' '))
+	{
+		ionName[--len] = '\0';
+	}
+	if (len == 0 || strncmp(ionName, "nil", 3) == 0)
+	{
+		params->ionospherePhaseFile[0] = '\0';
+		return;
+	}
+	if (ionName[0] == '/')
+	{
+		strncpy(params->ionospherePhaseFile, ionName, sizeof(params->ionospherePhaseFile) - 1);
+	}
+	else
+	{
+		strncpy(tmp, baselineFile, sizeof(tmp) - 1);
+		tmp[sizeof(tmp) - 1] = '\0';
+		snprintf(params->ionospherePhaseFile, sizeof(params->ionospherePhaseFile),
+				 "%s/%s", dirname(tmp), ionName);
+	}
+	params->ionospherePhaseFile[sizeof(params->ionospherePhaseFile) - 1] = '\0';
+	if (access(params->ionospherePhaseFile, F_OK) != 0)
+		error("getBaseline: %s names ionosphere correction %s, which does not exist\n",
+			  baselineFile, params->ionospherePhaseFile);
+	fprintf(stderr, "getBaseline: found ionosphereCorrectionFile %s\n", params->ionospherePhaseFile);
+}
 
 /*
   Input baseline info. useSquint selects which labeled YAML block (noSquint/squint) to use
@@ -36,6 +84,7 @@ void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase, int32_t 
 			params->C[i][j] = 0;
 	params->sigma = PI; /* Default value */
 	params->applyFlatEarth = 0;
+	params->ionospherePhaseFile[0] = '\0';
 	/*
 	  YAML baseline file (extension .yaml): flat-earth correction, no topo term.
 	*/
@@ -69,6 +118,8 @@ void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase, int32_t 
 						{ hasSquintSolution = 1; continue; }
 					else if (sscanf(line, "nDays: %lf", &params->nDays) == 1)
 						{ continue; }
+					else if (strncmp(line, "ionosphereCorrectionFile:", 25) == 0)
+						{ setIonospherePhaseFile(params, line + 25, baselineFile); continue; }
 					/* Legacy flat (pre-squint, single-solution) files have no noSquint:/
 					   squint: headers at all -- their Bn:/Bp:/etc. keys sit at 0-indent.
 					   Route those into the noSquint block directly. */
@@ -242,5 +293,31 @@ void getBaseline(char *baselineFile, vhParams *params, int32_t noPhase, int32_t 
 	params->dBp = dBpEst;
 	params->dBnQ = dBnEstQ;
 	params->dBpQ = dBnEstQ;
+	/*
+	  Scan the remaining lines (including those after '&') for a ;* ionosphereCorrectionFile
+	  entry, the legacy-text counterpart of the YAML key above. Same scan pattern getRParams()
+	  uses for ;* offsetCorrectionFile (readOffsets.c).
+	*/
+	{
+		char scLine[256], *tmp2;
+		while (fgets(scLine, sizeof(scLine), fp) != NULL)
+		{
+			/* Must start with ';' and contain '*' to be a special line */
+			if (scLine[0] != ';')
+			{
+				continue;
+			}
+			if (strchr(scLine, '*') == NULL)
+			{
+				continue;
+			}
+			tmp2 = strstr(scLine, "ionosphereCorrectionFile");
+			if (tmp2 != NULL)
+			{
+				setIonospherePhaseFile(params, tmp2 + strlen("ionosphereCorrectionFile"), baselineFile);
+				break;
+			}
+		}
+	}
 	fclose(fp);
 }

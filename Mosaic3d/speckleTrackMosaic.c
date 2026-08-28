@@ -72,8 +72,11 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 	double tCenter, tOffCenter, deltaOffCenter;
 	int32_t i, j;
 	int iMin, iMax, jMin, jMax;
+	int32_t *jRowMin, *jRowMax; /* per-row tightened column bounds, see getRowBounds() */
 	int count, total; /* Current image counter - info only */
 	int validData;
+	int32_t drValid, daValid, goodPixel; /* independent range/azimuth offset validity,
+	                                         RA diagnostic mode only -- see outputRAFlag below */
 
 	fprintf(stderr, "**** SPECKLE TRACKING SOLUTION ****\n");
 	fprintf(outputImage->fpLog, ";\n; Entering speckleTrackMosaic(.c)\n;\n");
@@ -87,13 +90,32 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 	/*
 	  Pointers to output images
 	*/
-	setupBuffers(outputImage, &vXimage, &vYimage, &vZimage, &scaleX, &scaleY, &scaleZ,
-				 &vxTmp, &vyTmp, &vzTmp, &sxTmp, &syTmp, &fScale, &errorX, &errorY);
-	/*
-	  Compute feather scale for existing ,Then undo the prior normalization so errors are all weighted.
-	*/
-	computeScale((float **)vXimage, fScale, outputImage->ySize, outputImage->xSize, fl, (float)1.0, (double)(-LARGEINT));
-	undoNormalization(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, fScale, statsFlag);
+	if (outputImage->singleImageFastPath == TRUE)
+	{
+		/* mallocOutputImage() left the multi-image accumulation buffers NULL for
+		   this path -- only vxTmp/vyTmp/vzTmp/errorX/errorY exist, and the
+		   per-pixel loop below writes final values directly into them (no
+		   feathering/weighting/redoNormalization/endScale needed with one
+		   contributing image). */
+		vXimage = NULL; vYimage = NULL; vZimage = NULL;
+		scaleX = NULL; scaleY = NULL; scaleZ = NULL;
+		sxTmp = NULL; syTmp = NULL; fScale = NULL;
+		vxTmp = outputImage->vxTmp;
+		vyTmp = outputImage->vyTmp;
+		vzTmp = outputImage->vzTmp;
+		errorX = outputImage->errorX;
+		errorY = outputImage->errorY;
+	}
+	else
+	{
+		setupBuffers(outputImage, &vXimage, &vYimage, &vZimage, &scaleX, &scaleY, &scaleZ,
+					 &vxTmp, &vyTmp, &vzTmp, &sxTmp, &syTmp, &fScale, &errorX, &errorY);
+		/*
+		  Compute feather scale for existing ,Then undo the prior normalization so errors are all weighted.
+		*/
+		computeScale((float **)vXimage, fScale, outputImage->ySize, outputImage->xSize, fl, (float)1.0, (double)(-LARGEINT));
+		undoNormalization(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, fScale, statsFlag);
+	}
 	/*
 	  Loop over images
 	*/
@@ -105,6 +127,10 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 		(size_t)nthreads * sizeof(inputImageStructure));
 	if (localImgs == NULL)
 		error("speckleTrackMosaic: malloc failed for per-thread image copies\n");
+	jRowMin = (int32_t *)malloc((size_t)outputImage->ySize * sizeof(int32_t));
+	jRowMax = (int32_t *)malloc((size_t)outputImage->ySize * sizeof(int32_t));
+	if (jRowMin == NULL || jRowMax == NULL)
+		error("speckleTrackMosaic: malloc failed for jRowMin/jRowMax\n");
 	for (currentImage = images; currentImage != NULL; currentImage = currentImage->next)
 	{   fprintf(stderr, "Adding image %i of %i: %s\n", count, total, currentParams->offsets.file);
 		/* Compute central time, and delta from nominal*/
@@ -155,6 +181,12 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 			iMax = iMin - 1;
 			jMax = jMin - 1;
 		}
+		/* Tighten the per-row column range to the swath's actual (possibly diagonal)
+		   footprint instead of getRegion()'s single axis-aligned bbox — see
+		   common/getRegion.c:getRowBounds() for the geometry. Falls back to [jMin,jMax)
+		   on any row it can't tighten, so this only ever saves work, never drops data. */
+		if (iMax > iMin && jMax > jMin)
+			getRowBounds(currentImage, outputImage, iMin, iMax, jMin, jMax, jRowMin, jRowMax);
 		if(currentParams->offsets.sigmaAresidual > outputImage->sigmaAThresh)
 		{
 			fprintf(stderr, "Skipping sigmaAresidual > sigmaAThresh: %f > %f\n",
@@ -169,6 +201,22 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 			   negative is never > a positive threshold. */
 			fprintf(stderr, "Skipping %s: no azimuth baseline solution (sigmaAresidual<0)\n",
 				currentParams->offsets.azParamsFile);
+			currentParams = currentParams->next;
+			continue;
+		}
+		if(currentParams->offsets.sigmaRresidual < 0)
+		{
+			/* rparams found no solution (sigma<0 sentinel -- see fewPoints() in
+			   computeRParams.c).  Speckle tracking needs both components: the range
+			   and azimuth offsets of one image are solved into a single velocity
+			   here, so a missing range baseline is as disqualifying as a missing
+			   azimuth one and the image is skipped rather than mosaicked with the
+			   zeroed baseline the sentinel block carries.  make3DOffsets is the
+			   other case -- it forms velocity from the range offsets of two
+			   crossing passes and never reads azparams, so there a missing azimuth
+			   solution costs nothing and only this same range check applies. */
+			fprintf(stderr, "Skipping %s: no range baseline solution (sigmaRresidual<0)\n",
+				currentParams->offsets.rParamsFile);
 			currentParams = currentParams->next;
 			continue;
 		}
@@ -190,7 +238,8 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 			        sigmaA, sigmaR, sig2Base, sig2Off, demError, \
 			        vx, vy, vz, dzdtSubmergence, dzdx, dzdy, \
 			        ex, ey, er, ea, scX, scY, \
-			        da, dr, ionCorrection, sMask, noData, validData)
+			        da, dr, ionCorrection, sMask, noData, validData, \
+			        drValid, daValid, goodPixel)
 			{
 				inputImageStructure *myImg = &localImgs[omp_get_thread_num()];
 #pragma omp for schedule(dynamic, 8)
@@ -200,7 +249,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						fprintf(stderr, "-- %i  %f \n", i, myImg->weight);
 					}
 					y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
-					for (j = jMin; j < jMax; j++)
+					for (j = jRowMin[i]; j < jRowMax[i]; j++)
 					{
 						/*
 						  Convert x/y stereographic coords to lat/lon
@@ -212,7 +261,16 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						*/
 						xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, myImg);
 						validData = FALSE;
-						if (zSp > (MINELEVATION + 1) && zSp < 9999.)
+						/* Validate on zWGS84 (true elevation), not zSp -- zSp additionally
+						   carries a latitude-dependent spherical-earth correction
+						   (earthRadius(lat)*KMTOM - cP->Re, xyGetZandSlope.c) that's several
+						   km for tracks spanning a wide latitude range relative to their
+						   reference radius, and was spuriously failing this elevation sanity
+						   check for real, low-elevation ice-sheet pixels. zSp itself is still
+						   correct and still used below (geometryInfo() needs cP->Re + zSp) --
+						   only the validity gate was wrong. Matches make3DMosaic.c/
+						   make3DOffsets.c, which already validate zWGS84 directly. */
+						if (zWGS84 > (MINELEVATION + 1) && zWGS84 < 10000.0)
 						{ /* If valid z ....*/
 							llToImageNew(lat, lon, zWGS84, &range, &azimuth, myImg);
 							/* Note use theta c fixed, which is referenced to baseline */
@@ -246,9 +304,29 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 								dr = -LARGEINT;
 							};
 							/*
-							  Process only good  points
+							  Process only good points. In RA diagnostic mode (outputRAFlag),
+							  range and azimuth offsets are validated independently -- a bad
+							  azimuth offset should not discard an otherwise-good range offset
+							  (and vice versa), since vr and va are reported as separate
+							  components, not combined into a single xy vector. xy mode still
+							  requires both, since rotating to map coordinates needs both
+							  components together.
 							*/
-							if (fabs(dr) < 13.0E4 && fabs(da) < 10.0e4 && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE)))
+							drValid = (fabs(dr) < 13.0E4);
+							daValid = (fabs(da) < 10.0e4);
+							/* The independent-validity relaxation below is restricted to
+							   singleImageFastPath: vxTmp/vyTmp are written directly as final
+							   output there (no accumulation). In the general multi-image path,
+							   redoNormalization() (common/scalingFunctions.c) gates accumulation
+							   of BOTH vx and vy on vxTmp alone, so a vx-only-valid pixel would
+							   silently pull a stale/sentinel vyTmp into vYimage -- not safe
+							   without reworking that shared function (also used by
+							   make3DMosaic.c/makeVhMosaic.c/make3DOffsets.c). */
+							if (outputImage->outputRAFlag && outputImage->singleImageFastPath)
+								goodPixel = (drValid || daValid) && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE));
+							else
+								goodPixel = drValid && daValid && sMask != GROUNDINGZONE && (!(sMask == SHELF && outputImage->noTide == TRUE));
+							if (goodPixel)
 							{
 								/* Compute sigma for velocity error estimate. Note that the sigmas come back as meters;
 								/* Moved inside of if statement 3/1/16 */
@@ -257,7 +335,12 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 								sigmaA = sqrt(sigmaA * sigmaA + sig2Off);
 								sigmaR = interpRangeSigma(range, azimuth, &(currentParams->offsets), myImg, Range, thetaD, rSLPixSize);
 								sig2Base = computeSig2Base(sin(thetaD), cos(thetaD), azimuth, myImg, &(currentParams->offsets));
-								sigmaR = sqrt(sigmaR * sigmaR + demError * demError + sig2Base);
+								/* Add the rparams tie-point fit residual in quadrature -- see the
+								   matching comment in make3DOffsets.c.  The .sr band alone
+								   describes local matching noise and cannot represent
+								   long-wavelength error. */
+								sigmaR = sqrt(sigmaR * sigmaR + demError * demError + sig2Base +
+											  rangeAccuracyVar(&(currentParams->offsets)));
 								/*
 								  SHELF MASK CORRECTION HERE
 								*/
@@ -288,6 +371,14 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 								{
 									vr = (dr * scaleDr + va * cotanpsi * 0.0) / (1.0 - cotanpsi * 0.0);
 								}
+								else if (outputImage->outputRAFlag && !daValid)
+								{
+									/* da failed its sanity check -- va is untrustworthy, so drop the
+									   cross term (RA diagnostic mode only; xy mode never reaches here
+									   since goodPixel already required both valid above). dzdr itself
+									   comes from the DEM, not from da, so the denominator is unaffected. */
+									vr = (dr * scaleDr) / (1.0 - cotanpsi * dzdr);
+								}
 								else
 								{
 									vr = (dr * scaleDr + va * cotanpsi * dzda) / (1.0 - cotanpsi * dzdr);
@@ -306,12 +397,15 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 								*/
 								if (outputImage->outputRAFlag)
 								{
-									vx = vr;
-									vy = va;
+									/* Independent per-component validity -- see goodPixel above. A
+									   pixel can reach here with only one of dr/da valid; the other
+									   component's slot gets the standard -LARGEINT no-data sentinel. */
+									vx = drValid ? vr : (double)-LARGEINT;
+									vy = daValid ? va : (double)-LARGEINT;
 									dzdx = dzdr;
 									dzdy = dzda;
-									ex = er * er;
-									ey = ea * ea;
+									ex = drValid ? er * er : (double)-LARGEINT;
+									ey = daValid ? ea * ea : (double)-LARGEINT;
 								}
 								else
 								{
@@ -327,9 +421,13 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 								if (refVel->clipFlag == TRUE)
 									noData = clipVel(x, y, vx, vy, refVel);
 								/*
-								  Compute vertical velocity
+								  Compute vertical velocity. Needs both vx and vy -- in the
+								  independent-validity RA fast path one of them may be the
+								  -LARGEINT sentinel, in which case vz isn't meaningful either.
+								  (drValid && daValid is unconditionally true on every other path,
+								  since goodPixel already required both there.)
 								*/
-								vz = vx * dzdx + vy * dzdy;
+								vz = (drValid && daValid) ? (vx * dzdx + vy * dzdy) : (double)-LARGEINT;
 
 								/*vx=dzdx; vy=dzdy;*/
 								if (noData == FALSE)
@@ -345,9 +443,22 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 										scX = 1.0;
 										scY = 1.0;
 									}
-									vxTmp[i][j] = (float)vx * scX;
-									vyTmp[i][j] = (float)vy * scY;
-									fScale[i][j] = 1; /* Value for zero feathering */
+									if (outputImage->singleImageFastPath == TRUE)
+									{
+										/* No weighting/averaging to do with one contributing
+										   image -- vx/ex are already the final values (see
+										   mallocOutputImage()'s singleImageFastPath comment). */
+										vxTmp[i][j] = (float)vx;
+										vyTmp[i][j] = (float)vy;
+										errorX[i][j] = (float)ex;
+										errorY[i][j] = (float)ey;
+									}
+									else
+									{
+										vxTmp[i][j] = (float)vx * scX;
+										vyTmp[i][j] = (float)vy * scY;
+										fScale[i][j] = 1; /* Value for zero feathering */
+									}
 									validData = TRUE;
 									/*
 									   If overlap flag = true, then use the vz buff for deltaT
@@ -385,8 +496,11 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 									{
 										vzTmp[i][j] = 1.0;
 									}
-									sxTmp[i][j] = scX;
-									syTmp[i][j] = scY;
+									if (outputImage->singleImageFastPath == FALSE)
+									{
+										sxTmp[i][j] = scX;
+										syTmp[i][j] = scY;
+									}
 								}
 							} /* end fabs(dr) < 13.0E4 && fabs(da)... */
 							/* Write incidence angle for all valid-elevation pixels */
@@ -396,32 +510,66 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						/* Mark as no data if not valid data */
 						if (validData == FALSE)
 						{
-							vxTmp[i][j] = (float)-LARGEINT;
-							fScale[i][j] = 0.0;
+							if (outputImage->singleImageFastPath == TRUE)
+							{
+								/* No later gated accumulation pass exists to keep
+								   vyTmp/vzTmp/errorX/errorY quarantined for invalid
+								   pixels the way redoNormalization()'s vxTmp-gate does
+								   in the normal path -- reset all five explicitly. */
+								vxTmp[i][j] = (float)-LARGEINT;
+								vyTmp[i][j] = (float)-LARGEINT;
+								vzTmp[i][j] = (float)-LARGEINT;
+								errorX[i][j] = (float)-LARGEINT;
+								errorY[i][j] = (float)-LARGEINT;
+							}
+							else
+							{
+								vxTmp[i][j] = (float)-LARGEINT;
+								fScale[i][j] = 0.0;
+							}
 						}
 					} /* j loop */
 				}	  /* i loop */
 			} /* End omp parallel */
 		}
 
-		/*
-		  Compute scale array for feathering.
-		*/
-		if (fl > 0 && iMax > 0 && jMax > 0 && statsFlag == FALSE)
-			computeScale((float **)vxTmp, fScale, outputImage->ySize, outputImage->xSize, fl, (float)1.0, (double)(-LARGEINT));
-		/*
-		  Now sum current result. Falls through if no intersection (iMax&jMax==0)
-		*/
-		redoNormalization(currentImage->weight, outputImage, iMin, iMax, jMin, jMax, vXimage, vYimage, vZimage, errorX, errorY,
-						  scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, statsFlag);
+		if (outputImage->singleImageFastPath == FALSE)
+		{
+			/*
+			  Compute scale array for feathering.
+			*/
+			if (fl > 0 && iMax > 0 && jMax > 0 && statsFlag == FALSE)
+				computeScale((float **)vxTmp, fScale, outputImage->ySize, outputImage->xSize, fl, (float)1.0, (double)(-LARGEINT));
+			/*
+			  Now sum current result. Falls through if no intersection (iMax&jMax==0)
+			*/
+			redoNormalization(currentImage->weight, outputImage, iMin, iMax, jMin, jMax, vXimage, vYimage, vZimage, errorX, errorY,
+							  scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, statsFlag);
+		}
+		/* singleImageFastPath: vxTmp/vyTmp/vzTmp/errorX/errorY were already written as
+		   final values directly in the per-pixel loop above -- nothing to accumulate. */
 		/*  Update image pointer to move to  next image*/
 		currentParams = currentParams->next;
 	} /* End image loop */
 	free(localImgs);
+	free(jRowMin);
+	free(jRowMax);
 	/*   ********************END OF MAIN LOOP *****************************
 		Adjust scale
 	*/
-	endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, statsFlag);
+	if (outputImage->singleImageFastPath == FALSE)
+	{
+		endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, statsFlag);
+	}
+	else
+	{
+		/* vxTmp/vyTmp/vzTmp/errorX/errorY already hold final values (written directly
+		   in the per-pixel loop) -- alias them in as image/image2/image3 so the rest
+		   of mosaic3d.c (GeoTIFF/binary writer) needs no changes at all. */
+		outputImage->image = (void **)outputImage->vxTmp;
+		outputImage->image2 = (void **)outputImage->vyTmp;
+		outputImage->image3 = (void **)outputImage->vzTmp;
+	}
 	fprintf(outputImage->fpLog, ";\n; Returning from speckleTrackMosaic(.c)\n;\n");
 }
 

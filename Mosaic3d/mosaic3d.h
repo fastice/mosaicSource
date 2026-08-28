@@ -78,6 +78,8 @@ void setup3D(int32_t nFiles, char **phaseFiles, char **geodatFiles, char **basel
 			 int32_t *nAsc, int32_t *nDesc, int32_t offsetFlag, int32_t rOffsetFlag, int32_t threeDOffFlag, FILE *fpLog,
 			 outputImageStructure *outputImage);
 
+void allocateOffsetBuffers(inputImageStructure *ascImages, inputImageStructure *descImages);
+
 void getRParams(Offsets *offsets);
 
 double computeSig2Base(double sinThetaD, double cosThetaD, double azimuth, inputImageStructure *inputImage, Offsets *offsets);

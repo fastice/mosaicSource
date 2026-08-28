@@ -8,6 +8,7 @@
 #include "gdalIO/gdalIO/grimpgdal.h"
 
 extern int32_t indentRegionOutput;
+extern int32_t noMask; /* ignore any embedded VRT dataset mask band on offset inputs */
 
 /* Running grand totals of I/O time across the whole run, accumulated by
    readRangeOrRangeOffsets() and getMosaicInputImage() respectively; printed
@@ -737,7 +738,7 @@ static void mapBandDescriptionsToBandNumbers(GDALDatasetH hDS, int32_t bandNumbe
 	// fprintf(stderr, "%i %i %i %i\n", bandNumbers[1], bandNumbers[2], bandNumbers[3], bandNumbers[4]);
 }
 
-void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float azimuthMin, float azimuthMax)
+int32_t readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float azimuthMin, float azimuthMax)
 {
 	int32_t status;
 	float *data;
@@ -745,6 +746,7 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float a
 	int32_t bandNumbers[5];
 	GDALRasterBandH hBand;
 	int32_t iAzMin, iAzMax, nRows, k;
+	int32_t maskApplied = FALSE;
 
 	mapBandDescriptionsToBandNumbers(hDS, bandNumbers);
 	// Handle various buffer cases
@@ -814,11 +816,60 @@ void readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, float a
 	}
 
 	if (status != CE_None)
+	{
 		error("readGDALOffsets: GDALRasterIO failed\n");
+	}
 
 	/* Convert any NaN pixels (source nodata) to -LARGEINT sentinel */
 	for (k = 0; k < offsets->nr * offsets->na; k++)
+	{
 		if (isnan(data[k])) data[k] = (float)-LARGEINT;
+	}
+
+	/* Apply an embedded VRT dataset mask band (e.g., range.offsets.good.tif/
+	   azimuth.offsets.good.tif from autocleanNISAR.py), if present, to the
+	   primary value bands only -- downstream code gates validity purely on
+	   dr[i][j]/da[i][j] > -LARGEINT, so the sigma bands don't need masking. */
+	if (!noMask && (bufferMode == AZIMUTHBUFF || bufferMode == RANGEBUFF || bufferMode == RANGEUSEAZIMUTHBUFF))
+	{
+		int32_t maskFlags = GDALGetMaskFlags(hBand);
+		if (!(maskFlags & GMF_ALL_VALID))
+		{
+			GDALRasterBandH hMaskBand = GDALGetMaskBand(hBand);
+			GByte *maskData = (GByte *)malloc(offsets->nr * offsets->na * sizeof(GByte));
+			if (maskData == NULL)
+			{
+				error("readGDALOffsets: failed to allocate mask buffer\n");
+			}
+			if (iAzMin == 0 && iAzMax == offsets->na - 1)
+			{
+				status = GDALRasterIO(hMaskBand, GF_Read, 0, 0, offsets->nr, offsets->na, maskData,
+									  offsets->nr, offsets->na, GDT_Byte, 0, 0);
+			}
+			else
+			{
+				for (k = 0; k < offsets->nr * offsets->na; k++)
+				{
+					maskData[k] = 1;
+				}
+				status = GDALRasterIO(hMaskBand, GF_Read,
+									  0, iAzMin, offsets->nr, nRows,
+									  maskData + iAzMin * offsets->nr, offsets->nr, nRows,
+									  GDT_Byte, 0, 0);
+			}
+			if (status != CE_None)
+			{
+				error("readGDALOffsets: GDALRasterIO failed reading mask band\n");
+			}
+			for (k = 0; k < offsets->nr * offsets->na; k++)
+			{
+				if (maskData[k] == 0) data[k] = (float)-LARGEINT;
+			}
+			free(maskData);
+			maskApplied = TRUE;
+		}
+	}
+	return maskApplied;
 }
 
 /*
@@ -1159,10 +1210,12 @@ void readRangeOrRangeOffsets(Offsets *offsets, int32_t orbitType, float azimuthM
 		fprintf(stderr, "%sGDALOpen range vrt time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - t0);
 		// Read data and close
 		t0 = now();
-		if (orbitType == ASCENDING) readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF, azimuthMin, azimuthMax);
-		else readGDALOffsets(hDS, offsets, RANGEBUFF, azimuthMin, azimuthMax);
+		int32_t maskApplied;
+		if (orbitType == ASCENDING) maskApplied = readGDALOffsets(hDS, offsets, RANGEUSEAZIMUTHBUFF, azimuthMin, azimuthMax);
+		else maskApplied = readGDALOffsets(hDS, offsets, RANGEBUFF, azimuthMin, azimuthMax);
 		readGDALOffsets(hDS, offsets, RANGEERRORBUFF, azimuthMin, azimuthMax);
-		fprintf(stderr, "%sRead range+sigma bands time: %.3f s\n", indentRegionOutput ? "\t" : "", now() - t0);
+		fprintf(stderr, "%sRead range+sigma%s bands time: %.3f s\n", indentRegionOutput ? "\t" : "",
+				maskApplied ? "+mask" : "", now() - t0);
 		t0 = now();
 		checkForIonosphereCorrection(hDS, offsets,
 									orbitType == ASCENDING ? RANGEUSEAZIMUTHBUFF : RANGEBUFF);
@@ -1259,6 +1312,84 @@ void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t 
 	return;
 }
 
+
+/*
+   Read the ionospheric phase image (radians) that the baseline file named for this image,
+   into the pool pointed to by buf, honoring the same partial-read row window as
+   getMosaicInputImage(). No-op when this image has no correction.
+
+   Unlike getMosaicInputImage(), this opens the file with GDALOpen directly rather than
+   going through checkForVrt(), so a plain .tif works without a sidecar .vrt wrapper --
+   the same approach tiepoints uses in tiePoints/getPhases.c.
+*/
+void getIonospherePhaseImage(inputImageStructure *inputImage, float *buf, int32_t yMin, int32_t yMax)
+{
+	GDALDatasetH hDS;
+	GDALRasterBandH hBand;
+	int32_t i, iYMin, iYMax, nRows;
+	int64_t k, nPix;
+	double tFuncStart = now();
+
+	if (inputImage->ionospherePhase == NULL || inputImage->ionospherePhaseFile[0] == '\0')
+	{
+		return;
+	}
+	/* Repoint the row pointers at the shared pool, mirroring setBuffer() in make3DMosaic.c.
+	   A NULL buf means "keep the pool setupADImageBuffers already assigned" -- what
+	   makeVhMosaic.c needs, since it never calls setBuffer() either. */
+	if (buf != NULL)
+	{
+		for (i = 0; i < inputImage->azimuthSize; i++)
+		{
+			inputImage->ionospherePhase[i] = &(buf[(int64_t)i * inputImage->rangeSize]);
+		}
+	}
+	else
+	{
+		buf = inputImage->ionospherePhase[0];
+	}
+	hDS = GDALOpen(inputImage->ionospherePhaseFile, GDAL_OF_READONLY);
+	if (hDS == NULL)
+		error("getIonospherePhaseImage: cannot open %s\n", inputImage->ionospherePhaseFile);
+	if (GDALGetRasterXSize(hDS) != inputImage->rangeSize ||
+		GDALGetRasterYSize(hDS) != inputImage->azimuthSize)
+		error("getIonospherePhaseImage: %s is %d x %d but the phase image is %d x %d\n",
+			  inputImage->ionospherePhaseFile, GDALGetRasterXSize(hDS), GDALGetRasterYSize(hDS),
+			  inputImage->rangeSize, inputImage->azimuthSize);
+	hBand = GDALGetRasterBand(hDS, 1);
+	if (hBand == NULL)
+		error("getIonospherePhaseImage: cannot get band 1 of %s\n", inputImage->ionospherePhaseFile);
+	/* Fill with the nodata sentinel, then read only the requested rows in place, so
+	   unread rows interpolate as invalid rather than as stale data. */
+	nPix = (int64_t)inputImage->rangeSize * inputImage->azimuthSize;
+	for (k = 0; k < nPix; k++)
+	{
+		buf[k] = (float)-LARGEINT;
+	}
+	iYMin = yMin / inputImage->nAzimuthLooks;
+	iYMax = yMax / inputImage->nAzimuthLooks;
+	if (iYMin < 0)
+	{
+		iYMin = 0;
+	}
+	if (iYMax >= inputImage->azimuthSize)
+	{
+		iYMax = inputImage->azimuthSize - 1;
+	}
+	nRows = iYMax - iYMin + 1;
+	if (nRows > 0)
+	{
+		if (GDALRasterIO(hBand, GF_Read, 0, iYMin, inputImage->rangeSize, nRows,
+						 &(buf[(int64_t)iYMin * inputImage->rangeSize]),
+						 inputImage->rangeSize, nRows, GDT_Float32, 0, 0) != CE_None)
+			error("getIonospherePhaseImage: GDALRasterIO failed for %s\n", inputImage->ionospherePhaseFile);
+	}
+	GDALClose(hDS);
+	fprintf(stderr, "%sRead ionosphere phase %s (rows %i to %i): %.3f s\n",
+			indentRegionOutput ? "\t" : "", inputImage->ionospherePhaseFile, iYMin, iYMax,
+			now() - tFuncStart);
+	totalPhaseIOTime += now() - tFuncStart;
+}
 
 /*
    Read 4x4 or 6x6 cov matrix for the az/rg params file format

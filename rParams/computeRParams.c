@@ -1,5 +1,6 @@
 #include <math.h>
 #include "mosaicSource/common/common.h"
+#include "mosaicSource/common/writeTieResidualsGpkg.h"
 #include "rparams.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
@@ -63,7 +64,7 @@ static void computeLinearBaseline(inputImageStructure *inputImage, Offsets *offs
 	*dbp = bp2 - bp1;
 }
 
-double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput)
+double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput, int32_t debugFlag, tieResidualsType *debugFitOut)
 {
 	double Re, H, RNear, thetaC, dr, rOffset, ReH;
 	double *a; /* Solution for params */
@@ -88,6 +89,9 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 	int32_t pIndex[7];
 	double weightSum;
 	double t;
+	int32_t *origIndex = NULL;
+	double *residual = NULL;
+	void (*coeffsFn)(void *, int32_t, double *, int32_t) = NULL;
 	nParams = 4.;
 	/* Determine number of parameters in the fit */
 	if (tiePoints->bnbpdBpFlag == TRUE)
@@ -142,6 +146,8 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 	sigB = dvector(1, ma);
 	C6 = dmatrix(1, 6, 1, 6);
 	Cp = dmatrix(1, ma, 1, ma);
+	if (debugFlag)
+		origIndex = (int32_t *)malloc(npts * sizeof(int32_t));
 	/*
 	  Loop twice, first using flattening value of bsq, and then value
 	  from first fit. Should easily converge with just two iterations
@@ -200,6 +206,8 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			if (fabs(tiePoints->phase[i]) < 1.0E6 )
 			{ /* Use only good points */
 				i1 = j + 1;
+				if (debugFlag)
+					origIndex[i1 - 1] = i;
 				zSp = tiePoints->z[i];
 				r0 = RNear + rOffset + tiePoints->r[i] * dr;
 				azimuth = (int)tiePoints->a[i];
@@ -302,6 +310,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 					return -1.0;
 				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rbnbpdBpParamsCoeffs);
+				coeffsFn = &rbnbpdBpParamsCoeffs;
 				Bn = a[1];
 				Bp = tiePoints->BpCorig;
 				dBn = tiePoints->dBnorig;
@@ -319,6 +328,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 					return -1.0;
 				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rbpdBpParamsCoeffs);
+				coeffsFn = &rbpdBpParamsCoeffs;
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
 				dBn = tiePoints->dBnorig;
@@ -336,6 +346,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 					return -1.0;
 				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &constOnlyParamsCoeffs);
+				coeffsFn = &constOnlyParamsCoeffs;
 				Bn = tiePoints->BnCorig;
 				Bp = tiePoints->BpCorig;
 				dBn = tiePoints->dBnorig;
@@ -353,6 +364,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 					return -1.0;
 				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rParamsCoeffsQuad);
+				coeffsFn = &rParamsCoeffsQuad;
 				Bn = a[1];
 				Bp = tiePoints->BpCorig;
 				dBn = a[3];
@@ -370,6 +382,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 					return -1.0;
 				}
 				svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rParamsCoeffs);
+				coeffsFn = &rParamsCoeffs;
 				Bn = a[1];
 				Bp = tiePoints->BpCorig;
 				dBn = a[3];
@@ -389,6 +402,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 				return -1.0;
 			}
 			svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &BpCorrectOnlyParamsCoeffs);
+			coeffsFn = &BpCorrectOnlyParamsCoeffs;
 			Bn = 0;
 			Bp = a[1];
 			dBn = 0;
@@ -407,6 +421,7 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 				return -1.0;
 			}
 			svdfit((void *)x, y, sig, npts, a, ma, u, v, w, &chisq, &rParamsCoeffsQuadCorrect);
+			coeffsFn = &rParamsCoeffsQuadCorrect;
 			cnst = 0.0;
 			Bn = a[1];
 			Bp = a[4];
@@ -419,6 +434,19 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 		}
 		else
 			error("computeRParams: invalid deltaB flag ", tiePoints->deltaB);
+		if (debugFlag && k == kPrint)
+		{
+			double afunc[7];
+			residual = (double *)malloc(npts * sizeof(double));
+			for (i1 = 1; i1 <= npts; i1++)
+			{
+				(*coeffsFn)((void *)x, i1, afunc, ma);
+				double model = 0.0;
+				for (int32_t m = 1; m <= ma; m++)
+					model += afunc[m] * a[m];
+				residual[i1 - 1] = y[i1] - model;
+			}
+		}
 		svdvar(v, ma, w, Cp);
 		fprintf(stderr, " --- %f %f %f %f %f %f %f\n", Bn, Bp, dBn, dBp, dBnQ, dBpQ, cnst);
 	}
@@ -454,6 +482,12 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 			fprintf(stdout, "offsetCorrectionFile: %s\n", offsets->rOffCorrection.correctionFile);
 		else
 			fprintf(stdout, "offsetCorrectionFile: nil\n");
+		if (debugFlag && debugFitOut != NULL)
+		{
+			debugFitOut->npts = npts;
+			debugFitOut->origIndex = origIndex;
+			debugFitOut->residual = residual;
+		}
 		return sigP;
 	}
 	fprintf(stdout, ";* sigma*sqrt(X2/n)= %lf \n", sigP);
@@ -515,6 +549,12 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 	}
 	if (offsets->rOffCorrection.correctionFile[0] != '\0')
 		fprintf(stdout, ";* offsetCorrectionFile %s\n", offsets->rOffCorrection.correctionFile);
+	if (debugFlag && debugFitOut != NULL)
+	{
+		debugFitOut->npts = npts;
+		debugFitOut->origIndex = origIndex;
+		debugFitOut->residual = residual;
+	}
 	return sigP;
 }
 

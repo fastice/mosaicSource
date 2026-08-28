@@ -34,18 +34,33 @@ azparams [options] -nDays nDays geodatFile tiepointsFile offsetFile baselineFile
 | `-linear`       | Add a linear along-track trend to either the `constOnly` or baseline parameter solution |
 | `-useSV`        | Estimate a correction after removing a state-vector-determined azimuth offset |
 | `-quiet`        | Suppress tiepoint echo to stdout |
+| `-outputFile <path>` | Write the solution to `<path>` instead of stdout |
+| `-debug`        | Write every tie point used in the fit, plus its residual, to a GeoPackage (see "Debug output" below) |
+| `-noMask`       | Ignore any embedded VRT dataset mask band on the offset file (e.g. `autocleanNISAR.py`'s `azimuth.offsets.good` mask); default off, so a mask is honored when present |
 
 > **Note:** `-nDays` is required; the program will error if it is omitted.
 
 ### Output
 
-Results are written to **stdout** in a commented format:
+Results are written to **stdout** (or to `-outputFile`, if given) in a commented format:
 
 - Tiepoint locations and extracted azimuth offsets (with `;` prefix)
 - Number of tiepoints used / given
 - Fit residual sigma (`sigma*sqrt(X2/n)`)
 - 4×4 parameter covariance matrix
 - Final estimated parameters on one line: `const  dBc/ds  dBh/ds  linConst`
+
+### Debug output (`-debug`)
+
+Writes a `.gpkg` point layer named `residuals` containing every tie point used in the
+fit: `id`, `lat`, `lon`, `x_km`/`y_km` (polar-stereo), `range`, `azimuth`, `z`,
+`weight`, and `azimuth_residual_m` (the fit residual in meters, recomputed from the
+same coefficient function `svdfit()` used for the winning solve). Filename defaults to
+`azparams.<mode>.gpkg` (`<mode>` reflects which of `-constOnly`/`-linear`/default was
+used); if `-outputFile <path>` is also given, the debug file is named
+`<path>.residuals.gpkg` instead. See `mosaicSource/CLAUDE.md` "Debug residual
+GeoPackage output" for the shared writer implementation (also used by `tiepoints` and
+`rparams`).
 
 ---
 

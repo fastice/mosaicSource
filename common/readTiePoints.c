@@ -39,6 +39,10 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 	tiePoints->vyra = (double *)malloc(sizeof(double) * MAXTIEPOINTS);
 	tiePoints->weight = (double *)malloc(sizeof(double) * MAXTIEPOINTS);
 	/* End 4/2/7 fix */
+	/* Optional ionospheric phase -- malloc'd only if tiepoints -ionosphere is used
+	   (see getIonosphere() in tiePoints/getPhases.c), same pattern as phaseSquint. */
+	tiePoints->ionPhase = NULL;
+	tiePoints->hasIonosphere = FALSE;
 	weight = 1.0;
 	tiePoints->npts = 0;
 	while (notdone == TRUE)

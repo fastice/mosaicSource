@@ -1,5 +1,6 @@
 #include <math.h>
 #include "mosaicSource/common/common.h"
+#include "mosaicSource/common/writeTieResidualsGpkg.h"
 #include "azparams.h"
 #include "cRecipes/nrutil.h"
 #include <stdlib.h>
@@ -47,7 +48,7 @@ static void computeBaselineRates(inputImageStructure *inputImage, Offsets *offse
 	fprintf(stderr, "--- %e %e \n", *dbc, *dbh);
 }
 
-void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput)
+void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput, char *debugFile)
 {
 	double Re, H, RNear, dr;
 	double *a; /* Solution for params */
@@ -66,6 +67,8 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	int32_t pIndex[5];
 	int32_t nData, ma;
 	double svSol;
+	int32_t debugFlag = (debugFile != NULL);
+	int32_t *origIndex = NULL;
 
 	if (tiePoints->constOnlyFlag == TRUE)
 	{
@@ -130,6 +133,8 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 	w = dvector(1, ma);
 	sigB = dvector(1, ma);
 	Cp = dmatrix(1, ma, 1, ma);
+	if (debugFlag)
+		origIndex = (int32_t *)malloc(npts * sizeof(int32_t));
 	sigP = 10.0;
 	/* Compute mean weight for renormalization */
 	weightSum = 0.0;
@@ -166,6 +171,8 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 			if (fabs(tiePoints->phase[i]) < 1.0E6)
 			{ /* Use only good points */
 				i1 = j + 1;
+				if (debugFlag)
+					origIndex[i1 - 1] = i;
 				z = tiePoints->z[i];
 				r0 = RNear + tiePoints->r[i] * dr;
 				azimuth = tiePoints->a[i];
@@ -244,6 +251,26 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		 */
 		svdvar(v, ma, w, Cp);
 	} /* end k */
+
+	double *residual = NULL;
+	if (debugFlag)
+	{
+		void (*coeffsFn)(void *, int32_t, double *, int32_t);
+		if (tiePoints->constOnlyFlag == TRUE)
+			coeffsFn = tiePoints->linFlag ? linearOnlyCoeffs : constOnlyCoeffs;
+		else
+			coeffsFn = tiePoints->linFlag ? azCoeffsLinear : azCoeffs;
+		double afunc[5];
+		residual = (double *)malloc(npts * sizeof(double));
+		for (i1 = 1; i1 <= npts; i1++)
+		{
+			(*coeffsFn)((void *)x, i1, afunc, ma);
+			double model = 0.0;
+			for (int32_t m = 1; m <= ma; m++)
+				model += afunc[m] * a[m];
+			residual[i1 - 1] = y[i1] - model;
+		}
+	}
 	/*
 	  Output results
 	 */
@@ -296,6 +323,23 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		}
 		fprintf(stdout, ";\n");
 		fprintf(stdout, "%lf %le %le %lf\n", result[1], result[2], result[3], result[4]);
+	}
+
+	if (debugFlag)
+	{
+		extern int32_t HemiSphere;
+		extern double Rotation;
+		tieResidualsType fit;
+		fit.npts = npts;
+		fit.origIndex = origIndex;
+		fit.residual = residual;
+		OGRDataSourceH ds = openTieResidualsGpkg(debugFile, FALSE);
+		writeTieResidualsLayer(ds, "residuals", tiePoints, &fit,
+								"azimuth_residual_m", "Baseline fit residual (meters)",
+								Rotation, tiePoints->stdLat, HemiSphere);
+		closeTieResidualsGpkg(ds);
+		free(origIndex);
+		free(residual);
 	}
 	return;
 }
