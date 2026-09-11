@@ -9,6 +9,7 @@
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"
 #include "mosaicSource/landsatMosaic/landSatMosaic.h"
+#include "gdalIO/gdalIO/grimpgdal.h"
 
 void computeScaleLS(float **inImage, float **scale, int32_t azimuthSize, int32_t rangeSize, float fl, float weight, double minVal, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
 static void readLSOffsetsForMosaic(landSatImage *currentImage);
@@ -409,6 +410,54 @@ static void readLSOffsetsForMosaic(landSatImage *currentImage)
 	}
 }
 /*
+  Read one band of a GeoTIFF into a caller-supplied buffer, or return FALSE if
+  there is no <file>.tif to read.
+
+  GeoTIFFs written by cullls (and by intfloat -tiff) are north-up, because
+  saveAsGeotiff flips on write, while every GrIMP raw plane and everything
+  downstream here is south-up with row 0 at the bottom. So rows are read in
+  reverse, which also avoids a whole-image temporary.
+
+  Detection is by file existence rather than a flag, matching how the SAR side
+  already picks up VRTs in common/readOffsets.c, so a tree part-way through the
+  format migration reads correctly either way.
+*/
+static int32_t LSreadTiffIfPresent(char *file, int32_t nx, int32_t ny, void *flat,
+								   GDALDataType dataType)
+{
+	char tiffFile[2048];
+	GDALDatasetH ds;
+	GDALRasterBandH band;
+	int32_t i, pixelBytes;
+	CPLErr status;
+	char *rows = (char *)flat;
+
+	sprintf(tiffFile, "%s.tif", file);
+	if (fileExists(tiffFile, FALSE) == FALSE)
+		return (FALSE);
+	ds = GDALOpen(tiffFile, GA_ReadOnly);
+	if (ds == NULL)
+		error("LSreadTiffIfPresent: cannot open %s\n", tiffFile);
+	if (GDALGetRasterXSize(ds) != nx || GDALGetRasterYSize(ds) != ny)
+		error("LSreadTiffIfPresent: %s is %i x %i, expected %i x %i\n", tiffFile,
+			  GDALGetRasterXSize(ds), GDALGetRasterYSize(ds), nx, ny);
+	band = GDALGetRasterBand(ds, 1);
+	pixelBytes = (dataType == GDT_Byte) ? 1 : 4;
+	for (i = 0; i < ny; i++)
+	{
+		/* tif row (ny-1-i) is GrIMP row i */
+		status = GDALRasterIO(band, GF_Read, 0, ny - 1 - i, nx, 1,
+							  &(rows[(size_t)i * nx * pixelBytes]), nx, 1,
+							  dataType, 0, 0);
+		if (status != CE_None)
+			error("LSreadTiffIfPresent: read failed on %s row %i\n", tiffFile, i);
+	}
+	GDALClose(ds);
+	fprintf(stderr, "Read tiff %s\n", tiffFile);
+	return (TRUE);
+}
+
+/*
   Read LS image
  */
 static float **LSreadFloatImageforMosaic(char *file, int32_t nx, int32_t ny, float *fBuffer, float **image)
@@ -418,6 +467,9 @@ static float **LSreadFloatImageforMosaic(char *file, int32_t nx, int32_t ny, flo
 	/*    malloc space	*/
 	for (i = 0; i < ny; i++)
 		image[i] = &(fBuffer[i * nx]);
+	/*    GeoTIFF if one is there, else the raw big-endian plane	*/
+	if (LSreadTiffIfPresent(file, nx, ny, fBuffer, GDT_Float32) == TRUE)
+		return (image);
 	/*   open file	*/
 	fp = openInputFile(file);
 	/*    read file	*/
@@ -433,6 +485,9 @@ static uint8_t **LSreadByteImageforMosaic(char *file, int32_t nx, int32_t ny, ui
 	/* 	   malloc space  */
 	for (i = 0; i < ny; i++)
 		m[i] = &(maskB[i * nx]);
+	/*    GeoTIFF if one is there, else the raw plane	*/
+	if (LSreadTiffIfPresent(file, nx, ny, maskB, GDT_Byte) == TRUE)
+		return (m);
 	/*    open file	*/
 	fp = openInputFile(file);
 	/*   read file	*/
