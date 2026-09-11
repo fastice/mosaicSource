@@ -74,6 +74,99 @@ double SLat = -91.;
 
 int32_t llConserveMem = 1234; /* Kluge to maintain backwards compat 9/13/06 */
 int32_t useSquint = FALSE; /* apply squint(r,a) heading correction (phase/make3DMosaic.c only) */
+/* Joint (normal-equations) crossing-orbit solvers are the DEFAULT as of 2026-08-29.  They loop
+   once per PRODUCT rather than once per pair, so each measurement enters the solution exactly
+   once and the n_A x n_D over-count cannot arise.  Measured: same velocity, 12-13% more coverage
+   on NISAR, 18.6-71x faster.  -legacyPairPhase / -legacyPairRange restore the originals.
+   NOTE the reported ex/ey are then Cov = N^-1, which propagates measurement noise only and is
+   optimistic against an external reference (1-sigma coverage ~43% rather than 68%); the missing
+   term is common-mode error at the pixel and is not modellable from within.  See
+   Documents/crossingOrbitRedundancy.md and mosaicSource/CLAUDE.md. */
+int32_t legacyPairPhase = FALSE;
+int32_t legacyPairRange = FALSE;
+double jointMaxSigma = JOINTMAXSIGMAPHASEDEF;
+double jointMaxSigmaRange = JOINTMAXSIGMARANGEDEF;
+double jointErrScale = 1.0;
+int32_t noAzimuthRows = FALSE;
+/* True 3-component solver (mosaicTrue3D.c).  Offsets only, no surface-parallel constraint. */
+int32_t true3D = FALSE;
+int32_t true3DProject = FALSE;
+double true3DMaxSigma = JOINTMAXSIGMARANGEDEF;
+int32_t true3DDiag = FALSE;
+int32_t true3DPhase = FALSE;
+/*  DEFAULT SOLVER since 2026-09.  A bare mosaic3d run uses the 2D hopper: one per-pixel
+    normal-equation solve carrying phase, range-offset and azimuth-offset rows, each weighted by
+    its own sigma, replacing the legacy four-round pipeline (crossing phase -> crossing range
+    offsets -> vh -> speckle).  -legacyCode selects that pipeline instead.  Legacy round-selection
+    flags are TRANSLATED into row switches rather than ignored -- see translateLegacyFlags(). */
+int32_t hopper = TRUE;
+int32_t hopper3D = FALSE;
+/*  -legacyCode: the pre-2026-09 four-round pipeline.  Also implied by -stats and by
+    -legacyPairPhase/-legacyPairRange, none of which have a hopper equivalent. */
+int32_t legacyCode = FALSE;
+/*  DEFAULT IS 2D EVERYWHERE (-1), deliberately.  Measured on three NISAR sectors, the
+    unconstrained 3-component solve costs horizontal accuracy against the multi-year S1
+    reference in EVERY case -- +15.6%, +70.7%, +144.4% -- and the penalty is largest where the
+    2D solution is best, because dropping the surface-parallel constraint can only add variance
+    to an already-good answer.  So 3D is strictly opt-in: pass a value >= 0 to enable it.
+    See Documents/hopper3DPlan.md. */
+double hopper3DMaxSigma = -1.0;
+int32_t noPhaseRows = FALSE;
+int32_t noRangeRows = FALSE;
+/*  -sigmaAThreshVel X : drop azimuth rows whose azparams residual, converted to m/yr
+    (sigmaAresidual * 365.25/nDays), exceeds X.  The existing -sigmaAThresh is in METRES over the
+    pair interval and is left alone.  Default -1 = inert. */
+double sigmaAThreshVel = 150.0;
+/*  -gateNEff : in the output rejection gate, replace the raw row count with the weighted
+    effective count (sum w)^2 / sum(w^2).  The gate estimates per-measurement sigma as
+    sigma_worst*sqrt(n), which assumes comparable weights; azimuth rows sit ~4 orders of magnitude
+    below phase, so they pad n without informing lambda_min and inflate the gate ~1.7x.
+    DEFAULT ON since 2026-09-02; -noGateNEff restores the raw count.  Wired in BOTH hoppers, which
+    it must be: -hopper3D -hopper3DMaxSigma -1 is documented to reproduce -hopper, and gating them
+    differently would break that. */
+int32_t gateNEff = TRUE;
+/*  -gateAbsolute : gate on the worst-direction formal sigma ALONE, dropping the sqrt(n) factor,
+    so the test reads "do not publish a velocity whose formal 1-sigma exceeds X m/yr".
+    The default sigma_worst*sqrt(nEff) form estimates a PER-MEASUREMENT sigma, but sigma_worst
+    also carries the geometric dilution: where the look directions are clustered (Antarctic
+    coastal rim, offsets-only pixels -- phase and range share the LOS direction) the statistic is
+    inflated by geometry rather than by noise, and tightens further as n grows.  Measured on the
+    Antarctic multi-year mosaic: the default rejects 5.1M pixels the pair solvers kept, on the
+    ENTIRE coastal margin, whose chi-square is 0.23 (i.e. the measurements agree) and whose
+    formal error is 9 m/yr.  Greenland is unaffected because its rows are better calibrated
+    (chi2 ~0.6 vs ~0.2), which is exactly why a single sqrt(n) threshold does not port between
+    archives and an absolute one does.  DEFAULT OFF; -noGateAbsolute restores it.  Wired in BOTH
+    hoppers for the same reason as gateNEff. */
+int32_t gateAbsolute = FALSE;
+/*  -gateSpeedFrac F : speed-aware form of the absolute cap, effective cap = max(X, F*|v|)
+    where X is -jointMaxSigma.  See mosaic3d.h.
+
+    DEFAULT 0.03 since 2026-09; pass -gateSpeedFrac 0 to disable.  A fixed cap in m/yr is a
+    tightening constraint as speed rises -- 50 m/yr is 0.7% of a 7 km/yr velocity but 50% of a
+    100 m/yr one -- so an absolute gate rejects fast ice for having the large ABSOLUTE error that
+    fast ice necessarily has.  Measured on Greenland, retention above 5 km/yr: 35.6% (n-normalised
+    default), 92.2% (-gateAbsolute 50), 99.8% (+ this term), with NO change below 500 m/yr.
+
+    Note max(): the term can only ever RAISE the cap, so enabling it can add pixels but never
+    remove them.  That is what makes a default change safe -- no pixel that passed before fails
+    now. */
+double gateSpeedFrac = 0.03;
+/*  -maxChi2 X : reject a solved pixel whose REDUCED chi-square exceeds X.  A blunder screen,
+    not a precision test -- chi2 asks whether the rows agree with EACH OTHER, so it catches the
+    case the formal sigma cannot: a confidently wrong solve (one frame with an unwrapping error,
+    say) whose reported error is small.  Measured on the Antarctic -gateAbsolute mosaic: the 583
+    pixels that changed by >1000 m/yr against the interpolated product carry median chi2 9e5
+    while good pixels sit at 0.38, so X=100 removes 81 % of them at 0.00 % cost in Antarctica and
+    0.80 % in Greenland (X=1000: 80 % / 0.09 %).  Keep X LOOSE.  A tight cut is wrong: chi2 also
+    carries real temporal variability, and 22 % of Greenland's valid pixels exceed 2.
+    DEFAULT -1 = off.  Wired in BOTH hoppers. */
+double maxChi2 = -1.0;
+/* -obsDump <pointsFile>: per-observation dump at a short list of lat/lon points, for the
+   GPS forward model (Documents/gpsForwardModelPlan.md).  NULL = inert. */
+char *obsDumpFile = NULL;
+/* -noErrorGate: keep pixels whose velocity is valid but whose formal error is not.
+   Default FALSE, i.e. such pixels ARE removed.  See toSigma(). */
+int32_t noErrorGate = FALSE;
 /* Inflate crossing-pair errors by (n_A+n_D)/2 to account for the N_A x N_D pairs not being
    independent (see inflatePairOverCount, common/scalingFunctions.c).  Default ON, matching
    the behaviour of the GNSS-validated products; -noPairOverCount disables it.  Without any
@@ -228,7 +321,18 @@ int main(int argc, char *argv[])
 		fflush(outputImage.fpLog);
 	}
 	else
+	{
 		outputImage.verticalCorrection = NULL;
+	}
+	/* Unconditional: only make3DMosaicJoint() ever sets this, and a stack-allocated
+	   outputImage would otherwise leave it as garbage and trigger a bogus .nobs write. */
+	outputImage.jointNObs = NULL;
+	outputImage.jointChi2 = NULL;
+	/* Only mosaicTrue3D() ever sets these; NULL is what tells the writer below to skip the
+	   ".vz3d"/".ez" bands. */
+	outputImage.vZ3D = NULL;
+	outputImage.errorZ = NULL;
+	outputImage.hopperMode = NULL;
 	/*
 	   read ref vel file for error clipping
 	*/
@@ -248,10 +352,15 @@ int main(int argc, char *argv[])
 	   NOT gated by noVhFlag) and only skips touching the accumulation buffers via its
 	   own early "if (no3d == TRUE) return;" -- without that, it would call
 	   setupBuffers()/computeScale() on the buffers this path leaves NULL. */
+	/*  legacyCode is REQUIRED: this path leaves the accumulation buffers NULL and relies on the
+	    solver's own "if (no3d == TRUE) return;" to avoid touching them.  Under the hopper -no3d
+	    no longer short-circuits the solver, so without this gate the hopper would dereference
+	    those NULL buffers. */
 	outputImage.singleImageFastPath =
-		(outputImage.rOffsetFlag == TRUE && (nAsc + nDesc) == 1 &&
+		(legacyCode == TRUE &&
+		 outputImage.rOffsetFlag == TRUE && (nAsc + nDesc) == 1 &&
 		 args.threeDOffFlag == FALSE && outputImage.noVhFlag == TRUE &&
-		 outputImage.no3d == TRUE &&
+		 outputImage.no3d == TRUE && true3D == FALSE &&
 		 args.landSatFile == NULL && args.irregFile == NULL &&
 		 outputImage.makeTies == FALSE && args.statsFlag == FALSE &&
 		 refVel.initMapFlag == FALSE && outputImage.timeOverlapFlag == FALSE);
@@ -312,6 +421,42 @@ int main(int argc, char *argv[])
 		tmpP->xydem = dem;
 	fprintf(outputImage.fpLog, ";\n; Returned from readXYDEM\n");
 	fflush(outputImage.fpLog);
+	/*  Name the solver and the row set actually in use.  The default changed 2026-09 from the
+	    four-round pipeline to the hopper, so an unannotated log would leave no trace of which
+	    one produced a given product. */
+	{
+		const char *solverName = (legacyCode == TRUE) ? "legacy 4-round pipeline"
+							   : (hopper3D == TRUE)
+									 ? ((hopper3DMaxSigma >= 0.0) ? "hopper3D (3D enabled)"
+																  : "hopper3D (forced 2D)")
+									 : "hopper2D";
+		int32_t k;
+		for (k = 0; k < 2; k++)
+		{
+			FILE *fp = (k == 0) ? stderr : outputImage.fpLog;
+			fprintf(fp, "; SOLVER: %s", solverName);
+			if (legacyCode == FALSE)
+			{
+				fprintf(fp, "  rows:%s%s%s",
+						noPhaseRows ? "" : " phase", noRangeRows ? "" : " range",
+						noAzimuthRows ? "" : " azimuth");
+				if (noPhaseRows && noRangeRows && noAzimuthRows)
+					fprintf(fp, " NONE -- this will produce an empty mosaic");
+			}
+			fprintf(fp, "\n");
+		}
+		fflush(outputImage.fpLog);
+	}
+	/*  Per-observation dump.  Must come AFTER findOutBounds/readXYDEM: it maps lat/lon to
+	    output-grid cells, so it needs the final grid AND dem.stdLat (outputImage.slat is
+	    flagged "not fully implemented" in geocode.h).  Output is per-sector-named, since
+	    makemosaic runs one mosaic3d per sector and a fixed name would collide. */
+	if (obsDumpFile != NULL)
+	{
+		char obsDumpOut[2048];
+		snprintf(obsDumpOut, sizeof(obsDumpOut), "%s.obsDump", args.outFileBase);
+		obsDumpInit(obsDumpFile, obsDumpOut, &outputImage, dem.stdLat);
+	}
 	// Init values
 	/* init3DImages() unconditionally touches image/image2/image3/scale/scale2/scale3,
 	   which mallocOutputImage() left NULL for singleImageFastPath -- mallocOutputImage()
@@ -333,20 +478,60 @@ int main(int argc, char *argv[])
 	*/
 	if ((nAsc + nDesc) > 0)
 	{
-		make3DMosaic(images, descImages, params, descParams, &dem, &outputImage, args.fl, outputImage.no3d, args.timeThreshPhase);
+		/* Both routines take the same args and both early-return on no3d BEFORE touching the
+		   accumulation buffers, so the singleImageFastPath precondition above (which requires
+		   no3d == TRUE) holds identically for either. */
+		/*  no3d is passed as FALSE to the hoppers: under the hopper it is a legacy round
+		    selector that has already been translated into noPhaseRows, so letting it reach the
+		    solver's early return would emit an EMPTY mosaic (the pre-2026-09 behaviour, and a
+		    silent one -- a blank product looks identical to a failed run). */
+		if (hopper3D == TRUE)
+		{
+			mosaicHopper3D(images, descImages, params, descParams, &dem, &outputImage, args.fl,
+						   FALSE, args.timeThreshPhase, &refVel);
+		}
+		else if (hopper == TRUE)
+		{
+			mosaicHopper(images, descImages, params, descParams, &dem, &outputImage, args.fl,
+						 FALSE, args.timeThreshPhase, &refVel);
+		}
+		else if (true3DPhase == TRUE)
+		{
+			mosaicTrue3DPhase(images, descImages, params, descParams, &dem, &outputImage, args.fl,
+							  outputImage.no3d, args.timeThreshPhase);
+		}
+		else if (legacyPairPhase == TRUE)
+		{
+			make3DMosaic(images, descImages, params, descParams, &dem, &outputImage, args.fl, outputImage.no3d, args.timeThreshPhase);
+		}
+		else
+		{
+			make3DMosaicJoint(images, descImages, params, descParams, &dem, &outputImage, args.fl, outputImage.no3d, args.timeThreshPhase);
+		}
 	}
 	/*
 	  Step 1:
 	*/
-	if ((nAsc + nDesc) > 0 && args.threeDOffFlag == TRUE)
+	/*  A hopper round already consumed the range offsets as rows, so the crossing-offsets round
+	    must not also run -- that would enter the same measurements twice.  Step 3 (speckle) is
+	    gated the same way further down; step 0 dispatches to the hopper instead of the crossing
+	    phase solver, so phase is covered by construction. */
+	if ((nAsc + nDesc) > 0 && args.threeDOffFlag == TRUE && legacyCode == TRUE)
 	{
-		make3DOffsets(images, params, &dem, &outputImage, args.fl, args.timeThresh);
+		if (legacyPairRange == TRUE)
+		{
+			make3DOffsets(images, params, &dem, &outputImage, args.fl, args.timeThresh);
+		}
+		else
+		{
+			make3DOffsetsJoint(images, params, &dem, &outputImage, args.fl, args.timeThresh);
+		}
 		fprintf(stderr, "End of 3d offsets %i\n", args.threeDOffFlag);
 	}
 	/*
 	   Step 2: Make phase/az offset velocity
 	*/
-	if (outputImage.noVhFlag == FALSE && (nAsc + nDesc) > 0)
+	if (outputImage.noVhFlag == FALSE && (nAsc + nDesc) > 0 && legacyCode == TRUE)
 	{
 		makeVhMosaic(images, params, &outputImage, args.fl);
 	}
@@ -364,9 +549,20 @@ int main(int argc, char *argv[])
 	/*
 	  Step 3: Include fully speckle-tracked data
 	*/
-	if (outputImage.rOffsetFlag == TRUE && (nAsc + nDesc) > 0)
+	/*  -hopper already consumed the range and azimuth offsets as rows in its own solve, so the
+	    speckle round must NOT also run -- that would enter the same measurements twice.
+	    -rOffsets is still required with -hopper, because it is what makes setup3D parse the
+	    offsets files in the first place. */
+	if (outputImage.rOffsetFlag == TRUE && (nAsc + nDesc) > 0 && legacyCode == TRUE)
 	{
-		speckleTrackMosaic(images, params, &outputImage, args.fl, &refVel, args.statsFlag);
+		if (true3D == TRUE)
+		{
+			mosaicTrue3D(images, params, &outputImage, args.fl, &refVel);
+		}
+		else
+		{
+			speckleTrackMosaic(images, params, &outputImage, args.fl, &refVel, args.statsFlag);
+		}
 	}
 	/* Two distinct reasons to skip, and the message has to say which. Reporting the
 	   flag unconditionally is wrong whenever the flag is set but the sector simply
@@ -438,6 +634,7 @@ int main(int argc, char *argv[])
 	{
 		writeTieFile(&outputImage, &dem, &verticalCorrection, args.outFileBase, args.tieThresh, args.extraTieFile, args.tideFile, autoSize);
 	}
+	obsDumpClose(); /* no-op unless -obsDump was given */
 }
 
 static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images,
@@ -774,6 +971,47 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 	fprintf(outputImage->fpLog, "; useSquint Flag   : %i\n", useSquint);
 	fprintf(outputImage->fpLog, "; noMask Flag      : %i\n", noMask);
 	{
+		/* Which crossing-orbit solver ran, and its gates.  0 = joint (the default); when joint
+		   ran, the rhoPhase/rhoOffsets/pairOverCount factors below do not apply to that round,
+		   since a joint solve forms no pairs and cannot over-count. */
+		extern int32_t legacyPairPhase, legacyPairRange;
+		extern double jointMaxSigma, jointMaxSigmaRange, jointErrScale;
+		fprintf(outputImage->fpLog, "; legacyPairPhase  : %i\n", legacyPairPhase);
+		fprintf(outputImage->fpLog, "; legacyPairRange  : %i\n", legacyPairRange);
+		/*  One cap acts under the hopper (jointMaxSigma, gating the single system that holds
+		    phase, range and azimuth rows), so log that alone.  The per-round split is only
+		    meaningful when the legacy rounds actually run, so it is logged only then --
+		    printing both unconditionally is what made the Phase/Range naming look like a
+		    per-observable choice. */
+		fprintf(outputImage->fpLog, "; jointMaxSigma    : %f\n", jointMaxSigma);
+		if (legacyCode == TRUE)
+		{
+			fprintf(outputImage->fpLog, "; jointMaxSigRange : %f  (legacy crossing-offsets round)\n",
+					jointMaxSigmaRange);
+		}
+		fprintf(outputImage->fpLog, "; jointErrScale    : %f\n", jointErrScale);
+		{
+			extern int32_t gateNEff, gateAbsolute;
+			extern double maxChi2;
+			fprintf(outputImage->fpLog, "; gateNEff         : %i\n", gateNEff);
+			fprintf(outputImage->fpLog, "; gateAbsolute     : %i\n", gateAbsolute);
+			fprintf(outputImage->fpLog, "; maxChi2          : %f\n", maxChi2);
+			fprintf(outputImage->fpLog, "; gateSpeedFrac    : %f\n", gateSpeedFrac);
+		}
+		{
+			extern int32_t noAzimuthRows, aSigmaResidual;
+			fprintf(outputImage->fpLog, "; noAzimuthRows    : %i\n", noAzimuthRows);
+			fprintf(outputImage->fpLog, "; aSigmaResidual   : %i\n", aSigmaResidual);
+		}
+		{
+			extern int32_t true3D, true3DProject;
+			extern double true3DMaxSigma;
+			fprintf(outputImage->fpLog, "; true3D           : %i\n", true3D);
+			fprintf(outputImage->fpLog, "; true3DProject    : %i\n", true3DProject);
+			fprintf(outputImage->fpLog, "; true3DMaxSigma   : %f\n", true3DMaxSigma);
+		}
+	}
+	{
 		extern int32_t pairOverCount, rSigmaResidual, pairCountLegacy;
 		extern double rSigmaConst, rhoPhase, rhoOffsets;
 		fprintf(outputImage->fpLog, "; pairOverCount    : %i\n", pairOverCount);
@@ -806,7 +1044,14 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 
 static void toSigma(outputImageStructure outputImage)
 {
-	// convert error variance to sigma
+	/*  Variance -> sigma.
+	    NOTE: a pixel with a valid velocity and NO valid error is NOT an error state.  The
+	    workflow (mosaicworkflow/setupquarters.py, interpMosiacs) gap-fills .vx/.vy but
+	    deliberately does NOT interpolate .ex/.ey, so the absence of an error IS the flag that
+	    a pixel was interpolated rather than measured.  Do not gate the velocity on the error
+	    here -- it would discard exactly the pixels the workflow intends to ship as filled.
+	    mosaic3d's own output is already self-consistent (both bands no-data together);
+	    the asymmetry appears downstream, by design. */
 	for (int i = 0; i < outputImage.ySize; i++)
 	{
 		for (int j = 0; j < outputImage.xSize; j++)
@@ -814,7 +1059,14 @@ static void toSigma(outputImageStructure outputImage)
 			if (outputImage.errorX[i][j] > 0.0)
 			{
 				outputImage.errorX[i][j] = (float)sqrt((double)outputImage.errorX[i][j]);
+			}
+			if (outputImage.errorY[i][j] > 0.0)
+			{
 				outputImage.errorY[i][j] = (float)sqrt((double)outputImage.errorY[i][j]);
+			}
+			if (outputImage.errorZ != NULL && outputImage.errorZ[i][j] > 0.0)
+			{
+				outputImage.errorZ[i][j] = (float)sqrt((double)outputImage.errorZ[i][j]);
 			}
 		}
 	}
@@ -909,6 +1161,15 @@ static void write3DFlatVRTs(outputImageStructure outputImage, char *outFileBase,
 		vxDesc = "vx"; vyDesc = "vy";
 		exDesc = "ex"; eyDesc = "ey";
 	}
+	/*  With -timeOverlap the third plane is NOT a vertical velocity: it is "dT", the
+	    PRECISION-WEIGHTED MEAN DATE OFFSET of the contributing data from the product's
+	    nominal centre date, in days, signed (negative = data skewed early).  It is a
+	    weighted FIRST MOMENT, not an interval, a duration, or a span -- an annual product
+	    whose data all falls in March and one split evenly between January and June can
+	    report the same dT.  Weighted by sqrt(scX*scY), i.e. by how much each measurement
+	    actually contributed to the velocity, so it dates the ANSWER rather than the
+	    acquisitions.  Also load-bearing, not merely informational: filterDT() below nulls
+	    vx/vy/ex/ey wherever |dT| exceeds the half-window.  */
 	vzDesc = outputImage.timeOverlapFlag ? "dT" : "vz";
 
 	/* stem.vrt: vx + vy as two named bands */
@@ -1038,10 +1299,116 @@ static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 	outputGeocodedImage(outputImage, outFileEy);
 	free(outputImage.image[0]);
 	free(outputImage.image);
+	/* True-3D vertical velocity and its formal error.  Written only when mosaicTrue3D() ran;
+	   deliberately separate bands so the shared vz/dT plane keeps its existing meaning. */
+	if (outputImage.vZ3D != NULL)
+	{
+		char *outFileVz3D = appendSuffix(outFileBase, ".vz3d", (char *)malloc(strlen(outFileBase) + 7));
+		outputImage.image = (void **)outputImage.vZ3D;
+		outputGeocodedImage(outputImage, outFileVz3D);
+		free(outputImage.image[0]);
+		free(outputImage.image);
+		outputImage.vZ3D = NULL;
+	}
+	if (outputImage.errorZ != NULL)
+	{
+		char *outFileEz = appendSuffix(outFileBase, ".ez", (char *)malloc(strlen(outFileBase) + 4));
+		outputImage.image = (void **)outputImage.errorZ;
+		outputGeocodedImage(outputImage, outFileEz);
+		free(outputImage.image[0]);
+		free(outputImage.image);
+		outputImage.errorZ = NULL;
+	}
+	/* mosaicHopper3D only: which branch each pixel took (3 = unconstrained 3D, 2 = projected). */
+	if (outputImage.hopperMode != NULL)
+	{
+		char *outFileMode = appendSuffix(outFileBase, ".mode", (char *)malloc(strlen(outFileBase) + 7));
+		outputImage.image = (void **)outputImage.hopperMode;
+		outputGeocodedImage(outputImage, outFileMode);
+		free(outputImage.image[0]);
+		free(outputImage.image);
+		outputImage.hopperMode = NULL;
+	}
+	/* Diagnostic band: per-pixel measurement count from the joint solver.
+	   Only written when make3DMosaicJoint() actually ran and handed the plane over. */
+	if (outputImage.jointNObs != NULL)
+	{
+		char *outFileNObs = appendSuffix(outFileBase, ".nobs", (char *)malloc(strlen(outFileBase) + 7));
+		outputImage.image = (void **)outputImage.jointNObs;
+		outputGeocodedImage(outputImage, outFileNObs);
+		free(outputImage.image[0]);
+		free(outputImage.image);
+		outputImage.jointNObs = NULL;
+	}
+	if (outputImage.jointChi2 != NULL)
+	{
+		char *outFileChi2 = appendSuffix(outFileBase, ".chi2", (char *)malloc(strlen(outFileBase) + 7));
+		outputImage.image = (void **)outputImage.jointChi2;
+		outputGeocodedImage(outputImage, outFileChi2);
+		free(outputImage.image[0]);
+		free(outputImage.image);
+		outputImage.jointChi2 = NULL;
+	}
 	write3DFlatVRTs(outputImage, outFileBase, outFileVx, outFileVy, outFileVz, outFileEx, outFileEy);
 }
 
 
+
+/*
+  Write one diagnostic plane as its own GeoTIFF and free it.
+
+  SEPARATE FILES, not extra bands on the main .vrt: downstream code (mosaicworkflow, the merge
+  step, validateMosaic) expects that VRT to be exactly the 5-band vx/vy/vz/ex/ey velocity product,
+  and appending bands would break every consumer.  This mirrors the binary path, which writes
+  .vz3d/.ez/.nobs/.chi2/.mode as sibling files.
+
+  NULL plane means the solver that owns it never ran, which is what tells us not to write.
+  outputImage is passed by value in both writers, so the caller's copy is untouched -- the plane
+  is freed here exactly once, same as the binary path does.
+*/
+static void saveDiagBandTiff(float **plane, char *outFileBase, const char *suffix,
+							 double *geoTransform, const char *epsg, dictNode *meta,
+							 char *driverType, int32_t xSize, int32_t ySize)
+{
+	char *outFile;
+	float *buf;
+	int32_t i;
+	if (plane == NULL)
+	{
+		return;
+	}
+	/*  MUST copy into a contiguous buffer.  The velocity planes come from mallocOutputImage(),
+	    which allocates ONE block per plane and points the rows into it -- which is why
+	    saveAsGeotiff(..., outputImage.image[0], ...) is correct for them.  These diagnostic
+	    planes come from mallocImage() (common/initRoutines.c:865), which mallocs EVERY ROW
+	    SEPARATELY, so plane[0] is a single row, not the image.  Passing it directly reads
+	    xSize*ySize floats off the end of one row -- undefined behaviour that happened to look
+	    plausible for .vz3d/.ez/.mode/.chi2 (adjacent mallocs land adjacent often enough) and
+	    produced obvious garbage for .nobs (median 0, p99 6.5e20).  Do not "optimise" this copy
+	    away without first changing how the planes are allocated. */
+	buf = (float *)malloc((size_t)xSize * (size_t)ySize * sizeof(float));
+	if (buf == NULL)
+	{
+		error("saveDiagBandTiff: malloc failed for %s\n", suffix);
+	}
+	for (i = 0; i < ySize; i++)
+	{
+		memcpy(buf + (size_t)i * (size_t)xSize, plane[i], (size_t)xSize * sizeof(float));
+	}
+	outFile = appendSuffix(outFileBase, (char *)suffix,
+						   (char *)malloc(strlen(outFileBase) + strlen(suffix) + 2));
+	saveAsGeotiff(outFile, buf, xSize, ySize, geoTransform, epsg, meta,
+				  driverType, GDT_Float32, -2.0e9);
+	free(buf);
+	/*  Free every row, not just row 0 -- these were malloc'd individually.  (The velocity band
+	    writers above free only row 0 plus the pointer array, which is correct for their
+	    contiguous allocation.) */
+	for (i = 0; i < ySize; i++)
+	{
+		free(plane[i]);
+	}
+	free(plane);
+}
 
 static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBase, char *driverType, const char *epsg, char *date1,  char *date2)
 {
@@ -1130,6 +1497,23 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 	char *vrtFile = appendSuffix(outFileBase, ".vrt", (char *)malloc(strlen(outFileBase) + 5));
 	const char *bands[] = {outFileVx, outFileVy, outFileVz, outFileEx, outFileEy};
 	makeTiffVRT(vrtFile, bands, 5, noDataValues, summaryMetaData);
+	/*
+	  Diagnostic bands from the 3D and joint solvers.  Each is NULL unless the solver that owns it
+	  actually ran, so a plain phase or offsets run writes none of them and is byte-identical to
+	  before.  Until 2026-08-30 these were written on the binary path only, so every -GTiff/-COG
+	  run -- i.e. all of production -- silently dropped them, which made the mosaicHopper3D 2D/3D
+	  split unmeasurable in exactly the products people look at.
+	*/
+	saveDiagBandTiff(outputImage.vZ3D, outFileBase, ".vz3d.tif", geoTransform, epsg,
+					 summaryMetaData, driverType, outputImage.xSize, outputImage.ySize);
+	saveDiagBandTiff(outputImage.errorZ, outFileBase, ".ez.tif", geoTransform, epsg,
+					 summaryMetaData, driverType, outputImage.xSize, outputImage.ySize);
+	saveDiagBandTiff(outputImage.hopperMode, outFileBase, ".mode.tif", geoTransform, epsg,
+					 summaryMetaData, driverType, outputImage.xSize, outputImage.ySize);
+	saveDiagBandTiff(outputImage.jointNObs, outFileBase, ".nobs.tif", geoTransform, epsg,
+					 summaryMetaData, driverType, outputImage.xSize, outputImage.ySize);
+	saveDiagBandTiff(outputImage.jointChi2, outFileBase, ".chi2.tif", geoTransform, epsg,
+					 summaryMetaData, driverType, outputImage.xSize, outputImage.ySize);
 }
 
 static void processMosaicDate(outputImageStructure *outputImage, char *date1, char *date2)
@@ -1292,8 +1676,16 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	float tmp;
 	int32_t i, n;
 	int32_t noVhFlag, no3d, rOffsetFlag, vzFlag, noTide, timeOverlapFlag;
+	/*  Which legacy round-selection flags were EXPLICITLY given.  The translation below needs
+	    "was it passed", not "what is its value" -- with none passed the derivation must not fire
+	    at all, or a bare run would silently lose its range rows (range is ON only when -3dOff or
+	    -rOffsets is present, whereas the modern default is all three row types). */
+	int32_t gaveNo3d = FALSE, gaveNoVh = FALSE, gave3dOff = FALSE, gaveROffsets = FALSE;
+	int32_t gaveRowFlag = FALSE; /* an explicit -no*Rows always beats a derived value */
 	int32_t deltaB;
 	char *verticalCorrectionSuffix;
+	int32_t iceOnly;
+	int32_t flipSquint;
 
 	/* Raised 30 -> 44 (2026-08-26) when -rSigmaConst, which takes a VALUE and so
 	   costs two argv slots, pushed a routine production command over the limit --
@@ -1301,10 +1693,16 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   rather than an arg-count overflow.  Every optional flag added over the years
 	   has eaten into this headroom; the message had also gone stale at 27.
 	   Raised again 44 -> 52 for -rhoPhase/-rhoOffsets, two more value-taking
-	   flags at two argv slots each. */
-	if (argc < 4 || argc > 52)
+	   flags at two argv slots each.  Raised 52 -> 62 for the joint-solver flags:
+	   -legacyPairPhase/-legacyPairRange (one each), -jointMaxSigma/-jointMaxSigmaRange
+	   and -jointErrScale (two each), plus a slot of headroom.  Raised 62 -> 70 for the joint
+	   speckle solver: -noAzimuthRows, -noASigmaResidual (one each), the retired-but-accepted
+	   -speckleTrackJoint (one) and -jointMaxSigmaSpeckle (two), plus headroom.  Raised 70 -> 76 for -true3D /
+	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
+	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom. */
+	if (argc < 4 || argc > 84)
 	{
-		fprintf(stderr, "Arg count out of range (max 52): %i\n", argc);
+		fprintf(stderr, "Arg count out of range (max 80): %i\n", argc);
 		usage(); /* Check number of args */
 	}
 	n = argc - 4;
@@ -1340,6 +1738,8 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	args->statsFlag = FALSE;
 	args->verticalCorrectionFile = NULL;
 	verticalCorrectionSuffix = NULL;
+	iceOnly = FALSE;
+	flipSquint = FALSE;
 	args->COG = FALSE;
 	args->GTiff = FALSE;
 	args->outputRAFlag = FALSE;
@@ -1358,6 +1758,175 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			fprintf(stderr, "xyDEM flag obsolete - xydem is the default");
 		else if (strstr(argString, "writeBlank") != NULL)
 			args->writeBlank = TRUE;
+		/* Tested early on purpose.  This parser dispatches on strstr, so a flag is silently
+		   swallowed by any SHORTER flag string contained in it that is tested first.  Longest
+		   first within each family: -jointMaxSigma/-jointMaxSigmaRange share the prefix
+		   -jointMaxSigma, and -legacyPairPhase/-legacyPairRange share -legacyPair. */
+		else if (strstr(argString, "legacyPairPhase") != NULL)
+		{
+			legacyPairPhase = TRUE;
+		}
+		else if (strstr(argString, "legacyPairRange") != NULL)
+		{
+			legacyPairRange = TRUE;
+		}
+		/*  Legacy alias: sets the primary cap only, leaving jointMaxSigmaRange at its own
+		    value -- that is what preserves pre-2026-09 behaviour for templates that pass it.
+		    MUST precede the bare -jointMaxSigma, which is a substring of it. */
+		else if (strstr(argString, "jointMaxSigmaPhase") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &jointMaxSigma);
+			i++;
+		}
+		else if (strstr(argString, "jointMaxSigmaRange") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &jointMaxSigmaRange);
+			i++;
+		}
+		/*  RETIRED 2026-09: -jointMaxSigmaSpeckle went with speckleTrackMosaicJoint.  Accepted
+		    and ignored (it takes a value, so the value must still be consumed) rather than
+		    rejected, so an old script keeps running.  MUST precede the bare -jointMaxSigma
+		    below, which is a substring of it. */
+		else if (strstr(argString, "jointMaxSigmaSpeckle") != NULL)
+		{
+			fprintf(stderr, "; note: -jointMaxSigmaSpeckle is retired and ignored "
+							"(the joint speckle solver was removed); use -jointMaxSigma\n");
+			i++;
+		}
+		/*  -jointMaxSigma: the canonical name.  The Phase/Range split is a legacy-pipeline
+		    artifact -- under the hopper there is ONE system holding phase, range and azimuth
+		    rows and only jointMaxSigma was ever read, so naming it "Phase" misdescribes
+		    what is gated.  This sets both, which is the same thing under the hopper and the
+		    obvious meaning under -legacyCode.  Tested AFTER the longer names above: strstr
+		    dispatch means the bare prefix would otherwise swallow all of them. */
+		else if (strstr(argString, "jointMaxSigma") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &jointMaxSigma);
+			jointMaxSigmaRange = jointMaxSigma;
+			i++;
+		}
+		else if (strstr(argString, "jointErrScale") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &jointErrScale);
+			i++;
+		}
+		/*  RETIRED 2026-09: speckleTrackMosaicJoint was removed.  Its purpose was to keep the
+		    full 2x2 covariance that speckleTrackMosaic isotropises, and the hopper does that
+		    by construction while also pooling rows across images.  Accepted and ignored so an
+		    old invocation still runs -- it now simply gets the hopper. */
+		else if (strstr(argString, "speckleTrackJoint") != NULL)
+		{
+			fprintf(stderr, "; note: -speckleTrackJoint is retired and ignored -- the hopper "
+							"supersedes it (use -noPhaseRows for a speckle-only solve)\n");
+		}
+		else if (strstr(argString, "noAzimuthRows") != NULL)
+		{
+			noAzimuthRows = TRUE;
+			gaveRowFlag = TRUE;
+		}
+		/* Not swallowed by the rSigmaResidual tests further down: those require a lowercase
+		   'r' immediately before "SigmaResidual", and this has an 'A' there. */
+		else if (strstr(argString, "noASigmaResidual") != NULL)
+		{
+			aSigmaResidual = FALSE;
+		}
+		/* Longest first: "true3DMaxSigma" and "true3DProject" both contain "true3D". */
+		else if (strstr(argString, "true3DMaxSigma") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &true3DMaxSigma);
+			i++;
+		}
+		else if (strstr(argString, "noErrorGate") != NULL)
+		{
+			noErrorGate = TRUE;
+		}
+		else if (strstr(argString, "sigmaAThreshVel") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &sigmaAThreshVel);
+			i++;
+		}
+		else if (strstr(argString, "maxChi2") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &maxChi2);
+			i++;
+		}
+		else if (strstr(argString, "noGateAbsolute") != NULL)
+		{
+			gateAbsolute = FALSE;
+		}
+		else if (strstr(argString, "gateSpeedFrac") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &gateSpeedFrac);
+			i++;
+		}
+		else if (strstr(argString, "gateAbsolute") != NULL)
+		{
+			gateAbsolute = TRUE;
+		}
+		else if (strstr(argString, "noGateNEff") != NULL)
+		{
+			gateNEff = FALSE;
+		}
+		else if (strstr(argString, "gateNEff") != NULL)
+		{
+			gateNEff = TRUE; /* accepted for symmetry; already the default */
+		}
+		else if (strstr(argString, "legacyCode") != NULL)
+		{
+			legacyCode = TRUE;
+			hopper = FALSE;
+		}
+		else if (strstr(argString, "noPhaseRows") != NULL)
+		{
+			noPhaseRows = TRUE;
+			gaveRowFlag = TRUE;
+		}
+		else if (strstr(argString, "noRangeRows") != NULL)
+		{
+			noRangeRows = TRUE;
+			gaveRowFlag = TRUE;
+		}
+		else if (strstr(argString, "obsDump") != NULL)
+		{
+			obsDumpFile = argv[i + 1];
+			i++;
+		}
+		/*  LONGEST FIRST.  "hopper3DMaxSigma" and "hopper3D" both contain "hopper", and this
+		    parser dispatches on strstr -- so a bare "hopper" test placed first would swallow
+		    -hopper3D (silently running the 2D module) and would leave -hopper3DMaxSigma's value
+		    token to fall through to usage().  Same trap the root CLAUDE.md records for
+		    -rhoOffsets vs offsets. */
+		else if (strstr(argString, "hopper3DMaxSigma") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &hopper3DMaxSigma);
+			i++;
+		}
+		else if (strstr(argString, "hopper3D") != NULL)
+		{
+			hopper3D = TRUE;
+		}
+		else if (strstr(argString, "hopper") != NULL)
+		{
+			hopper = TRUE;
+		}
+		else if (strstr(argString, "true3DPhase") != NULL)
+		{
+			true3DPhase = TRUE;
+		}
+		else if (strstr(argString, "true3DDiag") != NULL)
+		{
+			true3DDiag = TRUE;
+			true3D = TRUE;
+		}
+		else if (strstr(argString, "true3DProject") != NULL)
+		{
+			true3DProject = TRUE;
+			true3D = TRUE;
+		}
+		else if (strstr(argString, "true3D") != NULL)
+		{
+			true3D = TRUE;
+		}
 		/* The rho flags MUST be tested before "rOffsets"/"offsets" below.  This
 		   parser dispatches on strstr, so a longer flag containing a shorter
 		   one is silently swallowed by the shorter test.  "-rhoOffsets" escapes
@@ -1374,7 +1943,10 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			i++;
 		}
 		else if (strstr(argString, "rOffsets") != NULL)
+		{
 			rOffsetFlag = TRUE;
+			gaveROffsets = TRUE;
+		}
 		else if (strstr(argString, "offsets") != NULL)
 			fprintf(stderr, "ignoring obsolet offsets flag - always enabled\n");
 		else if (strstr(argString, "-initMap") != NULL)
@@ -1420,6 +1992,18 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		{
 			verticalCorrectionSuffix = argv[i + 1];
 			i++;
+		}
+		else if (strstr(argString, "iceOnly") != NULL)
+		{
+			iceOnly = TRUE;
+		}
+		/* Must be tested BEFORE "useSquint": strstr would match the shorter flag
+		   inside neither, but keep them adjacent so the ordering stays obvious. */
+		else if (strstr(argString, "flipSquint") != NULL)
+		{
+			extern int32_t flipSquintSign;
+			flipSquintSign = TRUE;
+			flipSquint = TRUE;
 		}
 		else if (strstr(argString, "verticalCorrection") != NULL)
 		{
@@ -1484,14 +2068,17 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		else if (strstr(argString, "noVh") != NULL)
 		{
 			noVhFlag = TRUE;
+			gaveNoVh = TRUE;
 		}
 		else if (strstr(argString, "no3d") != NULL)
 		{
 			no3d = TRUE;
+			gaveNo3d = TRUE;
 		}
 		else if (strstr(argString, "3dOff") != NULL)
 		{
 			args->threeDOffFlag = TRUE;
+			gave3dOff = TRUE;
 		}
 		else if (strstr(argString, "noSepAscDesc") != NULL)
 		{
@@ -1583,6 +2170,88 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		printf("stats and timeOverlap flags incompatible, setting timeOverlap flag to False");
 		timeOverlapFlag = FALSE;
 	}
+	/*  ---- Solver selection, and translation of the legacy round-selection flags -------------
+	    -stats is a speckle-round OUTPUT mode (unweighted mean/sigma/count) with no hopper
+	    equivalent, and the legacyPair* solvers are legacy by definition, so all three force the
+	    old pipeline rather than being silently ignored.  setupquarters.py:230 can append
+	    -legacyPairPhase/-legacyPairRange onto ANY template at runtime, including hopper ones, so
+	    that combination is reachable even though it appears in no file on disk. */
+	if (args->statsFlag == TRUE || legacyPairPhase == TRUE || legacyPairRange == TRUE)
+	{
+		if (legacyCode == FALSE)
+		{
+			fprintf(stderr, "; note: -stats/-legacyPair* have no hopper equivalent -- using -legacyCode\n");
+		}
+		legacyCode = TRUE;
+		hopper = FALSE;
+	}
+	if (legacyCode == TRUE)
+	{
+		hopper = FALSE;
+		hopper3D = FALSE;
+	}
+	else
+	{
+		/*  Translate the legacy flags into row switches so an existing pair template runs
+		    unchanged and measures what it always measured.  The three conditions come from which
+		    rounds consume which observable:
+		        phase   -- crossing round (off under -no3d) OR vh round (off under -noVh)
+		        range   -- crossing-offsets round (-3dOff) OR speckle round (-rOffsets)
+		        azimuth -- vh round (on unless -noVh) OR speckle round (-rOffsets)
+		    setup3D.c:319 states the phase disjunction itself.  Verified against all eight flag
+		    combinations in production use; see Documents/mosaic3d.md. */
+		if (gaveNo3d || gaveNoVh || gave3dOff || gaveROffsets)
+		{
+			int32_t wantPhase = !(no3d == TRUE && noVhFlag == TRUE);
+			int32_t wantRange = (args->threeDOffFlag == TRUE || rOffsetFlag == TRUE);
+			int32_t wantAz = (noVhFlag == FALSE || rOffsetFlag == TRUE);
+			char derived[256];
+			derived[0] = '\0';
+			if (wantPhase == FALSE && noPhaseRows == FALSE)
+			{
+				noPhaseRows = TRUE;
+				strcat(derived, " -noPhaseRows");
+			}
+			if (wantRange == FALSE && noRangeRows == FALSE)
+			{
+				noRangeRows = TRUE;
+				strcat(derived, " -noRangeRows");
+			}
+			if (wantAz == FALSE && noAzimuthRows == FALSE)
+			{
+				noAzimuthRows = TRUE;
+				strcat(derived, " -noAzimuthRows");
+			}
+			fprintf(stderr, "; DEPRECATED legacy flags:%s%s%s%s\n",
+					gaveNo3d ? " -no3d" : "", gaveNoVh ? " -noVh" : "",
+					gave3dOff ? " -3dOff" : "", gaveROffsets ? " -rOffsets" : "");
+			fprintf(stderr, "; translated for the hopper as:%s\n",
+					derived[0] != '\0' ? derived : " (all row types kept)");
+			if (gaveRowFlag == TRUE)
+			{
+				fprintf(stderr, "; explicit -no*Rows flags were also given and take precedence\n");
+			}
+			fprintf(stderr, "; pass the -no*Rows flags directly to silence this, or -legacyCode "
+							"for the old pipeline\n");
+		}
+		/*  setup3D only parses the range-offset files when -rOffsets or -3dOff is set
+		    (setup3D.c:382-400).  The hopper consumes them as rows, so they must always be
+		    loaded; row selection is then handled by noRangeRows above, not by whether the file
+		    was read.  Set AFTER the translation, which needs the as-given value. */
+		rOffsetFlag = TRUE;
+	}
+	/*  Skip the azimuth-offset RASTER READ when nothing will consume it.  Requires BOTH
+	    -noAzimuthRows (so the hopper suppresses the row) and the hopper actually running:
+	    under -legacyCode, makeVhMosaic reads offsets->da gated only on its own offsetFlag and
+	    would consume an unread buffer.  Pure I/O saving; the row gating is unchanged. */
+	{
+		extern int32_t skipAzimuthOffsets;
+		skipAzimuthOffsets = (noAzimuthRows == TRUE && legacyCode == FALSE);
+		if (skipAzimuthOffsets == TRUE)
+		{
+			fprintf(stderr, "; -noAzimuthRows with the hopper: skipping the azimuth offset read\n");
+		}
+	}
 	if (args->COG == TRUE && args->GTiff == TRUE)
 	{
 		error("Select COG or GTiff but not both");
@@ -1600,12 +2269,14 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	outputImage->outputRAFlag = args->outputRAFlag;
 	outputImage->timeOverlapFlag = timeOverlapFlag;
 	outputImage->verticalCorrectionSuffix = verticalCorrectionSuffix;
+	outputImage->iceOnly = iceOnly;
+	outputImage->flipSquint = flipSquint;
 	return;
 }
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
@@ -1633,7 +2304,7 @@ static void usage()
 		  "\tlandSat =\t\t File containing list of landsat offsets to include in mosaic",
 		  "\trefVel =\t\t Velocity mosaic used to clip errors ",
 		  "\tinitMap =\t\t Interpolate refVel as startin point for mosaic ",
-		  "\tclipThresh =\t\t Use with refVel to clip differences > clipThresh for slow moving regions (< 100 m/yr) ",
+		  "\tclipThresh =\t\t Use with refVel to clip differences > clipThresh for slow moving regions (< 100 m/yr).  Honoured by the hopper solvers as well as the legacy speckle round",
 		  "\tlsClip (not implemented)=\t\t Clip landsat mosaic using refVelFile ",
 		  "\tshelfMask =\t\t Shelf mask file (includes nodata)",
 		  "\tfl =\t\t\t Feather length",
@@ -1658,6 +2329,28 @@ static void usage()
 		  "\trhoPhase X =\t\t Pair-correlation parameter for the PHASE crossing over-count factor; default 0.6",
 		  "\trhoOffsets X =\t\t Pair-correlation parameter for the crossing-OFFSETS over-count factor; default 0.6",
 		  "\tnoRSigmaResidual =\t\t Omit the rparams tie-point fit residual from the range-offset budget, leaving only the local .sr matching sigma; default is to include it",
+		  "\tlegacyPairPhase =\t\t Use the ORIGINAL pairwise crossing-PHASE solver; default is the joint (normal-equations) solver",
+		  "\tlegacyPairRange =\t\t Use the ORIGINAL pairwise crossing-RANGE solver; default is the joint (normal-equations) solver",
+		  "\tjointMaxSigma X =\t\t Reject pixels with sigmaWorst*sqrt(n) > X m/yr (effective per-measurement sigma).  Under the hopper this gates the ONE system holding phase, range and azimuth rows; default 35, 0 = off",
+		  "\tjointMaxSigmaPhase/Range X =\t Legacy per-round overrides of -jointMaxSigma (crossing-phase / crossing-range rounds).  Only distinguishable under -legacyCode; defaults 35 / 100",
+		  "\tjointErrScale X =\t\t Scale the joint solvers reported sigma by X (caller-supplied 1-sigma calibration); default 1 = off",
+		  "\tnoAzimuthRows =\t\t Drop every azimuth row (range-only solve); the control for what the azimuth offsets contribute; default off",
+		  "\tspeckleTrackJoint, jointMaxSigmaSpeckle X =\t RETIRED, accepted and ignored (superseded by the hopper)",
+		  "\tnoASigmaResidual =\t\t Omit the azparams tie-point fit residual from the azimuth-offset budget; default is to include it",
+		  "\ttrue3D =\t\t Solve vx,vy,vz from range+azimuth offsets with NO surface-parallel constraint (offsets only); writes .vz3d/.ez; default off",
+		  "\ttrue3DProject =\t\t Reduction test for -true3D: force the surface-parallel projection of the same 3x3 accumulator; not a production path",
+		  "\tgateSpeedFrac =\t\t Make the -jointMaxSigma cap speed-aware: effective cap = max(X, F*|v|), so fast ice is not rejected for having proportionally small error.  DEFAULT 0.03; 0 = off",
+		  "\tmaxChi2 =\t\t Reject solved pixels whose reduced chi-square exceeds X -- a blunder screen; keep it loose (100-1000).  Default -1 = off",
+		  "\tgateAbsolute =\t\t Gate on the formal sigma alone (no sqrt(n) factor), i.e. reject only pixels whose 1-sigma exceeds -jointMaxSigma; default off",
+		  "\tnoErrorGate =\t\t Keep pixels with a valid velocity but an invalid formal error; default is to remove them",
+		  "\tnoPhaseRows / noRangeRows / noAzimuthRows =\t\t Drop a row type from the hopper solve; default is all three",
+		  "\tsigmaAThreshVel =\t\t Drop azimuth rows whose azparams sigma exceeds X m/yr (sigmaAresidual scaled by 365.25/nDays).  DEFAULT 150; <0 disables",
+		  "\tnoGateNEff =\t\t Use the RAW row count in the output rejection gate instead of the weighted effective count.  The weighted count is the DEFAULT",
+		  "\tlegacyCode =\t\t Use the pre-2026-09 four-round pipeline instead of the hopper (the hopper is now the DEFAULT).  Implied by -stats and -legacyPair*",
+		  "\tobsDump =\t\t File of 'lat lon [name]' points; dumps every contributing observation (a_i, w_i, d_i) at those pixels to <outFileBase>.obsDump.  Requires -hopper or -hopper3D (instrumented in those two solvers)",
+		  "\thopper =\t\t Put PHASE, RANGE OFFSETS and AZIMUTH OFFSETS in ONE per-frame-weighted solve instead of averaging separate rounds; default off",
+		  "\ttrue3DPhase =\t\t Solve vx,vy,vz from PHASE with no surface-parallel constraint; different ionosphere path from -true3D; default off",
+		  "\ttrue3DMaxSigma X =\t\t Reject true3D pixels with sigmaWorst*sqrt(n) > X m/yr; default 100, 0 = off",
 		  "\toutputImage =\t\t Root of output image (e.g., mosaicOffsets)");
 }
 

@@ -265,3 +265,46 @@ double rangeAccuracyVar(Offsets *offsets)
 	}
 	return 0.0;
 }
+
+/*
+  Azimuth analogue of rangeAccuracyVar() above -- the azparams tie-point fit
+  residual (offsets.sigmaAresidual), in metres of along-track displacement,
+  returned as a VARIANCE for quadrature.
+
+  NEW, and the asymmetry it closes is real.  sigmaAresidual has been parsed by
+  readOffsets.c since the azparams format existed, but every consumer used it
+  only as a gate: speckleTrackMosaic.c skips an image when it exceeds
+  -sigmaAThresh or carries the sigma<0 no-solution sentinel, and makeVhMosaic.c
+  does the same.  It never entered an error budget.  So the azimuth sigma was
+
+      sigmaA^2 = interpAzSigma^2 + computeSig2AzParam
+
+  i.e. Cullst's local neighbourhood scatter plus the azparams baseline
+  covariance -- exactly the pair of terms the RANGE side had before the
+  2026-08-26 fix found it ~6x too small, and for exactly the same reason: both
+  terms are blind to long-wavelength error by construction.
+
+  Whether this matters is sensor-dependent and is the open question this term
+  exists to answer.  Azimuth offsets are intrinsically far less precise than
+  range (coarser pixel, weaker geometry), so the frame-scale residual has more
+  local noise to hide behind than it did on the range side.  If sigmaAresidual
+  turns out comparable to interpAzSigma, including it changes little; if it
+  dominates, azimuth rows are frame-limited and should be down-weighted
+  wholesale.
+
+  Default ON, matching rSigmaResidual; -noASigmaResidual restores the old
+  budget.  There is deliberately no aSigmaConst diagnostic twin -- the range
+  side's exists to separate "raise offsets relative to phase" from "reweight
+  between frames", and no such cross-observable miscalibration is in evidence
+  here.
+
+  The sigma<0 sentinel is filtered by the callers before this is reached.
+*/
+double azimuthAccuracyVar(Offsets *offsets)
+{
+	if (aSigmaResidual == TRUE && offsets->sigmaAresidual > 0.0)
+	{
+		return offsets->sigmaAresidual * offsets->sigmaAresidual;
+	}
+	return 0.0;
+}

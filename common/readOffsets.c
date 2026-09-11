@@ -9,6 +9,7 @@
 
 extern int32_t indentRegionOutput;
 extern int32_t noMask; /* ignore any embedded VRT dataset mask band on offset inputs */
+extern int32_t skipAzimuthOffsets; /* skip the azimuth raster read; see getRegion.c */
 
 /* Running grand totals of I/O time across the whole run, accumulated by
    readRangeOrRangeOffsets() and getMosaicInputImage() respectively; printed
@@ -900,10 +901,17 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float az
 		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
-		// Read azimuthg offsets and errors
-		readGDALOffsets(hDS, offsets, AZIMUTHBUFF, azimuthMin, azimuthMax);
-		if(includeErrors == TRUE)
-			readGDALOffsets(hDS, offsets, AZIMUTHERRORBUFF, azimuthMin, azimuthMax);
+		/*  -noAzimuthRows under the hopper: the buffers are still allocated (initOffParams/
+		    readGDALOffsets set the geometry), but the rasters are not read.  Safe only because
+		    the same flag forces useAzRow FALSE, so nothing reads offsets->da afterwards.  This is
+		    pure I/O saving -- on a NISAR frame the azimuth band is the same size as the range one. */
+		if (skipAzimuthOffsets == FALSE)
+		{
+			// Read azimuthg offsets and errors
+			readGDALOffsets(hDS, offsets, AZIMUTHBUFF, azimuthMin, azimuthMax);
+			if(includeErrors == TRUE)
+				readGDALOffsets(hDS, offsets, AZIMUTHERRORBUFF, azimuthMin, azimuthMax);
+		}
 		GDALClose(hDS);
 	}
 	else
@@ -915,10 +923,13 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float az
 		// Init memory
 		initOffsetBuffers(offsets, AZONLY);
 		// Read files
-		readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
-		if(includeErrors == TRUE) {
-			eFileA = appendSuffix(offsets->file, ".sa", bufa);
-			readOffsetFile(offsets->sa, offsets->nr, offsets->na, eFileA);
+		if (skipAzimuthOffsets == FALSE)
+		{
+			readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
+			if(includeErrors == TRUE) {
+				eFileA = appendSuffix(offsets->file, ".sa", bufa);
+				readOffsetFile(offsets->sa, offsets->nr, offsets->na, eFileA);
+			}
 		}
 	}
 }

@@ -452,6 +452,9 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 								{
 									/* For lack of better option, use the average of the two data takes */
 									deltaOffCenter = 0.5 * (tOffCenterA + tOffCenterD - 2.0 * tCenter);
+									/*  dT band: precision-weighted MEAN DATE OFFSET from the nominal centre
+									    date, in days, signed (negative = early).  A first moment only -- see
+									    the vzDesc comment in mosaic3d.c.  */
 									vzTmp[i][j] = (float)(deltaOffCenter * sqrt(scX * scY));
 								}
 								else

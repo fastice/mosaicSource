@@ -224,6 +224,13 @@ double computeSig2AzParam(double sinTheta, double cosTheta, double azimuth, doub
   Evaluate the squint(r,a) polynomial (degrees) for one image at its own
   range/azimuth pixel coordinates -- see mosaicSource/CLAUDE.md "Squint".
 */
+/* -flipSquint (mosaic3d, tiepoints): negate the squint polynomial.  Set here rather
+   than at each call site because EVERY squint path -- computeA (pair), the hoppers'
+   gammaPh, mosaicTrue3DPhase, and tiepoints' addMotionCorrections -- goes through
+   evaluateSquint(), so one negation covers them all consistently. Debug aid for
+   checking the sign convention end to end; default FALSE = unchanged behaviour. */
+int32_t flipSquintSign = FALSE;
+
 double evaluateSquint(inputImageStructure *image, double rangeIndex, double azimuthIndex)
 {
 	double physRange = image->par.rn + image->rangePixelSize * rangeIndex;
@@ -232,8 +239,9 @@ double evaluateSquint(inputImageStructure *image, double rangeIndex, double azim
 	double rPrime = physRange - image->squintRefRange;
 	double aPrime = physAzTime - image->squintRefAzimuthTime;
 	double *c = image->squintCoefficients;
-	return c[0] + c[1] * rPrime + c[2] * aPrime + c[3] * aPrime * aPrime
-		 + c[4] * rPrime * aPrime + c[5] * rPrime * rPrime;
+	double sq = c[0] + c[1] * rPrime + c[2] * aPrime + c[3] * aPrime * aPrime
+			  + c[4] * rPrime * aPrime + c[5] * rPrime * rPrime;
+	return (flipSquintSign == TRUE) ? -sq : sq;
 }
 
 /*

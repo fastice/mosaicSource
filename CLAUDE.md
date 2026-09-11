@@ -201,6 +201,38 @@ Mechanically: appends `.<suffix>` to the **baseline** filename only (not phase) 
 deltaB suffix). Propagated via `dumParams->offsets.verticalCorrectionSuffix =
 outputImage->verticalCorrectionSuffix` in `Mosaic3d/setup3D.c`.
 
+## Squint: DO NOT ENABLE — resolved 2026-08-31, `-useSquint` should stay off
+
+**The correction is misdirected. Applying it injects ~1.6 deg of rotation error.** Verified against
+GPS (5 stations, Jakobshavn, `Documents/nilGpsFindings.md`) and traced to root cause in the ISCE3
+source. Full record: `Documents/solverComparison.md` §12.8.
+
+The short version, because this is easy to re-derive backwards:
+
+- The measured 1.5-1.7 deg squint **is real and correctly extracted** — it is the native-Doppler
+  antenna squint. `metadataCubes.cpp:796-820` builds `losUnitVector`/`alongTrackUnitVector` at
+  `native_azimuth_time`, solved with `native_doppler`; `InSAR_L1_writer.py:72-78` passes
+  `grid_doppler = LUT2d()` (zero) separately for the grid.
+- **But the phase is on the zero-Doppler grid** (RIFG/RUNW inherit `ref_slc.getRadarGrid()`; the
+  cube axis is `zeroDopplerTime`), so its sensitivity vector is the zero-Doppler LOS, which is
+  perpendicular to the velocity by construction. No heading correction is warranted.
+- This is the SAME argument already used below to exempt the range/azimuth offsets. It applies
+  equally to the phase — the exemption was simply never extended to it.
+
+Measured cost, Jakobshavn box vs GPS: squint off -0.670 deg, on -2.244 deg, flipped +0.908 deg.
+Off is best. Pair and hopper agree to 0.015 deg; phase+range dilutes to 80% exactly as
+zero-Doppler immunity predicts.
+
+**The compiled-in default is already off.** The error enters via Greenland production templates
+setting `useSquint: True` — that is what needs changing, not the code. `tiepoints -flipSquint` /
+`mosaic3d -flipSquint` (scratch build) exist for re-testing the sign; note the tie-point sigma is
+BLIND to the sign (50% worse / 37% better over 212 frames, median dsigma +0.0002 rad), so never
+pick the convention from the fit residual.
+
+The analysis below remains correct on its own terms — squint IS a near-pure rotation of the stated
+magnitude — but it verified the correction only internally (synthetic rotation, crossing pair) and
+never checked the sign against external truth.
+
 ## Squint (residual Doppler) sensitivity — analyzed and implemented, off by default
 
 Real NISAR acquisitions carry a small residual squint (~1.5°–1.7°, measured directly — see
@@ -731,38 +763,59 @@ f(rho) = rho*nPairs + (1 - rho)*(n_A + n_D)/2
 - `rho = 0.5` -- for n_A = n_D = n this equals `(n + n^2)/2`, i.e. **exactly** the legacy
   `-pairCountLegacy` formula, so that historical choice was implicitly a rho = 0.5 claim.
 
-**Both default to 0** (defined in `common/getRegion.c`, passed at `make3DMosaic.c` and
-`make3DOffsets.c` respectively), which reproduces the pre-2026-08-27 behaviour numerically.
+**Both default to 0.6** (defined in `common/getRegion.c`, passed at `make3DMosaic.c` and
+`make3DOffsets.c` respectively). Set both to 0 to reproduce the pre-2026-08-28 behaviour.
 
-The value comes from the error budget, not from fitting an observed scatter. `rho` is the share of
-per-pixel variance common to EVERY image; the physical candidates -- DEM height and slope, the SMB
-grid, tides, geolocation -- are small (the SMB term measures ~0.16 m/yr against a total phase sigma
-of ~1.24, i.e. rho ~ 0.02), while the dominant terms (matching noise, per-frame baseline residual,
-ionosphere) attach to individual acquisitions and DO average down -- exactly what
-`(n_A + n_D)/2` already encodes. Independent confirmation: at rho = 0 the reported error matches
-the robust scale of the S1 difference to a few percent (k(MAD) 0.97/1.08 phase, 1.01/1.16
-combined), i.e. a budget built from per-observation terms correctly predicts the non-blunder
-population it actually models.
+**The value is measured, not argued from the budget.** The discriminating experiment: raising the
+crossing time threshold admits more PAIRS while the contributing IMAGES stay fixed (image count
+moves 0.5% from T=12 to T=37, pair count moves 2.5x), so the extra pairs carry no information --
+the measured error is flat across T, and a correctly scaled formal error must be flat too. This
+isolates rho from the absolute error level, which is separately affected by terms the budget omits.
+Measured against a Sentinel-1 reference over stable ground, 12 runs AT rho = 0.6 itself (406845 px,
+`k = std(d)/RMS(e)`, T = 6/12/37/10000):
 
-**A mixed default (`rhoPhase = 0.5`, `rhoOffsets = 0`) was tried and rejected**, for two reasons:
+    phase    0.97 0.99 0.99 0.98      -- calibrated and flat
+    both     1.01 1.05 1.06 1.06      -- calibrated and flat
+    offsets  0.77 0.80 0.82 0.83      -- flat but over-corrected ~20%
 
-1. It breaks the combination. See the limitation note below -- the correction inflates the error
-   accumulator per round while the weights are untouched, so the coded combined variance
-   `(S_p f_p + S_o f_o)/(S_p+S_o)^2` equals the correct `1/(S_p/f_p + S_o/f_o)` only when
-   `f_p == f_o`. Mixed rho drives `f_p/f_o` to ~16, past the `> 2 + S_p/S_o` threshold, and
-   **2.49% of pixels in a real `both` mosaic came back with a formal error larger than one of the
-   inputs that produced it** -- impossible for a genuine inverse-variance combination. Keeping the
-   two equal holds `f_p/f_o` at ~1.9, below the `> 2` bar, so the violation is unreachable.
-2. Raising rho to ~0.5 does make the reported sigma match the observed *standard* deviation
-   (k(std) ~ 1.0), but only by absorbing a blunder population the budget does not model at any rho
-   -- unwrapping errors, mismatches, bad frames, which are localised (the worst 1% of crossing-offset
-   `vy` pixels hold ~48% of the variance). That is a redundancy parameter used to hide an outlier
-   problem. See `Documents/mosaic3d.md` "Interpreting the formal errors" for what `ex`/`ey`
-   consequently do and do not mean.
+rho = 0 drifts ~2x across the same range; rho = 1 overshoots (k = 0.66-0.88). Independent
+confirmation on a DIFFERENT pairing graph: a sandbox build consuming each image at most once per
+pixel (a matching, no over-counting by construction, factor `f = rho*m + (1-rho)`) calibrates to
+k = 1 at rho = 0.584 phase / 0.501 offsets. Note 0.6 sits at the TOP of the supported 0.50-0.87
+band, not its centre.
 
-Note the spatial correlation of the error field (rho ~ 0.27 at 170 km) does **not** argue for
+**Superseded reasoning -- do not re-derive it.** Two earlier arguments for rho = 0 were wrong:
+(a) a budget-composition argument (SMB/DEM/tide terms are small, so rho ~ 0.02) -- this
+underestimates rho because the dominant correlation is between pairs that SHARE AN IMAGE, not
+between all images; (b) "at rho = 0 the reported error matches the robust scale of the S1
+difference (k(MAD) ~ 1.0)" -- an averaging artefact of comparing a MAD-based scale against RMS(e);
+on a consistent basis k(MAD) drifts 0.80/1.12/1.51 with threshold. Use `RMS(e) = sqrt(mean(e^2))`,
+never `mean(e)` or `median(e)`: variances average, sigmas do not, and a median biases k high by
+25-40%.
+
+**Keep the two values EQUAL.** A mixed default (`rhoPhase = 0.5`, `rhoOffsets = 0`) was tried and
+rejected: the correction inflates the error accumulator per round while the weights are untouched,
+so the coded combined variance `(S_p f_p + S_o f_o)/(S_p+S_o)^2` equals the correct
+`1/(S_p/f_p + S_o/f_o)` only when `f_p == f_o`. Mixed rho drives `f_p/f_o` to ~16, past the
+`> 2 + S_p/S_o` threshold, and **2.49% of pixels in a real `both` mosaic came back with a formal
+error larger than one of the inputs that produced it** -- impossible for a genuine inverse-variance
+combination. Equal values hold `f_p/f_o` at ~1.9, below the `> 2` bar, so the violation is
+unreachable.
+
+Note the spatial correlation of the error field (rho ~ 0.27 at 170 km) is **not** the argument for
 rho > 0: it says the field is smooth, not that it fails to average over images. A per-image
 ionospheric screen is spatially smooth *and* averages down with more acquisitions.
+
+**What rho does not fix, at any value:** the heavy tail. Reported errors are globally correct,
+spatially wrong, and not Gaussian -- 84-88% of pixels fall within 1 sigma (Gaussian 68%) but 99%
+coverage needs 3.8-4.1 sigma (Gaussian 2.58) and 99.9% needs 8.5-9.7 (Gaussian 3.29). See
+`Documents/mosaic3d.md` "Interpreting the formal errors". Nor does rho fix the WEIGHTING -- see the
+limitation note below, and `Documents/crossingOrbitRedundancy.md` for two designs that would fix
+the redundancy itself (block-local minimum edge cover; per-pixel normal equations) rather than
+rescaling its symptom. Neither is implemented.
+
+Full experimental record, including discarded runs: `Release/velocity/errCal/report/
+errCalResults.md` in the Greenland project.
 
 `-pairCountLegacy` is retained bit-for-bit, ignores `rho`, and is the *asymmetric* relative of
 f(rho = 0.5) -- the two coincide only when n_A = n_D. Keep it for reproducing July-vintage
@@ -971,6 +1024,275 @@ skipped.
 the tail worsens under point sampling), which is a localised-bad-areas problem rather than a
 global scaling one and is not addressed here.
 
+## Joint (normal-equations) crossing-orbit solvers — `-jointPhase` / `-jointOffsets`
+
+`Mosaic3d/make3DMosaicJoint.c` and `Mosaic3d/make3DOffsetsJoint.c` **are the DEFAULT crossing-orbit
+solvers as of 2026-08-29**. `-legacyPairPhase` / `-legacyPairRange` restore the original pairwise
+`make3DMosaic()` / `make3DOffsets()`, which are otherwise untouched. Full derivation and all
+measurements: `Documents/crossingOrbitRedundancy.md`.
+
+**This was a deliberate breaking change.** Any caller that passes no flags switches from the pair
+solver to the joint one. Velocity is statistically equivalent (marginally better), coverage grows
+11-13% on NISAR, but the reported `ex`/`ey` shrink: 1-sigma coverage goes 86% -> 43% for NISAR
+phase. That is honest -- `Cov = N^-1` propagates measurement noise, which chi2_nu ~= 0.85 confirms
+is correct -- but optimistic against an external reference, because the missing term is
+common-mode error at the pixel. See "Error calibration" below.
+
+**What changes.** The pair routines loop over image PAIRS (O(N^2) iterations, a product re-read
+once per partner). The joint routines loop once per PRODUCT, accumulating a per-pixel 2x2 normal
+system, then solve once. Each measurement enters exactly once, so the `n_A x n_D` over-count that
+`rhoPhase`/`rhoOffsets` correct for cannot arise. Measured: same velocity (marginally better every
+time), 7-32% more coverage, and 18.6-71x faster (NISAR 71x, S1 phase 18.6x, S1 range 26x, S1 both
+35.6x -- the gain scales with pair density, so a fragmented archive narrows it).
+
+**The enabling identity.** `computeA()` is `N^-1` for `N = [[cos b, sin b],[cos(a+b), sin(a+b)]]`,
+and each ROW depends on one image's heading only, so a per-image sensitivity row exists:
+`a_i = (cos(gamma_i), sin(gamma_i)) - B_i`, `gamma_i = xyAngle - H_i`. `computeVxy()`'s
+`v = (I-AB)^-1 A P` collapses EXACTLY to `(N-B)^-1 P`, so the joint solve reduces to the pair
+solution at n=2 (verified to 2.8e-14).
+
+**Flags:**
+
+| flag | default | effect |
+|---|---|---|
+| `-legacyPairPhase` | off | original pairwise crossing-PHASE solver |
+| `-legacyPairRange` | off | original pairwise crossing-RANGE solver |
+| `-jointMaxSigmaPhase X` | **35** | reject phase pixels with `sigmaWorst*sqrt(n) > X` m/yr; 0 = off |
+| `-jointMaxSigmaRange X` | **100** | same for range; 0 = off |
+| `-jointErrScale X` | 1 (inert) | caller-supplied 1-sigma calibration, applied to both rounds |
+
+The gates are **n-NORMALISED**, and that is not cosmetic. `sigmaWorst*sqrt(n)` is the effective
+per-measurement sigma, so the test asks "is the input data noisy?" rather than "is coverage thin?".
+An ABSOLUTE gate on `sigmaWorst` was measured to be almost purely a thin-coverage filter -- at
+15 m/yr it removed 32% of S1-phase pixels with n<8 and **0%** of those with n>40. Setting X
+tightens the effective cut as `X/sqrt(n)`, so a 2-estimate pixel is allowed X/1.41 while a
+100-estimate pixel must reach X/10.
+
+Measured at the defaults (% of all valid pixels dropped / net coverage vs pair):
+phase 35 -> NISAR 1.28% / +11.4%, S1 1.52% / +0.2%; range 100 -> NISAR 0.47% / +11.3%,
+S1 7.12% / **-0.9%**. The S1 range value is deliberately aggressive: it buys RMS(d) 7.39 -> 4.94
+at slightly negative net coverage. Set `jointMaxSigmaRange: 300` in that archive's `project.yaml`
+to recover it (+5.0% net). Range is looser than phase because offset errors are proportionally
+smaller on fast ice (30 m/yr on 10 km/yr is 0.3%; 15 m/yr on 10 m/yr is 150%).
+
+**REMOVED, and do not re-add** -- both were implemented, measured, and disproved:
+- **`-jointIRLS`** (Huber reweighting). Simulation predicted k 3.17 -> 1.03 and a 67% velocity
+  gain; on real data it did **nothing** on 4 of 4 cases. The `.chi2` band shows why: reduced
+  chi-square ~= **0.85**, so the measurements at a pixel already agree with each other to within
+  their own sigmas. There is no inconsistent minority to down-weight.
+- **`-jointRho`** (variance inflation `1 + rho(n-1)`). Monte Carlo showed the mechanism has the
+  **wrong sign** -- crossing geometry SUPPRESSES common-mode error (measured k = 0.84 where the
+  model predicts 2.59), because asc/desc rows nearly cancel in sum(a_i).
+
+**Settings flow** from `project.yaml` or the mosaic template through
+`mosaicworkflow/setupquarters.py`'s `resolveNumericBaseFlag()` / `resolveBooleanBaseFlag()`
+(CLI > template > project.yaml > compiled-in default), and `makemosaic.py` forwards them on the
+`setupquarters.py` command line. Set in the NISAR Antarctica and Sentinel-1 project files.
+
+Diagnostic bands written when a joint solver ran: `.nobs` (measurements per pixel) and `.chi2`
+(reduced chi-square, free via `chi2 = Sdd - v.b`).
+
+**Traps, all load-bearing:**
+- **Serial SVD pre-init** in the offsets solver: `svInterpBnBp()` lazily mallocs global workspace
+  and segfaults if first called from threads. Primed per image before the parallel region.
+- **Ionosphere sign is opposite** between the two: offsets ADD a pre-negated correction, phase
+  SUBTRACTS. Do not "fix" for consistency.
+- **No squint on the offsets path**, matching `make3DOffsets`'s unconditional
+  `computeA(..., FALSE)` -- zero-Doppler makes offsets self-consistent regardless.
+- **`timeThresh`/`timePhaseThresh` change meaning**: a PER-IMAGE window against the mosaic centre,
+  not a pair separation. For an annual mosaic a production pair value (12-37 d) would discard most
+  images.
+- **`useSquint` must be FALSE for S1** -- S1 baselines carry no squint block and `getBaseline()`
+  hard-errors rather than falling back.
+- `-jointIRLS 0` is bit-identical to no flag at single thread. The solvers are deterministic
+  single-threaded but NOT bit-reproducible across thread counts (~50 of 33,812 px, max 4.4e-3
+  m/yr) -- `llToImageNew`'s `lastTime` warm-start, same character as the `rparams` nondeterminism.
+
+**Error calibration -- settled, and deliberately NOT in the code.** `chi2_nu ~= 0.85` says the
+measurements at a pixel agree with each other to within their own sigmas, so `Cov = N^-1`
+correctly propagates measurement noise and there is no outlier population (IRLS measured zero
+benefit on 4 of 4 real cases; the simulation that motivated it modelled a failure mode the data
+does not have). What is missing is error common to every measurement at a pixel -- DEM slope,
+geolocation, and currently the long-wavelength ionospheric residual -- which leaves internal
+residuals small while biasing the answer, and is invisible to both `chi2` and reweighting.
+
+Consequences, all measured:
+- Pair products are uniformly OVER-covered (86-98% inside 1 sigma vs 68.3%); joint products
+  uniformly UNDER-covered (37-73%). Neither is calibrated; they err in opposite directions.
+- **`k = std(d)/RMS(e)` is the wrong metric** and flatters the pair scheme: it can reach 1 by
+  cancellation, an over-wide core against an under-covered tail. Report COVERAGE.
+- `e` has genuine per-pixel skill (coverage uniform across e-octiles after one scale), so a single
+  1-sigma factor per product calibrates it -- but that factor is archive- and reference-specific
+  and belongs in workflow config via `-jointErrScale`, never in the C.
+- No product supports 3 sigma = 99.7%; it is ~95-98%.
+
+**Why the frame sigma cannot be improved cheaply.** `computeRParams.c` forms `sigP` as an RMS over
+tie-point residuals, and on a real frame that runs 1.63x the robust MAD scale -- so a few large
+residuals inflate every pixel's sigma in that frame. Replacing RMS with a robust scale is
+nonetheless WRONG: the large residuals are spatially CLUSTERED (median NN separation 2.34 km vs
+7.73 for random, -6.3 sigma; neighbour correlation +0.55), i.e. real ionospheric structure, not bad
+tie points. A robust scale would discard real error. Collapsing a spatially varying field to one
+scalar necessarily over-penalises the clean parts of a frame and under-penalises the bad -- accepted
+as a known limitation rather than fixed, since a large sigma still genuinely indicates a noisier
+frame and deserves the de-weighting. Do NOT exclude frames on it.
+
+**Regime note:** the frame-scale dominance for NISAR is long-wavelength IONOSPHERE at solar max
+(L-band, lambda^2 sensitivity), not a fixed sensor property. It should subside toward solar
+minimum, moving NISAR toward the S1-like regime where the per-pixel `.sr` term matters more. Do not
+hard-code a per-sensor split; the short-lag granularity of `e*sqrt(n)` (0.01-0.03 = frame-scale,
+0.07+ = pixel-scale) diagnoses the current regime from the data.
+
+## The hopper solvers (`-hopper`, `-hopper3D`) — and four traps found on 2026-08-30
+
+`Mosaic3d/mosaicHopper.c` (2D, surface-parallel) and `Mosaic3d/mosaicHopper3D.c` (3-component,
+with a per-pixel 2D/3D toggle) put PHASE, RANGE OFFSETS and AZIMUTH OFFSETS into ONE per-pixel
+normal-equation system with per-frame sigmas, replacing the architecture of separate rounds
+renormalised and averaged. Both default OFF. Full design + measurements:
+`Documents/hopper3DPlan.md`, `Documents/solverComparison.md`, `Documents/twoDthreeDProjection.md`.
+
+`mosaicHopper3D` subsumes `mosaicHopper`: `-hopper3DMaxSigma -1` forces the 2D projection and
+reproduces it at median 1.2e-05 m/yr with zero validity disagreements. **`hopper3DMaxSigma`
+defaults to -1 (2D everywhere); 3D is opt-in** because the unconstrained solve was measured to
+COST horizontal accuracy on every sector tested (+15.6%, +70.7%, +144.4%), worst where the 2D
+answer was best.
+
+### 1. `nophase` frames were dropped whole, offsets and all (FIXED)
+
+`mosaicHopper.c:191` tested the input line for `nophase` and `continue`d past the entire image,
+discarding its range and azimuth offsets — contradicting the header comment eleven lines above.
+The `timeThreshPhase` window did the same. Both are now phase-ROW suppression only.
+
+**Sensor-dependent, which is why it hid.** NISAR has zero `nophase` frames project-wide. On
+Sentinel-1, where offsets and phase live in SEPARATE track directories, a `nophase` line *is* an
+offsets-only product: 100,752 of 234,528 frame lines (43%) contributed nothing. `hop_s1` was a
+phase-only solver wearing a hopper's name — it scored 2.358 against phase-only's 2.356. After the
+fix: **1.830, the best S1 product**, with coverage 761,817 px vs phase-only's 642,412.
+
+### 2. …which exposed a segfault (FIXED)
+
+Once `nophase` frames stopped being skipped they reached `interpPhaseImage()`, but
+`getMosaicInputImage()` is only called when the frame HAS phase — so the buffer held the previous
+frame's data, or nothing at all on the first such frame. SIGSEGV on 24 of 48 sectors. The phase
+read and the `computePhiZ`/`computePhiFlatEarth` call are now both guarded.
+
+### 3. `computePhiZM3dHop` overwrites its `thetaD` argument (FIXED)
+
+`computePhiZM3dHop()` ends with `*thetaD = theta - thetaC`, and the OFFSETS rows below then used
+that value. Every other offsets solver — `make3DOffsets`, `make3DOffsetsJoint`,
+`speckleTrackMosaic` — feeds `interpRangeOffsetInMeters()` and `computeSig2Base()` the `thetaD`
+that `geometryInfo()` produced. The phase path now takes a private copy. **No effect on the
+flat-earth (NISAR) path**, which never calls `computePhiZ` — which is exactly why the NISAR
+reduction test passed at 0.000 and never saw it.
+
+### 4. `mallocImage()` planes are NOT contiguous — do not hand `plane[0]` to `saveAsGeotiff`
+
+`mallocOutputImage()` (`mosaic3d.c`) allocates ONE block per plane and points the rows into it,
+so `saveAsGeotiff(..., outputImage.image[0], ...)` is correct for vx/vy/vz/ex/ey.
+**`mallocImage()` (`common/initRoutines.c:865`) mallocs EVERY ROW SEPARATELY**, so for any plane
+built with it `plane[0]` is a single row, not the image. Passing it to `saveAsGeotiff` reads
+`xSize*ySize` floats off the end of one row.
+
+This produced *plausible-looking* output for `.vz3d`/`.ez`/`.mode`/`.chi2` (adjacent mallocs land
+adjacent often enough) and obvious garbage only for `.nobs` (median 0, p99 6.5e20).
+`saveDiagBandTiff()` now copies row-by-row into a contiguous buffer, and frees every row rather
+than just row 0. **Verify any new band against a value the solver logs independently** — the
+`.mode` histogram against `nSolved3D`/`nSolved2D`, `.nobs` mean against `meanNobs`.
+
+### Flag-order and dispatch traps
+
+- **`-hopper3D` must be tested BEFORE `-hopper`**, and `-hopper3DMaxSigma` before both — the
+  parser dispatches on `strstr`, so a bare `hopper` test placed first swallows the longer flags.
+  Same trap as `-rhoOffsets`/`offsets` (root CLAUDE.md). `argc` cap raised 76 -> 80.
+- **`-no3d` short-circuits the hoppers.** `mosaicHopper`/`mosaicHopper3D`/`mosaicTrue3DPhase` run
+  in **step 0** and return immediately on `no3d`; `mosaicTrue3D` runs in **step 3** and NEEDS
+  `-no3d` to stop step 0 contributing. Getting this backwards yields a full set of empty results
+  that look like data.
+- **`-rOffsets` lets step 3 contaminate a step-0 reference.** A `-true3DPhase -rOffsets` run also
+  accumulates `speckleTrackMosaic`, because step 3 is gated on `hopper`/`hopper3D`/`true3D` but
+  not on `true3DPhase`. Drop `-rOffsets` for a clean phase-only reference.
+- Step 1 (`make3DOffsetsJoint`) and step 2 (`makeVhMosaic`) are now gated on `hopper`/`hopper3D`
+  as well, so `-hopper3D -3dOff` cannot enter the same measurements twice.
+
+### RAW output is SOUTH-UP; the GeoTIFF is north-up
+
+`mosaic3d`'s binary output (`outputGeocodedImage`) writes rows **bottom-to-top**, consistent with
+the geodat's "Origin, lower left corner (km)". The GeoTIFF from `saveAsGeotiff` is **north-up**.
+Verified on a real piece: `raw[::-1, :] == tif` **exactly** (max diff 0.000).
+
+Consequences, all of which have bitten:
+
+- **Any analysis that mixes the two must flip the raw.** Comparing raw output against a
+  georeferenced reference without flipping mirrors the product vertically, which on Greenland
+  produces plausible-looking but badly wrong statistics — it inflated a measured 3D-vs-2D cost
+  from +598% to +70.7% and reversed which sector looked worst.
+- **`write3DFlatVRTs`'s `.vrt` declares a north-up geotransform over the south-up raw.** GDAL reads
+  it back in file order (verified: `.vrt` == raw as-is, max diff 0.000) while `GeoTransform` has
+  `dy < 0` and an upper-left origin. So those flat VRTs are geographically mirrored. Production
+  uses the GeoTIFF path so this appears latent, but **do not treat a `.vrt` written next to a raw
+  piece as georeferenced** without checking. Not fixed here — fixing it would change what existing
+  consumers see, and none were audited.
+- **`-obsDump`'s `row` field carries the same south-up convention** — it is the internal
+  accumulation index, so indexing a GeoTIFF product with it reads the wrong pixel. Use
+  `tifRow = nRows - 1 - row`; `col` matches. Confirmed 2026-09-02 at ten Greenland GPS sites:
+  with the flip, a Python re-solve from the dump reproduces `mosaic3d`'s own `vx`/`vy` to
+  **0.0000**; without it the read was wrong by up to 397 m/yr on fast ice and by a deceptively
+  small 0.1-0.7 m/yr on smooth interior ice, which is what makes it dangerous. The dump header
+  now says so.
+- **Statistics that pair two arrays from the SAME run are unaffected**, because both carry the
+  identical flip. Medians, percentiles and speed-binning are order-independent anyway. It is only
+  raw-vs-georeferenced and raw-vs-tif comparisons that break.
+
+Tile assembly, for reference: pieces are named `mosaic-<col>.<row>.<band>` and **row 0 is the
+SOUTH edge**, so a north-up mosaic places tile `<c>.<r>` at `col = c`, `row = (nRows-1-r)`. The
+merged `.vrt` the Python workflow builds is authoritative — `mosaic-000.000` lands at
+`yOff = ySize - tileHeight`.
+
+### Diagnostic bands
+
+`.nobs`, `.chi2`, `.vz3d`, `.ez` (a VARIANCE in-buffer — `mosaic3d.c:942-945` sqrts it on output)
+and `.mode` (3 = true 3D, 2 = projected). Written on the binary path AND, since 2026-08-30, on the
+GeoTIFF path as separate sibling files — deliberately NOT extra bands on the main `.vrt`, which
+downstream code requires to be exactly the 5-band velocity product.
+
+## `-flipSquint` (tiepoints, mosaic3d) — debug flag, scratch build only
+
+Negates the squint polynomial. Implemented as one line in `evaluateSquint()`
+(`common/initRoutines.c`), which is the **single choke point every squint path uses** — pair
+`computeA`, the hoppers' `gammaPh`, `mosaicTrue3DPhase`, and tiepoints' `addMotionCorrections`.
+One negation therefore covers all of them consistently; do not re-implement it per call site.
+`mosaic3d -flipSquint` additionally selects `baseline*.flipSquint.yaml` (same
+`appendBaselineSuffix` path as `-iceOnly`), so `tiepoints -flipSquint` output is picked up and the
+test is genuinely end to end.
+
+Written to check the squint sign convention against GPS. Result (`Documents/solverComparison.md`
+§12.8): the correction is **mechanically correct** — flip is exactly symmetric (+3.152° vs
+−1.574°), pair and hopper agree to 0.015°, magnitude matches the measured 1.58°, and phase+range
+dilutes to 80% exactly as zero-Doppler immunity predicts — **but applying it in either direction
+worsens agreement with GPS**; best agreement is with squint off.
+
+**The tie-point fit cannot arbitrate the sign**: across 212 frames the flip was 50% worse / 37%
+better, median Δσ +0.0002 rad. Do not use `tiepoints` sigma to choose it.
+
+## `-iceOnly` (tiepoints, mosaic3d) — built, tested, NOT in production
+
+`tiepoints -iceOnly <iceRockMask>` drops tie points that are not on ice (`common/iceRockMask.c`,
+sampling a GIMP 0=water/1=rock/2=ice GeoTIFF through the **mask's own PROJ definition**, not
+`lltoxy1`, whose hard-coded standard parallel 70 could misclassify points at the margin — the only
+place it matters). Output goes to `baseline*.iceOnly.yaml` via the existing `-outputFile`, so
+production baselines are never touched. `mosaic3d -iceOnly` selects those files, applied to the
+**PHASE baseline only** (`getMVhInputFile.c`) — deliberately not to rParams, so offsets runs are
+unaffected.
+
+Written to test whether rock/ice unwrapping ambiguities anchored by rock tie points explain
+NISAR's elevation-dependent velocity deficit. **They do not** — see `Documents/solverComparison.md`
+§12.8. Kept because it is the natural place to start if the full fix (masking the phase itself in
+`mosaic3d`, as the Sentinel-1 chain does) is ever wanted.
+
+**Two shell traps when driving `tiepoints` from the per-frame `estmotbaseline` scripts:** flags must
+precede the positional filenames (`readArgs` indexes them from `argv[argc-5]`, so a trailing flag
+segfaults), and `csh` re-reads `.cshrc` and will silently resolve the PRODUCTION binary — reference
+the intended binary by absolute path.
+
 ## Other contents
 
 - **`Documents/`** — per-program design notes; check here before `Documents/` in the GIT64 root.
@@ -980,3 +1302,22 @@ global scaling one and is not addressed here.
 - **`cloneAll`** — legacy csh script to `git clone` sibling repos (clib, cRecipes, fft,
   speckleSource, etc.) when this was a multi-repo checkout. Not needed in the GIT64 monorepo.
 - **`baseline.26x16.yaml`** — sample/test config for baseline computation.
+
+## `smoothRadius/` — the offsets smoothing-radius map
+
+`smoothradius` computes the per-pixel smoothing half-width map (`.smr.tif`) that `filterfloat
+-radiusMap` later applies to the merged range/azimuth offsets. It replaces the Python sweep in
+`mosaicworkflow.simoffsets.computeSmoothRadiusMap()`, which dominated the ROFF stage (~873 s of a
+~884 s frame at `maxRadius` 50 on a 3813x3502 grid; the C runs ~60 s at 3 threads).
+
+- Rule matches `simInSAR/computeSmoothRadius.c`: sweep r = 1..max, box-filter `nIter` times,
+  first violation locks the pixel at r-1. Here a pixel locks when *either* dr or da violates.
+- The sweeps look sequential but each radius's verdict depends only on the unsmoothed input, so
+  they run in an OpenMP loop and are folded in radius order afterwards. Memory is that fold
+  buffer (n x maxRadius bytes) plus ~0.3 GB per thread on a 13 Mpixel grid.
+- Range and azimuth caps are independent (`-maxRadiusR`, `-maxRadiusA`) rather than tied by the
+  pixel aspect ratio as in simInSAR; offsets grids are resampled to square pixels, so production
+  sets both to 50 (`maxSmoothRadius`/`maxSmoothRadiusA` in project.yaml).
+- `simoffsets.computeSmoothRadiusMapC()` writes the four input rasters to `TMPDIR` (local disk,
+  not the NFS frame directory), runs the binary, and moves the result into place. If the binary
+  is missing or fails it warns and falls back to the Python, so the product still completes.

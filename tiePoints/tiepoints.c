@@ -24,7 +24,8 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 					 int32_t *bnbpFlag, int32_t *bpFlag, int32_t *bnbpdBpFlag,
 					 int32_t *bpdBpFlag, int32_t *vrFlag, char **shelfMaskFile,
 					 int32_t *yamlOutput, int32_t *verbose, int32_t *debugFlag, char **outputFile,
-					 char **ionosphereFile, int32_t *ionosphereMode, double *ionSigmaMargin);
+					 char **ionosphereFile, int32_t *ionosphereMode, double *ionSigmaMargin,
+					 char **iceOnlyMaskFile);
 
 static void usage();
 
@@ -57,6 +58,7 @@ int main(int argc, char *argv[])
 	int32_t motionFlag, quadB, bnbpFlag, bpFlag, bnbpdBpFlag, bpdBpFlag, vrFlag;
 	int32_t yamlOutput, verbose, debugFlag;
 	char *ionosphereFile;
+	char *iceOnlyMaskFile;
 	int32_t ionosphereMode;
 	double ionSigmaMargin;
 	int32_t i, j; /* LCV */
@@ -70,7 +72,7 @@ int main(int argc, char *argv[])
 			 &dBpFlag, &imageCoords, &motionFlag, &timeReverseFlag, &nDays, &quadB,
 			 &stdLat, &bnbpFlag, &bpFlag, &bnbpdBpFlag, &bpdBpFlag, &vrFlag, &shelfMaskFile,
 			 &yamlOutput, &verbose, &debugFlag, &outputFile,
-			 &ionosphereFile, &ionosphereMode, &ionSigmaMargin);
+			 &ionosphereFile, &ionosphereMode, &ionSigmaMargin, &iceOnlyMaskFile);
 	/*
 	  Parse input file
 	*/
@@ -96,6 +98,14 @@ int main(int argc, char *argv[])
 	*/
 	tiePointFp = openInputFile(tiePointFile);
 	readTiePoints(tiePointFp, &tiePoints, noDEM);
+	/*
+	  -iceOnly: discard tie points that are not on ice.  Done HERE, immediately
+	  after the read, so it runs before the ionosphere/squint/motion arrays are
+	  built -- those are parallel to the tie-point arrays and would otherwise
+	  need compacting too.
+	*/
+	if (iceOnlyMaskFile != NULL)
+		keepIceTiePoints(&tiePoints, iceOnlyMaskFile);
 
 	if (tiePoints.lat[0] < 0)
 	{
@@ -252,13 +262,14 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 					 double *nDays, int32_t *quadB, double *stdLat, int32_t *bnbpFlag, int32_t *bpFlag, int32_t *bnbpdBpFlag,
 					 int32_t *bpdBpFlag, int32_t *vrFlag, char **shelfMaskFile, int32_t *yamlOutput, int32_t *verbose,
 					 int32_t *debugFlag, char **outputFile,
-					 char **ionosphereFile, int32_t *ionosphereMode, double *ionSigmaMargin)
+					 char **ionosphereFile, int32_t *ionosphereMode, double *ionSigmaMargin,
+					 char **iceOnlyMaskFile)
 {
 	int32_t filenameArg;
 	char *argString;
 	int32_t i, n;
 
-	if (argc < 5 || argc > 28)
+	if (argc < 5 || argc > 32)
 		usage(); /* Check number of args */
 
 	*imageFlag = DESCENDING; /* Default */
@@ -284,6 +295,7 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 	*debugFlag = FALSE;
 	*outputFile = NULL;
 	*ionosphereFile = NULL;
+	*iceOnlyMaskFile = NULL;
 	*ionosphereMode = ION_AUTO;
 	*ionSigmaMargin = IONSIGMAMARGIN;
 	for (i = 1; i <= n; i++)
@@ -300,6 +312,19 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 		else if (strstr(argString, "shelfMask") != NULL)
 		{
 			*shelfMaskFile = argv[i + 1];
+			i++;
+		}
+		/* Debug: negate the squint polynomial (common/initRoutines.c) */
+		else if (strstr(argString, "flipSquint") != NULL)
+		{
+			extern int32_t flipSquintSign;
+			flipSquintSign = TRUE;
+			fprintf(stderr, "\033[1;33mtiepoints: -flipSquint -- squint sign NEGATED\033[0m\n");
+		}
+		/* Ice/rock/water mask; keep only tie points on ice (common/iceRockMask.c) */
+		else if (strstr(argString, "iceOnly") != NULL)
+		{
+			*iceOnlyMaskFile = argv[i + 1];
 			i++;
 		}
 		/* Ionosphere flags -- matched longest-first, since the loop uses strstr, not strcmp */

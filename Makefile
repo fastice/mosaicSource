@@ -99,6 +99,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
 			common/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o \
+			common/$(MACHTYPE)-$(OSTYPE)/iceRockMask.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getAzimuthBoundsForXYBox.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getDataStringSpecial.o \
 			common/$(MACHTYPE)-$(OSTYPE)/getBaseline.o \
@@ -166,7 +167,7 @@ GDALIO = 	$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/gdalIO.o \
 			$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/dictionaryCode.o \
 			$(PROGDIR)/gdalIO/gdalIO/$(MACHTYPE)-$(OSTYPE)/tiffWriteCode.o
 
-TARGETS = mosaic3d siminsar rparams azparams coarsereg tiepoints lltora getlocc geomosaic
+TARGETS = mosaic3d siminsar rparams azparams coarsereg tiepoints lltora getlocc geomosaic smoothradius
 
 all: $(TARGETS)
 
@@ -198,15 +199,41 @@ offsetvrt:
                 $(OFFSETVRT) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
                 -lm  $(GDAL) -o $(BINDIR)/offsetvrt  -L/usr/lib
 #********************************************************************************
+#******************************** smoothradius **********************************
+#********************************************************************************
+
+SMOOTHRADIUS =	smoothRadius/$(MACHTYPE)-$(OSTYPE)/smoothradius.o \
+                smoothRadius/$(MACHTYPE)-$(OSTYPE)/computeSmoothRadiusOffsets.o
+SMOOTHRADIUSDIRS =	smoothRadius $(PROGDIR)/gdalIO/gdalIO  $(PROGDIR)/clib  $(PROGDIR)/mosaicSource/common
+
+smoothradius:	
+	@for i in ${SMOOTHRADIUSDIRS}; do \
+		( 	echo "<<< Descending in directory: $$i >>>"; \
+	                cd $$i; \
+			make FLAGS=$(CCFLAGS) INCLUDEPATH=$(INCLUDEPATH) PAF=0; \
+			cd $(PROGDIR); \
+		); done
+		g++ $(MEM) $(CCFLAGS1) $(NOPIE) -fopenmp \
+                $(SMOOTHRADIUS) $(GDALIO) $(COMMON) $(STANDARD) $(RECIPES)  $(TRIANGLE)  \
+                -lm  $(GDAL) -o $(BINDIR)/smoothradius  -L/usr/lib
+
+#********************************************************************************
 #********************************** mosaic3d ************************************
 #********************************************************************************
 
 MOSAIC3D1 =	Mosaic3d/$(MACHTYPE)-$(OSTYPE)/get3DInputFile.o \
 		Mosaic3d/$(MACHTYPE)-$(OSTYPE)/make3DMosaic.o \
+		Mosaic3d/$(MACHTYPE)-$(OSTYPE)/make3DMosaicJoint.o \
 	        Mosaic3d/$(MACHTYPE)-$(OSTYPE)/make3DOffsets.o \
+		Mosaic3d/$(MACHTYPE)-$(OSTYPE)/make3DOffsetsJoint.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/makeVhMosaic.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/setup3D.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/speckleTrackMosaic.o \
+                Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaicHopper.o \
+                Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaicHopper3D.o \
+                Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaicTrue3D.o \
+                Mosaic3d/$(MACHTYPE)-$(OSTYPE)/mosaicTrue3DPhase.o \
+                Mosaic3d/$(MACHTYPE)-$(OSTYPE)/obsDump.o \
                 Mosaic3d/$(MACHTYPE)-$(OSTYPE)/writeTieFile.o
 
 MOSAIC3DDIRS =	Mosaic3d common  $(PROGDIR)/gdalIO/gdalIO landsatMosaic $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes

@@ -12,12 +12,24 @@ int32_t indentRegionOutput = FALSE;
    every program in mosaicSource/ -- each program's own CLI parser sets this
    via its own -noMask flag. */
 int32_t noMask = FALSE;
+/*  Skip the azimuth-offset raster read entirely.  Set by mosaic3d ONLY when -noAzimuthRows is
+    given AND the hopper is running, i.e. when nothing downstream can consume offsets->da.  Lives
+    here rather than in mosaic3d.c because readOffsets.c is linked into every binary, and an
+    extern to a mosaic3d-only symbol would break the link for rparams/azparams/tiepoints. */
+int32_t skipAzimuthOffsets = FALSE;
 /* Range-offset accuracy term (see rangeAccuracyVar, common/interpOffsets.c).
    Defined HERE rather than in mosaic3d.c, for the same reason noMask is: every
    program that links interpOffsets.c/readOffsets.c needs the symbol, and a
    definition in the mosaic3d main object would leave rparams/azparams with an
    undefined reference (and produce a DT_TEXTREL in the PIE link). */
 int32_t rSigmaResidual = TRUE;
+/* Azimuth-offset accuracy term (see azimuthAccuracyVar, common/interpOffsets.c).
+   The exact analogue of rSigmaResidual above, and NEW: offsets.sigmaAresidual has
+   always been parsed but only ever used as a skip/threshold gate, never in the
+   error budget -- so the azimuth sigma carried only local matching noise plus the
+   azparams baseline covariance, with nothing standing in for long-wavelength
+   error.  Consumed by speckleTrackMosaicJoint.c; -noASigmaResidual disables. */
+int32_t aSigmaResidual = TRUE;
 /* -pairCountLegacy: use the pre-2026-08-26 over-count formula, f = (nOuter +
    nPairs)/2, which treated the PAIR count as if it were the distinct count of
    inner images.  Retained as a control so the counting change can be separated
@@ -39,16 +51,29 @@ double rSigmaConst = 0.0;
    IMAGES stay fixed (image count moves 0.5% from T=12 to T=37 while pair count
    moves 2.5x), so it adds no information and the measured error is flat -- and is,
    to a few percent across T = 12/37/10000.  A correctly scaled formal error must
-   be flat too.  Measured on 407432 px of stable ground against a Sentinel-1
-   reference, over 9 product-threshold cells, with k = std(difference)/RMS(e):
+   be flat too.  Measured on 406845 px of stable ground against a Sentinel-1
+   reference, over 12 product-threshold cells RUN AT rho = 0.6 ITSELF (not
+   interpolated), with k = std(difference)/RMS(e), for T = 6/12/37/10000:
 
        rho=0    k = 1.3 - 3.1, drifting ~2x with threshold   -- excluded
-       rho=0.6  k = 1.00/1.00/0.98 phase, 1.06/1.07/1.07 both, 0.82/0.84/0.83 offsets
+       rho=0.6  phase   0.97 0.99 0.99 0.98
+                both    1.01 1.05 1.06 1.06
+                offsets 0.77 0.80 0.82 0.83
        rho=1    k = 0.66 - 0.88, overshoots                  -- excluded
 
-   0.6 makes all nine cells threshold-flat, which is what rho can legitimately
-   fix.  The residual offsets level (0.83, flat) is NOT a threshold effect and no
-   single rho lifts it without breaking the other two.
+   0.6 makes every cell threshold-flat, which is what rho can legitimately fix.
+   The residual offsets level (~0.80, flat) is NOT a threshold effect and no
+   single rho lifts it without breaking the other two; offsets-only is not a
+   shipped NISAR product.
+
+   INDEPENDENT CONFIRMATION.  A sandbox build that consumes each image at most
+   once per pixel -- a matching, which has NO over-counting by construction and a
+   completely different pairing graph -- calibrates to k = 1 at rho = 0.584
+   (phase) and 0.501 (offsets), using the matching's own factor f = rho*m +
+   (1-rho).  Two different criteria on two different graphs both land near 0.6.
+   Note this places 0.6 at the TOP of the supported 0.50-0.87 range, not its
+   centre.  (An earlier version of that experiment ran the matching at f = 1 and
+   reported k = 2.4; f = 1 is the rho = 0 case, so it measured the assumption.)
 
    WHAT IT IS NOT FOR.  rho sets the total variance; it does not fix the spatial
    distribution of the error, which is wrong in a way no scalar addresses -- see

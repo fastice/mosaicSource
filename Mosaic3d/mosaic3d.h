@@ -69,6 +69,50 @@ void get3DInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, ch
 */
 void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImages, vhParams *ascParams, vhParams *descParams,
 				  xyDEM *dem, outputImageStructure *outputImage, float fl, int32_t no3d, float timeThreshPhase);
+/* Per-round rejection gates for the joint crossing-orbit solvers, in m/yr.
+
+   A pixel is rejected when   sigmaWorst * sqrt(n)  >  threshold,
+   where sigmaWorst = 1/sqrt(lambdaMin(N)) is the formal error in the worst-constrained
+   direction and n is the number of contributing measurements.  Since sigmaWorst ~
+   sigmaBar/sqrt(n), the tested quantity IS the effective per-measurement sigma, so the gate
+   asks "is the input data at this pixel noisy?" rather than "is coverage here thin?".
+
+   That distinction is not cosmetic.  An ABSOLUTE gate on sigmaWorst was measured to be almost
+   purely a thin-coverage filter: at 15 m/yr it removed 32% of S1-phase pixels with n < 8 and
+   0% of those with n > 40.  The n-normalised form removes the same bad variance spread across
+   the n range and cannot be made to fire by having LESS data.  Setting X tightens the effective
+   sigma cut as X/sqrt(n), so a 2-estimate pixel is allowed X/1.41 while a 100-estimate pixel
+   must reach X/10.
+
+   Defaults, measured as % of all valid pixels dropped / net coverage change vs the pair scheme:
+     phase 35 : NISAR 1.28% / +11.4%,  S1 1.52% / +0.2%
+     range 100: NISAR 0.47% / +11.3%,  S1 7.12% / -0.9%
+   Range is looser because offset errors are proportionally smaller on fast ice (30 m/yr on
+   10 km/yr is 0.3%; 15 m/yr on 10 m/yr is 150%).  The S1 range value is deliberately aggressive
+   -- it buys RMS(d) 7.39 -> 4.94 at slightly negative net coverage; set jointMaxSigmaRange: 300
+   in that archive's project.yaml to recover it (+5.0% net).  0 disables a gate.
+   See Documents/crossingOrbitRedundancy.md. */
+#define JOINTMAXSIGMAPHASEDEF 35.0
+#define JOINTMAXSIGMARANGEDEF 100.0
+extern double jointMaxSigma; /* defined in mosaic3d.c */
+extern double jointMaxSigmaRange; /* defined in mosaic3d.c */
+/* -jointErrScale X : caller-supplied 1-sigma calibration, applied to BOTH rounds.  Default 1
+   (inert).  Deliberately not given a fitted default: the value is archive- and
+   reference-specific and belongs in workflow config, not in the C. */
+extern double jointErrScale;      /* defined in mosaic3d.c */
+/* -legacyPairPhase / -legacyPairRange : restore the ORIGINAL pairwise solvers (make3DMosaic /
+   make3DOffsets).  The joint solvers are the default as of 2026-08-29. */
+extern int32_t legacyPairPhase;   /* defined in mosaic3d.c */
+extern int32_t legacyPairRange;   /* defined in mosaic3d.c */
+/*
+  Joint (normal-equations) crossing-PHASE solver -- the DEFAULT; -legacyPairPhase selects the
+  original make3DMosaic instead.  Identical
+  signature so the call site is a one-line branch.  Forms no pairs: each measurement enters the
+  per-pixel normal equations once, so there is no combinatorial over-count to correct.
+  See make3DMosaicJoint.c and Documents/crossingOrbitRedundancy.md.
+*/
+void make3DMosaicJoint(inputImageStructure *ascImages, inputImageStructure *descImages, vhParams *ascParams, vhParams *descParams,
+					   xyDEM *dem, outputImageStructure *outputImage, float fl, int32_t no3d, float timeThreshPhase);
 
 unsigned char refVelInterp(double x, double y, referenceVelocity *refVel, float *vxPt, float *vyPt, float *exPt, float *eyPt);
 
@@ -86,9 +130,158 @@ double computeSig2Base(double sinThetaD, double cosThetaD, double azimuth, input
 
 void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputImageStructure *outputImage, float fl,
 						referenceVelocity *refVel, int32_t statsFlag);
+/*
+  REMOVED 2026-09: speckleTrackMosaicJoint() and -speckleTrackJoint.  It existed to keep the full
+  2x2 error covariance that speckleTrackMosaic isotropises via errorsToXY(); the hopper does that
+  by construction AND pools rows across images rather than averaging per-image solutions, so it
+  strictly supersedes it.  -speckleTrackJoint and -jointMaxSigmaSpeckle are still accepted and
+  ignored (mosaic3d.c) so old invocations keep running.  For a speckle-only solve use the hopper
+  with -noPhaseRows.  NOTE the one capability not carried over: refVel clipping (clipVel) is not
+  implemented in either hopper.
+*/
+/* -noAzimuthRows : suppress every azimuth row.  The A/B that measures what the azimuth offsets
+   actually contribute.  Default FALSE. */
+extern int32_t noAzimuthRows;          /* defined in mosaic3d.c */
+/* in speckleTrackMosaic.c; shared with mosaicTrue3D.c */
+int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel);
+/*  Return-checked variant used by the hopper solvers -- see speckleTrackMosaic.c.  Honours
+    refVelInterp()'s return value, so a pixel with no reference value is kept rather than
+    compared against uninitialised stack. */
+int clipVelChecked(double x, double y, double vx, double vy, referenceVelocity *refVel);
+/*
+  TRUE 3-COMPONENT solver -- solves (vx, vy, vz) from range + azimuth offsets with NO
+  surface-parallel constraint.  Selected by -true3D, default OFF.  Offsets only.
+  vz/ez go to their own vZ3D/errorZ planes (geocode.h), never the shared vz/dT buffer.
+  See mosaicTrue3D.c and Documents/true3DPlan.md.
+*/
+void mosaicTrue3D(inputImageStructure *images, vhParams *params, outputImageStructure *outputImage,
+				  float fl, referenceVelocity *refVel);
+extern int32_t true3D;          /* -true3D */
+/* -true3DProject : force the C^T N3 C projection onto the surface-parallel subspace.  Exists
+   ONLY as a reduction test; not a production path.  Its historical reference was
+   -speckleTrackJoint, now removed -- use the hopper with -noPhaseRows instead. */
+extern int32_t true3DProject;
+/* -true3DMaxSigma X : n-normalised gate on 1/sqrt(lambdaMin(N3)), same form as the 2D gates.
+   Default 100, matching JOINTMAXSIGMARANGEDEF; 0 = off. */
+extern double true3DMaxSigma;
+/* -true3DDiag : diagnostic only.  Replaces the .vz3d / .ez bands with the weighted mean RANGE
+   RATE for ASCENDING / DESCENDING frames respectively, which separates a data-level common-mode
+   term (same sign both passes -- indistinguishable from vz) from a geometry or sign error
+   (opposite signs).  See mosaicTrue3D.c. */
+extern int32_t true3DDiag;
+/*  Symmetric 3x3 helpers shared by both 3-component solvers (defined in mosaicTrue3D.c).
+    lambdaMin3: smallest eigenvalue by the closed-form trigonometric method -- no iteration and
+    no workspace, so it is safe inside a parallel region, unlike the cRecipes SVD routines.
+    invSym3: inverse by cofactors; returns FALSE if not invertible. */
+double lambdaMin3(double a11, double a12, double a13, double a22, double a23, double a33);
+int32_t invSym3(double a11, double a12, double a13, double a22, double a23, double a33,
+				double C[3][3], double *det);
+/*
+  TRUE 3-COMPONENT solver on the PHASE observable -- "mosaic3d -true3DPhase".  Same rows as
+  mosaicTrue3D but fed by interferometric phase instead of range offsets, so ~9x more precise
+  per measurement and with a COMPLETELY DIFFERENT ionosphere path (split-spectrum screen,
+  SUBTRACTED, vs the offsets' pre-negated correction that is ADDED).  Phase carries no azimuth
+  component, so the geometry is weaker; the precision more than compensates.
+  See mosaicTrue3DPhase.c and Documents/true3DPlan.md.
+*/
+void mosaicTrue3DPhase(inputImageStructure *ascImages, inputImageStructure *descImages, vhParams *ascParams,
+					   vhParams *descParams, xyDEM *dem, outputImageStructure *outputImage, float fl,
+					   int32_t no3d, float timeThreshPhase);
+extern int32_t true3DPhase;   /* -true3DPhase */
+/*
+  THE HOPPER -- "mosaic3d -hopper".  Phase, range offsets and azimuth offsets in ONE per-pixel
+  normal-equation system, each row weighted by its own frame's sigma.  Replaces the current
+  architecture of separate rounds renormalised and averaged.  See mosaicHopper.c.
+*/
+void mosaicHopper(inputImageStructure *ascImages, inputImageStructure *descImages, vhParams *ascParams,
+				  vhParams *descParams, xyDEM *dem, outputImageStructure *outputImage, float fl,
+				  int32_t no3d, float timeThreshPhase, referenceVelocity *refVel);
+extern int32_t hopper;   /* -hopper */
+/*
+  THE 3D HOPPER -- "mosaic3d -hopper3D".  Same three observables, but accumulated as SLOPE-FREE
+  3-component rows, so both the unconstrained (vx,vy,vz) solve and its surface-parallel
+  projection N2 = C^T N3 C come out of ONE pass.  Chooses between them PER PIXEL on
+  lambdaMin(N3); the 2D fallback means no pixel is lost to the choice.  See mosaicHopper3D.c and
+  Documents/hopper3DPlan.md.  Takes precedence over -hopper if both are given.
+*/
+void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descImages, vhParams *ascParams,
+					vhParams *descParams, xyDEM *dem, outputImageStructure *outputImage, float fl,
+					int32_t no3d, float timeThreshPhase, referenceVelocity *refVel);
+extern int32_t hopper3D; /* -hopper3D */
+/*  -hopper3DMaxSigma X : n-normalised gate on 1/sqrt(lambdaMin(N3)) deciding 3D vs projected.
+    Normalised by nRange (phase + range rows), NOT nObs -- azimuth rows have u_z == 0 and say
+    nothing about the vertical.  Sign convention:
+        < 0   force the 2D projection everywhere -- this is reduction test A, which must
+              reproduce mosaicHopper
+        == 0  gate off: 3D wherever N3 is invertible
+        > 0   the gate
+    DEFAULT -1, i.e. 2D everywhere.  3D is opt-in because it is measurably WORSE for the
+    horizontal: on three NISAR sectors it cost +15.6%, +70.7% and +144.4% in std(d) against the
+    multi-year S1 reference, with the largest penalty where the 2D answer was best.  Enable it
+    only where the vertical is the product you want.
+
+    Calibration note: the transition is sharp -- on sector 002.003, 35 gives 0% 3D, 100 gives
+    91%, and 300 gives 100%.  lambdaMin(N3) has a narrow distribution, so this gate behaves more
+    like a per-SECTOR geometry test than a per-pixel discriminator; slope or speed criteria would
+    be the better per-pixel selectors.  N3 is also not on N2's scale (3D rows are unit vectors,
+    w3D = w2D/sin^2(psi)), so values are NOT comparable to jointMaxSigma. */
+extern double hopper3DMaxSigma;
+/*  Row-type switches, for the hopper's REDUCTION TESTS (and diagnostics).  With
+    -noRangeRows -noAzimuthRows the hopper must reproduce make3DMosaicJoint; with -noPhaseRows
+    it must reproduce the hopper with -noPhaseRows.  Those are the only checks that can catch a
+    hopper that is wrong but plausible. */
+/*  -legacyCode: the pre-2026-09 four-round pipeline (crossing phase -> crossing range offsets ->
+    vh -> speckle).  The hopper is now the default; legacy round-selection flags are translated
+    into row switches unless this is set.  Also implied by -stats and -legacyPair*. */
+extern int32_t legacyCode;
+extern int32_t noPhaseRows;   /* -noPhaseRows */
+extern int32_t noRangeRows;   /* -noRangeRows */
+extern double sigmaAThreshVel; /* -sigmaAThreshVel, m/yr; -1 = off */
+extern int32_t gateNEff;       /* -gateNEff, experimental */
+/*  -gateAbsolute: drop the sqrt(n) factor from the output gate, so -jointMaxSigma is a
+    plain cap on the worst-direction formal sigma.  See mosaic3d.c for why the sqrt(n) form
+    does not port between archives.  Default off. */
+extern int32_t gateAbsolute;
+/*  -gateSpeedFrac F: make the absolute cap speed-aware -- the effective cap becomes
+    max(jointMaxSigma, F*|v|), matching the requirement tolerance form T = 0.03|v| + c.
+    A flat cap is speed-blind: it accepts 50 m/yr on a 20 m/yr pixel (250% error) while
+    rejecting 60 m/yr on a 7000 m/yr pixel (0.9%).  Measured on Greenland, a flat 50 discards
+    365 px of good fast data (median 4083 m/yr, sigma 60); recovering them by raising the cap
+    instead would admit 3992 px whose error exceeds their own speed.
+
+    DEFAULT 0.03 since 2026-09.  Because the cap is a max(), the term can only RAISE it -- a
+    pixel that passed with the term off still passes with it on -- so the default change can add
+    coverage but cannot remove any.  Pass 0 to disable. */
+extern double gateSpeedFrac;
+/*  -maxChi2: reduced-chi-square blunder screen, -1 = off.  See mosaic3d.c -- it catches
+    confidently-wrong solves that the formal sigma cannot; keep the value loose. */
+extern double maxChi2;
+
+/*  Per-observation dump at a short list of lat/lon points (-obsDump pointsFile).
+    Serves the GPS forward model of Documents/gpsForwardModelPlan.md: an external
+    tool rebuilds mosaic3d's own estimate from a_i, w_i, d_i, then rebuilds it with
+    synthetic GPS observables over each observation's OWN window, which cancels
+    temporal sampling exactly.  Read-only and inert unless -obsDump is given.
+    Implemented in obsDump.c. */
+#define MAXOBSDUMPPTS 256
+extern char *obsDumpFile;     /* -obsDump <pointsFile>; NULL disables */
+int32_t obsDumpActive(void);
+void obsDumpInit(char *pointsFile, char *outName, outputImageStructure *outputImage, double stdLat);
+void obsDumpRecord(int32_t iRow, int32_t jj, const char *obsType, const char *frame,
+				   double julDay, double nDays, double ax, double ay, double az,
+				   double d, double sigma, double w);
+void obsDumpPixel(int32_t iRow, int32_t jj, double sx, double sy);
+void obsDumpClose(void);
 
 void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem, outputImageStructure *outputImage,
 				   float fl, float timeThresh);
+/*
+  Joint (normal-equations) crossing-RANGE solver -- the DEFAULT; -legacyPairRange selects the
+  original make3DOffsets instead.  One loop iteration per product instead of one per pair; see
+  make3DOffsetsJoint.c.  Gated by -jointMaxSigmaRange.
+*/
+void make3DOffsetsJoint(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem, outputImageStructure *outputImage,
+						float fl, float timeThresh);
 
 /* in speckleTrackMosaic.c */
 void computeScaleLS(float **inImage, float **scale, int32_t azimuthSize, int32_t rangeSize, float fl, float weight,

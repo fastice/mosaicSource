@@ -232,6 +232,36 @@ typedef struct outputImageType
 	ShelfMask *shelfMask;
 	xyDEM *verticalCorrection;
 	char *verticalCorrectionSuffix;
+	int32_t iceOnly; /* mosaic3d -iceOnly: use the ".iceOnly" PHASE baseline (tiepoints -iceOnly) */
+	int32_t flipSquint; /* mosaic3d -flipSquint: use the ".flipSquint" PHASE baseline */
+	/* Per-pixel count of measurements that entered the joint crossing-orbit solve.
+	   Set by make3DMosaicJoint() (-jointPhase) and left allocated so mosaic3d can write
+	   it as a ".nobs" diagnostic band; NULL for every other path, which is what tells
+	   mosaic3d not to write it.  Needed to calibrate the shared-frame variance inflation
+	   f(n) = 1 + rho(n-1) against per-pixel n rather than a run-average -- see
+	   mosaicSource/Documents/crossingOrbitRedundancy.md. */
+	float **jointNObs;
+	/* Per-pixel REDUCED CHI-SQUARE of the joint solve: chi2/(n-2), where
+	   chi2 = sum_i w_i (d_i - a_i.v)^2 = Sdd - v.b  (the cross terms cancel at the
+	   solution, so this needs one extra accumulator and NO second pass).
+	   This is the decisive diagnostic for whether the measurements at a pixel AGREE
+	   WITH EACH OTHER: ~1 means internally consistent, so any disagreement with an
+	   external reference is systematic or reference error, not bad measurements --
+	   which is exactly what IRLS can and cannot fix.  NULL on every other path. */
+	float **jointChi2;
+	/* TRUE-3D vertical velocity and its formal error, in m/yr.  Solved (not derived from
+	   slope) by mosaicTrue3D() and written as the ".vz3d" / ".ez" bands.
+	   DELIBERATELY SEPARATE from the vzTmp/image3 plane, which nine modules write and which
+	   -timeOverlap repurposes as the ".dT" band (mosaic3d.c:984) -- so "vZ3D means vertical
+	   velocity" holds unconditionally rather than only in some modes.  NULL on every other
+	   path, which is what tells mosaic3d not to write the bands.
+	   See mosaicSource/Documents/true3DPlan.md. */
+	float **vZ3D;
+	float **errorZ;
+	/*  mosaicHopper3D only: 3 where the unconstrained 3-component solve was kept, 2 where the
+	    surface-parallel projection was used instead.  NULL for every other solver, which is what
+	    tells mosaic3d not to write the ".mode" band. */
+	float **hopperMode;
 	/*  flags for velocity work */
 	int32_t noVhFlag;
 	int32_t no3d;

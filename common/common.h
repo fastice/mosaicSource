@@ -22,6 +22,11 @@
 #define NUSESTATE 5
 #define GROUNDED 0
 #define SHELF 1
+/* GIMP-style ice/rock/water mask values (tiepoints -iceOnly, common/iceRockMask.c) */
+#define IRM_WATER 0
+#define IRM_ROCK 1
+#define IRM_ICE 2
+#define IRM_OUTSIDE 255
 #define GROUNDINGZONE 2
 #define NOSOLUTION 5
 /* elipsoid */
@@ -309,6 +314,9 @@ void getRowBounds(inputImageStructure *image, outputImageStructure *outputImage,
                    int32_t *jRowMin, int32_t *jRowMax);
 int clipByHalfPlane(double *xIn, double *yIn, int nIn, double *xOut, double *yOut, double nx, double ny, double d);
 unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y);
+extern int32_t flipSquintSign; /* -flipSquint: negate evaluateSquint() (common/initRoutines.c) */
+unsigned char *sampleIceRockMask(char *maskFile, double *lat, double *lon, int32_t n);
+int32_t keepIceTiePoints(tiePointsStructure *tiePoints, char *maskFile);
 void computePhiZ(double *phiZ, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double thetaD, double Range, double ReH,
 				 double ReHfixed, double Re, double thetaC, double *phaseError);
 void computePhiFlatEarth(double *phiFlat, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double Range,
@@ -329,6 +337,8 @@ float interpRangeSigma(double range, double azimuth, Offsets *offsets, inputImag
 extern int32_t rSigmaResidual;   /* defined in common/getRegion.c */
 extern double rSigmaConst;       /* defined in common/getRegion.c */
 double rangeAccuracyVar(Offsets *offsets);
+extern int32_t aSigmaResidual;   /* defined in common/getRegion.c */
+double azimuthAccuracyVar(Offsets *offsets);
 float bilinearInterp(float **fimage, double range, double azimuth, int32_t nr, int32_t na, float minvalue, float noData);
 
 void computeXYangle(double lat, double lon, double *xyAngle, xyDEM xydem);

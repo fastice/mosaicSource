@@ -187,6 +187,24 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 		{
 			(*baselineFiles)[i] = dupName(baseline);
 		}
+		/* -iceOnly: select the ice-only PHASE baseline written by tiepoints -iceOnly.
+		   Deliberately applied only here, not to rParams (readOffsets.c), so an
+		   offsets run is unaffected and existing baselines are never overwritten. */
+		if (outputImage->iceOnly == TRUE && (*baselineFiles)[i] != NULL)
+		{
+			char *bTmp = (*baselineFiles)[i];
+			(*baselineFiles)[i] = appendBaselineSuffix(bTmp, ".iceOnly",
+				(char *)malloc(strlen(bTmp) + strlen(".iceOnly") + 1));
+			free(bTmp);
+		}
+		/* -flipSquint: same pattern, so tiepoints -flipSquint output is picked up */
+		if (outputImage->flipSquint == TRUE && (*baselineFiles)[i] != NULL)
+		{
+			char *bTmp = (*baselineFiles)[i];
+			(*baselineFiles)[i] = appendBaselineSuffix(bTmp, ".flipSquint",
+				(char *)malloc(strlen(bTmp) + strlen(".flipSquint") + 1));
+			free(bTmp);
+		}
 		(*geodatFiles)[i] = dupName(geodat);
 		if (offsetFlag == TRUE || rOffsetFlag == TRUE || threeDOffFlag == TRUE)
 		{

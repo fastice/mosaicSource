@@ -15,29 +15,6 @@
 })
 
 
-/* Write a flat row-major buffer to GeoTIFF with pixel-coord geotransform.
-   No vertical flip: row 0 of the buffer becomes the top row of the tif.
-   This matches the convention used by writeSingleVRT and other GrIMP tiff
-   outputs (GT y-step = +1). makeTiffVRT builds the .ll.vrt by hand (not via
-   GDALBuildVRT, which rejects "positive NS resolution" rasters), so this
-   convention is fine here. */
-static void writeFlatTiff(const char *filename, const void *flatData,
-                          int32_t width, int32_t height, GDALDataType dataType,
-                          float noDataValue, dictNode *metaData)
-{
-    double pixGT[6] = {-0.5, 1., 0., -0.5, 0., 1.};
-    const char *options[] = {"COMPRESS=DEFLATE", NULL};
-    GDALDriverH driver = GDALGetDriverByName("GTiff");
-    GDALDatasetH ds = GDALCreate(driver, filename, width, height, 1, dataType, (char **)options);
-    GDALSetGeoTransform(ds, pixGT);
-    GDALRasterBandH band = GDALGetRasterBand(ds, 1);
-    GDALSetRasterNoDataValue(band, noDataValue);
-    GDALRasterIO(band, GF_Write, 0, 0, width, height, (void *)flatData, width, height, dataType, 0, 0);
-    if (metaData != NULL)
-        writeDataSetMetaData(ds, metaData);
-    GDALClose(ds);
-}
-
 static void popuplateMeta(dictNode **metaData, sceneStructure scene) {
 	insert_node(metaData, "r0", STR_BUFF("%i", (int) (scene.rO * scene.I.nRangeLooks)));
 	insert_node(metaData, "a0", STR_BUFF("%i", (int) (scene.aO * scene.I.nAzimuthLooks)));

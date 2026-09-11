@@ -15,7 +15,9 @@ static double now()
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-static int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel);
+/* Non-static: speckleTrackMosaicJoint.c applies the same clip in its solve pass.
+   Prototyped in mosaic3d.h so the two cannot drift apart. */
+int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel);
 /*
   Pure speckle tracking solution.
 
@@ -581,7 +583,45 @@ Input baseline info.
    if difference between velocity map and reference map exceeds some value, return noData=TRUE
    Only apply to speeds < 100 m/yr. This option has not been used except for special cases.
 */
-static int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel)
+/*
+  Return-checked reference-velocity clip, for the hopper solvers.
+
+  Same rule as clipVel() below -- reject when the solved velocity differs from the reference by
+  more than refVel->clipThresh, and only where one of the two is slower than 100 m/yr, so fast
+  ice is never clipped against a reference that may simply be from a different epoch.
+
+  It differs from clipVel() in one respect, deliberately: it honours refVelInterp()'s return
+  value.  refVelInterp() returns FALSE without writing its outputs when the pixel is outside the
+  reference grid or the reference is no-data, so a caller that ignores the return compares
+  against uninitialised stack.  Here that case means "no reference to judge against", and the
+  pixel is KEPT.  clipVel() is left as-is so the legacy path is bit-for-bit unchanged.
+
+  Pure: reads only refVel, writes nothing shared.  Safe to call from inside an OpenMP region.
+*/
+int clipVelChecked(double x, double y, double vx, double vy, referenceVelocity *refVel)
+{
+	float vxPt, vyPt, exPt, eyPt;
+	double dv, refSpeed, newSpeed;
+
+	if (refVel == NULL || refVel->clipFlag != TRUE)
+	{
+		return (FALSE);
+	}
+	if (refVelInterp(x, y, refVel, &vxPt, &vyPt, &exPt, &eyPt) != TRUE)
+	{
+		return (FALSE); /* no reference value here -- nothing to clip against */
+	}
+	dv = sqrt((vx - (double)vxPt) * (vx - (double)vxPt) + (vy - (double)vyPt) * (vy - (double)vyPt));
+	refSpeed = sqrt((double)vxPt * (double)vxPt + (double)vyPt * (double)vyPt);
+	newSpeed = sqrt(vx * vx + vy * vy);
+	if (dv > refVel->clipThresh && (refSpeed < 100.0 || newSpeed < 100.0))
+	{
+		return (TRUE);
+	}
+	return (FALSE);
+}
+
+int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel)
 {
 	float vxPt, vyPt, exPt, eyPt, exy;
 	/*
