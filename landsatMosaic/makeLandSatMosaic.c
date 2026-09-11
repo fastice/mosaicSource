@@ -422,6 +422,22 @@ static void readLSOffsetsForMosaic(landSatImage *currentImage)
   already picks up VRTs in common/readOffsets.c, so a tree part-way through the
   format migration reads correctly either way.
 */
+/*
+  GDALAllRegister loads every driver and the PROJ database - about 6 s of system
+  time - so it is done on first actual GDAL use rather than at startup. Calling
+  it unconditionally in main() quadrupled the CPU cost of a raw-mode run, which
+  matters because runlscull runs 32 of these at once.
+*/
+static void ensureGDALRegistered(void)
+{
+	static int32_t gdalRegistered = FALSE;
+	if (gdalRegistered == FALSE)
+	{
+		GDALAllRegister();
+		gdalRegistered = TRUE;
+	}
+}
+
 static int32_t LSreadTiffIfPresent(char *file, int32_t nx, int32_t ny, void *flat,
 								   GDALDataType dataType)
 {
@@ -435,6 +451,7 @@ static int32_t LSreadTiffIfPresent(char *file, int32_t nx, int32_t ny, void *fla
 	sprintf(tiffFile, "%s.tif", file);
 	if (fileExists(tiffFile, FALSE) == FALSE)
 		return (FALSE);
+	ensureGDALRegistered();
 	ds = GDALOpen(tiffFile, GA_ReadOnly);
 	if (ds == NULL)
 		error("LSreadTiffIfPresent: cannot open %s\n", tiffFile);

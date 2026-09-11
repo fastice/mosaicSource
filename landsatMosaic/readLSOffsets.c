@@ -4,11 +4,14 @@
 #include "clib/standard.h"
 #include "landsatSource64/Lstrack/lstrack.h"
 #include "landsatSource64/Lsfit/lsfit.h"
+#include "gdalIO/gdalIO/grimpgdal.h"
 
 #define MAXTIEPOINTS 500000
 static void parseLSOffsetMeta(char *datFile, lsFit *fitDat, matchResult *matches);
 float **LSreadFloatImage(char *file, int32_t nx, int32_t ny);
 uint8_t  **LSreadByteImage(char *file, int32_t nx, int32_t ny);
+static int32_t LSreadTiffIfPresent(char *file, int32_t nx, int32_t ny, void *flat,
+								   GDALDataType dataType);
 /*
   Read tiepoint file for tiepoints.
 */
@@ -86,6 +89,66 @@ void readLSOffsets(lsFit *fitDat, matchResult *matches, int32_t readData, char *
 /***************************LSreadFloatImage*************************************
 input a floating point image file, with size nx by ny
 ***********************************************************************************/
+/***************************LSreadTiffIfPresent**********************************
+  Read one band of <file>.tif into a caller-supplied flat buffer, or return
+  FALSE if there is no such tif.
+
+  These GeoTIFFs are north-up, because saveAsGeotiff flips on write, while the
+  raw planes and everything downstream here are south-up with row 0 at the
+  bottom, so rows are read in reverse. Detection is by file existence rather
+  than a flag, so a tree part-way through the format migration reads either way.
+
+  This file is shared: cullls reads the match rasters through it, while mosaic3d
+  and geomosaic use it only for the .dat metadata (readData FALSE) and do their
+  own raster reads in makeLandSatMosaic.c.
+***********************************************************************************/
+/*
+  GDALAllRegister loads every driver and the PROJ database - about 6 s of system
+  time - so it is done on first actual GDAL use rather than at startup. Calling
+  it unconditionally in main() quadrupled the CPU cost of a raw-mode run, which
+  matters because runlscull runs 32 of these at once.
+*/
+static void ensureGDALRegistered(void)
+{
+	static int32_t gdalRegistered = FALSE;
+	if (gdalRegistered == FALSE)
+	{
+		GDALAllRegister();
+		gdalRegistered = TRUE;
+	}
+}
+
+static int32_t LSreadTiffIfPresent(char *file, int32_t nx, int32_t ny, void *flat,
+								   GDALDataType dataType)
+{
+	char tiffFile[2048];
+	GDALDatasetH ds;
+	GDALRasterBandH band;
+	int32_t i, pixelBytes;
+	char *rows = (char *)flat;
+
+	sprintf(tiffFile, "%s.tif", file);
+	if (fileExists(tiffFile, FALSE) == FALSE)
+		return (FALSE);
+	ensureGDALRegistered();
+	ds = GDALOpen(tiffFile, GA_ReadOnly);
+	if (ds == NULL)
+		error("LSreadTiffIfPresent: cannot open %s\n", tiffFile);
+	if (GDALGetRasterXSize(ds) != nx || GDALGetRasterYSize(ds) != ny)
+		error("LSreadTiffIfPresent: %s is %i x %i, expected %i x %i\n", tiffFile,
+			  GDALGetRasterXSize(ds), GDALGetRasterYSize(ds), nx, ny);
+	band = GDALGetRasterBand(ds, 1);
+	pixelBytes = (dataType == GDT_Byte) ? 1 : 4;
+	for (i = 0; i < ny; i++)
+		if (GDALRasterIO(band, GF_Read, 0, ny - 1 - i, nx, 1,
+						 &(rows[(size_t)i * nx * pixelBytes]), nx, 1,
+						 dataType, 0, 0) != CE_None)
+			error("LSreadTiffIfPresent: read failed on %s row %i\n", tiffFile, i);
+	GDALClose(ds);
+	fprintf(stderr, "Read tiff %s\n", tiffFile);
+	return (TRUE);
+}
+
 float **LSreadFloatImage(char *file, int32_t nx, int32_t ny)
 {
 	float **image;
@@ -100,6 +163,11 @@ float **LSreadFloatImage(char *file, int32_t nx, int32_t ny)
 	tmp = (float *)malloc(sizeof(float) * (size_t)nx * (size_t)ny);
 	for (i = 0; i < ny; i++)
 		image[i] = &(tmp[i * nx]);
+	/*
+	   GeoTIFF if one is there, else the raw big-endian plane
+	*/
+	if (LSreadTiffIfPresent(file, nx, ny, tmp, GDT_Float32) == TRUE)
+		return (image);
 	/*
 	   open file
 	*/
@@ -129,6 +197,11 @@ uint8_t  **LSreadByteImage(char *file, int32_t nx, int32_t ny)
 	tmp = (uint8_t  *)malloc(sizeof(uint8_t ) * (size_t)nx * (size_t)ny);
 	for (i = 0; i < ny; i++)
 		image[i] = &(tmp[i * nx]);
+	/*
+	   GeoTIFF if one is there, else the raw plane
+	*/
+	if (LSreadTiffIfPresent(file, nx, ny, tmp, GDT_Byte) == TRUE)
+		return (image);
 	/*
 	   open file
 	*/
