@@ -642,12 +642,20 @@ static void computeDateRange(char **date1, char **date2, outputImageStructure *o
 {
 	double jd1 = minJDLS, jd2 = maxJDLS;
 	int year, month, day, hour, minute, second;
-	// No images to compute date range for.
-	if(images == NULL) 
+	/* Already supplied on the command line - nothing to compute. */
+	if (*date1 != NULL && *date2 != NULL)
 	{
 		return;
 	}
-	if(*date1 == NULL || *date2 == NULL) {
+	/* A Landsat-only mosaic has no SAR images, but parseLSInputs has still
+	   filled in the Landsat julian range, which is what the dates come from.
+	   Returning here left date1/date2 NULL, and write3DTiffOutput then passed
+	   NULL to insert_node -> strdup(NULL) -> segfault under -GTiff. */
+	if (images == NULL && !(maxJDLS > 0. && minJDLS < HIGHJD))
+	{
+		return;
+	}
+	if(images != NULL) {
 		vhParams *currentParams;
 		inputImageStructure *currentImage;
 		for (currentImage = images, currentParams = params;
@@ -659,10 +667,7 @@ static void computeDateRange(char **date1, char **date2, outputImageStructure *o
 			jd2 = max(jd2, currentImage->julDay + currentParams->nDays);
 		}
 	}
-	else 
-	{
-		return;
-	}
+	/* else: Landsat only, so jd1/jd2 keep the Landsat range they started with */
 	jd_to_date_and_time(jd1, &year, &month, &day, &hour, &minute, &second);
 	if(*date1 == NULL) { *date1 = malloc(11); sprintf(*date1, "%4d-%02d-%02d", year, month, day);}
 	jd_to_date_and_time(jd2, &year, &month, &day, &hour, &minute, &second);
