@@ -13,7 +13,8 @@
  */
 void mallocCorrectionBuffer(int bufferMode)
 {
-    extern void *correctionBuf1, *correctionBuf2, *Correction1, *Correction2;
+    extern void *correctionBuf1, *correctionBuf2, *correctionBuf3;
+    extern void *Correction1, *Correction2, *Correction3;
 
     if (bufferMode == RANGEBUFF && correctionBuf1 == NULL)
     {
@@ -28,11 +29,18 @@ void mallocCorrectionBuffer(int bufferMode)
         Correction2    = malloc(MAXOFFBUF);
         return;
     }
+
+    if (bufferMode == AZIMUTHIONBUFF && correctionBuf3 == NULL)
+    {
+        correctionBuf3 = malloc(sizeof(float *) * MAXOFFLENGTH);
+        Correction3    = malloc(MAXOFFBUF);
+        return;
+    }
 }
 
 /*
- * Read an ionospheric range-offset correction from a VRT/GeoTIFF into
- * offsets->rOffCorrection.
+ * Read an ionospheric offset correction from a VRT/GeoTIFF into
+ * offsets->rOffCorrection (range) or offsets->aOffCorrection (azimuth).
  *
  * The correction file is on the native ROFF grid — the same pixel spacing
  * and origin as the range offsets (r0, a0, deltaR, deltaA in SLC pixels).
@@ -40,15 +48,22 @@ void mallocCorrectionBuffer(int bufferMode)
  * rather than re-reading them from file metadata.
  *
  * Data is placed into the pre-allocated pool:
- *   RANGEBUFF          -> correctionBuf1 / Correction1
- *   RANGEUSEAZIMUTHBUFF -> correctionBuf2 / Correction2
+ *   RANGEBUFF           -> correctionBuf1 / Correction1  (range)
+ *   RANGEUSEAZIMUTHBUFF -> correctionBuf2 / Correction2  (range, crossing orbit)
+ *   AZIMUTHIONBUFF      -> correctionBuf3 / Correction3  (azimuth)
+ *
+ * The azimuth screen is in SLC azimuth pixels and is ADDED to the azimuth
+ * offset, the same sign convention the range screen uses (see the root
+ * CLAUDE.md "Ionosphere range correction sign convention").
  */
 void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode)
 {
-    extern void *correctionBuf1, *correctionBuf2, *Correction1, *Correction2;
+    extern void *correctionBuf1, *correctionBuf2, *correctionBuf3;
+    extern void *Correction1, *Correction2, *Correction3;
+    offsetCorrection *corr;
     GDALDatasetH   hDS;
     GDALRasterBandH hBand;
-    float **rangeOffsetCorrection;
+    float **offsetCorrectionData;
     float  *data;
     int32_t nr, na;
     int     i, status;
@@ -71,31 +86,42 @@ void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode
         error("readOffsetCorrection: %s na=%i exceeds MAXOFFLENGTH=%i\n",
               correctionFile, na, MAXOFFLENGTH);
 
+    corr = (bufferMode == AZIMUTHIONBUFF) ? &(offsets->aOffCorrection)
+                                          : &(offsets->rOffCorrection);
+
     /* Correction is on the ROFF grid — inherit r0/a0/deltaR/deltaA from the
-       range offsets (already populated from range.offsets.vrt metadata). */
-    offsets->rOffCorrection.nr     = nr;
-    offsets->rOffCorrection.na     = na;
-    offsets->rOffCorrection.rO     = offsets->rO;
-    offsets->rOffCorrection.aO     = offsets->aO;
-    offsets->rOffCorrection.deltaR = offsets->deltaR;
-    offsets->rOffCorrection.deltaA = offsets->deltaA;
+       offsets (already populated from the offsets VRT metadata). */
+    corr->nr     = nr;
+    corr->na     = na;
+    corr->rO     = offsets->rO;
+    corr->aO     = offsets->aO;
+    corr->deltaR = offsets->deltaR;
+    corr->deltaA = offsets->deltaA;
 
     if (bufferMode == RANGEBUFF)
     {
-        rangeOffsetCorrection = (float **)correctionBuf1;
-        data                  = (float *)Correction1;
+        offsetCorrectionData = (float **)correctionBuf1;
+        data                 = (float *)Correction1;
     }
     else if (bufferMode == RANGEUSEAZIMUTHBUFF)
     {
-        rangeOffsetCorrection = (float **)correctionBuf2;
-        data                  = (float *)Correction2;
+        offsetCorrectionData = (float **)correctionBuf2;
+        data                 = (float *)Correction2;
+    }
+    else if (bufferMode == AZIMUTHIONBUFF)
+    {
+        offsetCorrectionData = (float **)correctionBuf3;
+        data                 = (float *)Correction3;
     }
     else
         error("readOffsetCorrection: invalid bufferMode %d\n", bufferMode);
 
     for (i = 0; i < na; i++)
-        rangeOffsetCorrection[i] = &data[i * nr];
-    offsets->rOffCorrection.rangeOffsetCorrection = rangeOffsetCorrection;
+        offsetCorrectionData[i] = &data[i * nr];
+    if (bufferMode == AZIMUTHIONBUFF)
+        corr->azimuthOffsetCorrection = offsetCorrectionData;
+    else
+        corr->rangeOffsetCorrection = offsetCorrectionData;
 
     status = GDALRasterIO(hBand, GF_Read, 0, 0, nr, na, data,
                           nr, na, GDT_Float32, 0, 0);

@@ -145,6 +145,120 @@ allocates the ion pools only when needed, and shifts velocities by ~0.94 m/yr pe
 above only drove `makeVhMosaic.c`, since no crossing phase pair with a correction was available.
 The code is symmetric with the `makeVhMosaic.c` path that was verified.
 
+## Azimuth ionosphere correction (`azparams` ION_AUTO, `mosaic3d -useAzIonosphere`)
+
+The azimuth counterpart of `rparams`' range ION_AUTO. The ionosphere shifts targets in azimuth
+in proportion to the ALONG-TRACK gradient of its range delay (a slow-time-linear phase
+perturbation is a Doppler shift, and azimuth compression turns a Doppler shift into a
+misregistration). `nisargrimpworkflow.azIonoCorrection` builds the screen; the C side fits with
+it and applies it.
+
+**`azparams` flags** (names deliberately match `rparams`): `-noIonosphere` (ION_NONE),
+`-forceIonosphere` (ION_FORCE), `-ionSigmaMargin frac` (default 0.05). Default is ION_AUTO --
+fit both ways, keep the correction only if `sigmaIon < sigmaNoIon * (1 - margin)`. Both sigmas,
+`usingIon`, and `ionosphereAzimuthOffsetCorrection` go into `az.est.yaml`.
+`fitAzParamsWithIonChoice()` (`azParams/azparams.c`) is the dual-run helper, used by both the
+single-run and `-runFile` paths. `computeAzParams()` had to start RETURNING its sigma
+(previously `void`) so the helper can choose; `-1.0` is the no-solution sentinel and is never
+allowed to win.
+
+**`mosaic3d -useAzIonosphere`** (default off) applies it at the five azimuth-offset sites
+(`speckleTrackMosaic.c`, `makeVhMosaic.c`, `mosaicTrue3D.c`, `mosaicHopper.c`,
+`mosaicHopper3D.c`) via the single helper `azIonCorrectionMeters()`. `make3DOffsets.c` /
+`make3DOffsetsJoint.c` are untouched -- they solve from crossing-orbit RANGE offsets only.
+
+**The consistency rule is the whole design.** `readAzParamsYaml()` records the correction name
+ONLY when the fit says `usingIon: True`, and `loadAzimuthIonosphereCorrection()` then validates
+that name against the VRT's own key before loading. A frame fitted without the correction can
+never be corrected retroactively, so the fitted parameters and the applied screen always agree.
+
+**Plumbing trap:** `getAzParams()` runs AFTER the rasters are read
+(`readOffsetDataAndParams`), so the in-line `checkForAzimuthIonosphereCorrection()` inside
+`readOffsetsOptionalErrors` cannot see the name the fit recorded -- that path only fires for
+`azparams` itself, which pre-fills `correctionFile` by peeking at the VRT. mosaic3d needs the
+explicit `loadAzimuthIonosphereCorrection()` call after `getAzParams`. Removing either one
+silently disables the feature for one of the two binaries.
+
+**A point with no correction is KEPT, uncorrected** (`azParams/getOffsets.c`), matching
+`getROffsets`. Dropping such points instead -- which an earlier Python harness did implicitly,
+by adding a NaN correction to a valid offset -- fits the two arms of the comparison to different
+tie-point subsets and inflated the measured benefit roughly 2x (22.7% -> 15.4% on
+track-99/5561_0010, 648 points both arms instead of 362 vs 648).
+
+**Measured** (all 670 Greenland master frames, 2026-09-12): accepted on 241/669 (36%), median
+14.6% sigma reduction where accepted, mean 6.3% across all frames, median 0.0%. The frames the
+gate REJECTS would have been ~19% worse at the median, so it discriminates rather than
+rubber-stamps.
+
+**Validated against GPS and found to make no measurable difference -- and the reason matters
+more than the result.** Two `validationReports` arms (`greenland-azIonRef` /
+`greenland-azIonTest`, both fresh from the same binary and tie points, differing only in the
+ionosphere flag) gave essentially identical residuals: slow RMS(r) vx/vy/speed 0.90/0.71/0.85 ->
+0.91/0.70/0.85, fast 0.60/0.35/0.48 -> 0.61/0.36/0.49, seasonal unchanged.
+
+This was NOT a null application. 616 of 1613 azimuth observations moved, median 18.4 m/yr and up
+to 228; range and phase moved on 0 of 4664 rows, which is the correct sanity check. The velocity
+did not move because **azimuth offsets carry 0.05-0.35% of the solve weight at every one of the
+65 validation points** (median azimuth sigma 42.8 m/yr against phase 2.2, so ~375x less weight
+per observation; phase takes 80-94%, range 6-21%). Even at the fast NIL stations, where phase is
+scarcest, azimuth reaches only 0.35%.
+
+**Azimuth-only solve (the sensitive test).** Re-solving the same dumps from AZIMUTH ROWS ONLY
+removes the 0.1 % dilution and shows the correction plainly (62 validation points, cumulative
+full-record estimate, NISAR and GPS solved on identical rows/weights via `obsDump.solve2D`):
+
+| subset | RMS dspeed ref -> test | points improved |
+|---|---|---|
+| azimuth only | 20.11 -> 15.73 m/yr (**+21.8 %**), median 13.86 -> 8.77 | 42/62 (68 %) |
+| offsets only (range+azimuth) | 9.81 -> 10.56 (**-7.6 %**) | 16/62 (26 %) |
+| full solution | 3.01 -> 3.04 (-1.2 %) | - |
+| range only / phase only | identical to 0.00 | control: correction touches azimuth alone |
+
+So the correction genuinely improves the azimuth observable -- broadly, 17-30 % across every
+speed bin below 200 m/yr -- and yet makes an offsets-only product WORSE. The likely mechanism is
+that azimuth and range residuals share the ionosphere screen's own error (the azimuth screen is
+the along-track derivative of the range screen that already corrected range), so removing it from
+azimuth alone breaks a partial cancellation the joint solve was benefiting from. Do not assume an
+improvement to one observable carries into a combined product.
+
+Absolute scale matters too: azimuth-only RMS dspeed is ~16 m/yr against 2.95 range-only and 2.59
+phase-only, so azimuth is never competitive as a product on its own at these points, corrected or
+not. Only 3 points exceed 200 m/yr (those got worse), far too few to test whether fast shearing
+ice behaves differently.
+
+**Full-Greenland azimuth-only mosaics (2026-09-12/13) -- INCONCLUSIVE, to be redone.** Three
+48-tile mosaics were built differing only in row selection: `azOnly-ion`, `azOnly-noIon`,
+`rangeOnly` (all `-hopper3D -hopper3DMaxSigma -1 -gateAbsolute`; row flags are honoured ONLY by
+the hoppers and `mosaicTrue3D`, never by the default joint solvers). 51.4 M common pixels.
+
+Median |az - range| goes 2.32 -> 2.26 m/yr with the correction, which sounds negligible but is
+just the flat interior dominating: the same statistic is 45 m/yr around Jakobshavn and 226 m/yr
+on ice faster than 300 m/yr. By speed the correction helps slow ice in the TAIL (0-10 m/yr band:
+p90 11.2 -> 9.4, p99 30 -> 25) and degrades everything above 50 m/yr, worsening with speed
+(-10.6 % median at 300-1000 m/yr). Only 33 % of pixels move closer to the reference.
+
+**Why it is inconclusive:** azimuth-only is far too noisy to arbitrate. Around Jakobshavn
+azimuth-only reads systematically 50-200 m/yr SLOWER than range-only across the whole catchment
+-- a coherent bias tens of times the ~3 m/yr formal errors -- so the reference and the test
+disagree for reasons that have nothing to do with the ionosphere (stale DEM breaking the
+surface-parallel projection on a much-thinned glacier, and possibly an azimuth calibration bias;
+the bias covers the flat catchment interior too, so slope alone does not explain it). "Further
+from range-only" therefore does not mean "worse". Redo when more cycles have accumulated and the
+azimuth-only solve is better conditioned.
+
+**To redo it** everything is in place under `azIonoTest/`: `runAzMosaics.sh` drives all three
+variants and swaps the tie set; `swapAzFits.py` moves the live `az.est.azIon*` set between the
+`.REF` (correction suppressed) and `.AUTO` (ION_AUTO) states; `makeAzIonTies.py --master <file>
+[--noIonosphere]` regenerates either arm. Each mosaic took ~70 min, not the ~20 assumed -- start
+before ~21:00 to clear the 01:00 Greenland nightly.
+
+So the correction is real physics, correctly implemented and sensibly gated, acting on an
+observable that is nearly irrelevant to the Greenland velocity product wherever phase exists.
+Do not re-run a GPS comparison expecting a different answer -- the test is structurally
+insensitive by a factor of ~1000. The open question the GPS sites CANNOT answer is whether
+azimuth carries real weight where phase is absent (fast shearing outlets that do not unwrap);
+that needs a full-mosaic weight census, not more validation points.
+
 ## Vertical correction for submergence/emergence (`-verticalCorrection`, `Mosaic3d/`)
 
 `mosaic3d -verticalCorrection vcFile` supplies a vertical-velocity grid (m/yr, `xyDEM` format read

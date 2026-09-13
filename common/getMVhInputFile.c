@@ -14,6 +14,8 @@
   inserted before it (e.g. baseline.26x16.480.yaml -> baseline.26x16.480.surf.yaml).
   Non-yaml baseline files get the suffix appended as before.
 */
+extern int32_t useAzIonosphere; /* defined in common/getRegion.c */
+
 static char *appendBaselineSuffix(char *baseline, char *verticalCorrectionSuffix, char *buf)
 {
 	size_t blen = strlen(baseline);
@@ -210,7 +212,21 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 		{
 			(*offsetFiles)[i] = dupName(offsets);
 			if ((*offsetFiles)[i] != NULL)
+			{
 				(*azParamsFiles)[i] = dupName(azParams);
+				/* -useAzIonosphere: select the azimuth fit that azparams wrote
+				   while weighing the ionosphere correction (tieScript writes it
+				   to az.est.azIon*.yaml).  Same pattern as -iceOnly above: the
+				   production az.est*.yaml is never touched, so turning the flag
+				   off reverts instantly and a reference run is always available. */
+				if (useAzIonosphere == TRUE && (*azParamsFiles)[i] != NULL)
+				{
+					char *aTmp = (*azParamsFiles)[i];
+					(*azParamsFiles)[i] = appendBaselineSuffix(aTmp, ".azIon",
+						(char *)malloc(strlen(aTmp) + strlen(".azIon") + 1));
+					free(aTmp);
+				}
+			}
 		}
 		if (rOffsetFlag == TRUE || threeDOffFlag == TRUE)
 		{

@@ -80,6 +80,7 @@
 #define RANGEERRORBUFF 22
 #define AZIMUTHERRORBUFF 23
 #define RANGEUSEAZIMUTHBUFF 24
+#define AZIMUTHIONBUFF 25
 extern double RangePixelSize;	/* Size in m of range pixel */
 extern double AzimuthPixelSize; /* Size in m of azimuth pixel */
 
@@ -112,6 +113,7 @@ typedef struct offsetCorrectionType
 	float deltaA;
 	float deltaR;
 	float **rangeOffsetCorrection;
+	float **azimuthOffsetCorrection; /* azimuth ionosphere screen, SLC azimuth pixels */
 	char correctionFile[2048];  /* path read from ;* offsetCorrectionFile line; empty if none */
 } offsetCorrection;
 
@@ -165,6 +167,7 @@ typedef struct OffsetsType
 	int32_t azInit;
 	char *verticalCorrectionSuffix;
 	offsetCorrection rOffCorrection;
+	offsetCorrection aOffCorrection; /* azimuth ionosphere correction (see AZIMUTHIONBUFF) */
 } Offsets;
 
 
@@ -349,7 +352,10 @@ void endScale(outputImageStructure *outputImage, float **vXimage, float **vYimag
 void readBothOffsets(Offsets *offsets, float azimuthMin, float azimuthMax);
 void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax);
 void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode);
+void loadAzimuthIonosphereCorrection(Offsets *offsets);
 float interpolateOffsetIonCorrectionInPixels(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
+float interpolateAzOffsetIonCorrectionInPixels(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
+double azIonCorrectionMeters(Offsets *offsets, inputImageStructure *myImg, double range, double azimuth, double azSLPixSize);
 void readOffsetParams(char *datFile, Offsets *offsets, int32_t);
 //char *checkForVrt(char *filename, char *vrtBuff);
 void undoNormalization(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY,

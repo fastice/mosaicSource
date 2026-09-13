@@ -209,6 +209,7 @@ extern double rSigmaConst;
 extern double rhoPhase;
 extern double rhoOffsets;
 extern int32_t noMask; /* ignore any embedded VRT dataset mask band on offset inputs; defined once in common/getRegion.c since every program shares readOffsets.c */
+extern int32_t useAzIonosphere; /* apply the azimuth ionosphere correction the az fit recorded; defined in common/getRegion.c */
 
 int main(int argc, char *argv[])
 {
@@ -635,6 +636,82 @@ int main(int argc, char *argv[])
 		writeTieFile(&outputImage, &dem, &verticalCorrection, args.outFileBase, args.tieThresh, args.extraTieFile, args.tideFile, autoSize);
 	}
 	obsDumpClose(); /* no-op unless -obsDump was given */
+	printFailedProducts(); /* silent unless a product's inputs could not be read */
+}
+
+/*
+  Registry of products skipped because their inputs could not be read -- see mosaic3d.h.
+  One entry per product (a product that fails in two solvers is listed once).
+*/
+static char **failedProducts = NULL;
+static char **failedReasons = NULL;
+static int32_t nFailedProducts = 0;
+
+void recordFailedProduct(const char *product, const char *reason)
+{
+	int32_t i;
+	size_t n;
+	char *r;
+	if (product == NULL)
+	{
+		product = "(unknown product)";
+	}
+	for (i = 0; i < nFailedProducts; i++)
+	{
+		if (strcmp(failedProducts[i], product) == 0)
+		{
+			return;
+		}
+	}
+	failedProducts = (char **)realloc(failedProducts, (size_t)(nFailedProducts + 1) * sizeof(char *));
+	failedReasons = (char **)realloc(failedReasons, (size_t)(nFailedProducts + 1) * sizeof(char *));
+	if (failedProducts == NULL || failedReasons == NULL)
+	{
+		error("recordFailedProduct: realloc failed\n");
+	}
+	/* error() messages often carry leading/trailing newlines; trim them so the list is tidy */
+	if (reason == NULL)
+	{
+		reason = "";
+	}
+	while (*reason == '\n' || *reason == ' ')
+	{
+		reason++;
+	}
+	r = strdup(reason);
+	n = strlen(r);
+	while (n > 0 && (r[n - 1] == '\n' || r[n - 1] == ' '))
+	{
+		r[--n] = '\0';
+	}
+	failedProducts[nFailedProducts] = strdup(product);
+	failedReasons[nFailedProducts] = r;
+	nFailedProducts++;
+	fprintf(stderr, "\033[1;35mSKIPPING product %s -- %s\033[0m\n", product, r);
+}
+
+void printFailedProducts(void)
+{
+	int32_t i;
+	if (nFailedProducts == 0)
+	{
+		return;
+	}
+	fprintf(stderr, "\n\033[1;35m%i product(s) skipped because their inputs could not be read:\033[0m\n", nFailedProducts);
+	for (i = 0; i < nFailedProducts; i++)
+	{
+		char *c;
+		fprintf(stderr, "\033[1;35m\t%s\033[0m\n\t\t", failedProducts[i]);
+		for (c = failedReasons[i]; *c != '\0'; c++)
+		{
+			fputc(*c, stderr);
+			if (*c == '\n')
+			{
+				fprintf(stderr, "\t\t"); /* keep multi-line reasons indented under the product */
+			}
+		}
+		fprintf(stderr, "\n");
+	}
 }
 
 static void computeDateRange(char **date1, char **date2, outputImageStructure *outputImage, inputImageStructure *images,
@@ -975,6 +1052,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 	fprintf(outputImage->fpLog, "; DeltaB    : %i\n", outputImage->deltaB);
 	fprintf(outputImage->fpLog, "; useSquint Flag   : %i\n", useSquint);
 	fprintf(outputImage->fpLog, "; noMask Flag      : %i\n", noMask);
+	fprintf(outputImage->fpLog, "; useAzIonosphere  : %i\n", useAzIonosphere);
 	{
 		/* Which crossing-orbit solver ran, and its gates.  0 = joint (the default); when joint
 		   ran, the rhoPhase/rhoOffsets/pairOverCount factors below do not apply to that round,
@@ -1705,7 +1783,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   -speckleTrackJoint (one) and -jointMaxSigmaSpeckle (two), plus headroom.  Raised 70 -> 76 for -true3D /
 	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
 	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom. */
-	if (argc < 4 || argc > 84)
+	if (argc < 4 || argc > 86)
 	{
 		fprintf(stderr, "Arg count out of range (max 80): %i\n", argc);
 		usage(); /* Check number of args */
@@ -2018,6 +2096,13 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		else if (strstr(argString, "useSquint") != NULL)
 		{
 			useSquint = TRUE;
+		}
+		/* Apply the azimuth ionosphere correction, but ONLY for products whose
+		   azimuth fit recorded that it used one (usingIon in az.est.yaml).  A
+		   frame fitted without it is never corrected retroactively. */
+		else if (strstr(argString, "useAzIonosphere") != NULL)
+		{
+			useAzIonosphere = TRUE;
 		}
 		/* longest-first: -noPairOverCount must be tested before -pairOverCount */
 		else if (strstr(argString, "noPairOverCount") != NULL)

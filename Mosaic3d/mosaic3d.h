@@ -273,6 +273,15 @@ void obsDumpRecord(int32_t iRow, int32_t jj, const char *obsType, const char *fr
 void obsDumpPixel(int32_t iRow, int32_t jj, double sx, double sy);
 void obsDumpClose(void);
 
+/*
+  Products whose per-image inputs (phase, offsets, rBaseline, az.est ...) fail to read are
+  recorded and skipped instead of killing the run; the solvers arm errorRecoveryJmp (see
+  clib/standard.h) around the read and call recordFailedProduct() on a longjmp.  The list is
+  printed by printFailedProducts() at the end of main().  Implemented in mosaic3d.c.
+*/
+void recordFailedProduct(const char *product, const char *reason);
+void printFailedProducts(void);
+
 void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem, outputImageStructure *outputImage,
 				   float fl, float timeThresh);
 /*

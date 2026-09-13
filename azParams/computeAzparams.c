@@ -48,7 +48,11 @@ static void computeBaselineRates(inputImageStructure *inputImage, Offsets *offse
 	fprintf(stderr, "--- %e %e \n", *dbc, *dbh);
 }
 
-void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput, char *debugFile)
+/* Returns the fit sigma in metres, or -1.0 when no solution was found (the
+   same sentinel fewPointsAz writes).  azparams.c's ION_AUTO uses the return
+   value to pick between the corrected and uncorrected fits, exactly as
+   computeRParams' return value is used on the range side. */
+double computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputImage, char *baseFile, Offsets *offsets, int32_t yamlOutput, char *debugFile)
 {
 	double Re, H, RNear, dr;
 	double *a; /* Solution for params */
@@ -147,7 +151,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		   means every candidate tie point was deliberately down-weighted to nothing,
 		   functionally equivalent to having none. */
 		fewPointsAz(npts, nData, tiePoints, yamlOutput);
-		return;
+		return -1.0;
 	}
 	/*
 	  Run 3 times 1) initial estimate with unknown errors, 2) use estimate to determine residual 3) final solution with sigma detemermine by residual
@@ -215,7 +219,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		if (npts < ma)
 		{
 			fewPointsAz(npts, nData, tiePoints, yamlOutput);
-			return;
+			return -1.0;
 		}
 		/*
 		  Solve for parameters
@@ -341,7 +345,7 @@ void computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *inputIm
 		free(origIndex);
 		free(residual);
 	}
-	return;
+	return sigP;
 }
 
 static void fewPointsAz(int32_t npts, int32_t nData, tiePointsStructure *tiePoints, int32_t yamlOutput)

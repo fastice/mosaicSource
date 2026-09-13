@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <math.h>
 #include <unistd.h>
+#include <omp.h>
 int32_t sepAscDesc;
 /*
   Estimate baseline using tiepoints.
@@ -39,6 +40,7 @@ int32_t BufferSize = BUFFERSIZE;			/* Size of nonoverlap region of the buffer */
 int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
 char *shelfMaskFile;
 int32_t HemiSphere = NORTH;
+static int32_t ompThreads = 1; /* OpenMP threads for the computeTiePoints loop; default 1 (-ompThreads) */
 double Rotation = 45.;
 double SLat = -91.0;
 
@@ -73,6 +75,7 @@ int main(int argc, char *argv[])
 			 &stdLat, &bnbpFlag, &bpFlag, &bnbpdBpFlag, &bpdBpFlag, &vrFlag, &shelfMaskFile,
 			 &yamlOutput, &verbose, &debugFlag, &outputFile,
 			 &ionosphereFile, &ionosphereMode, &ionSigmaMargin, &iceOnlyMaskFile);
+	omp_set_num_threads(ompThreads);
 	/*
 	  Parse input file
 	*/
@@ -422,6 +425,11 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 			*outputFile = argv[i + 1];
 			i++;
 		}
+		else if (strstr(argString, "ompThreads") != NULL)
+		{
+			ompThreads = atoi(argv[i + 1]);
+			i++;
+		}
 		else if (strstr(argString, "debug") != NULL)
 			*debugFlag = TRUE;
 		else if (i != n)
@@ -484,6 +492,7 @@ static void usage()
 		"  shelfMask    = shelfMask file to indicate use tidal corrections\n"
 		"  timeReverse  = flag to reverse time when order of orbits switched\n"
 		"  nDays        = temporals basline in days (default=3)\n"
+		"  ompThreads   = OpenMP thread count for the tiepoint geolocation loop (default=1)\n"
 		"  quadB        = flag for quadratic fit\n"
 		"  dem          = (OMIT if dem not used) dem file for tiepoint elevations\n"
 		"  motion       = moving tiepoints, tiepoint file lat,lon,z,vx,vy,vz (m/yr)\n"

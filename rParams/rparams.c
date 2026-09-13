@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include "gdalIO/gdalIO/grimpgdal.h"
+#include <omp.h>
 //#include "mosaicSource/common/common.h"
 /*
   Estimate range params using tiepoints.
@@ -38,6 +39,7 @@
    (mask honored when present). Defined once in common/getRegion.c since
    common/readOffsets.c is linked into every program in mosaicSource/. */
 extern int32_t noMask;
+static int32_t ompThreads = 1; /* OpenMP threads for the computeTiePoints loop; default 1 (-ompThreads) */
 
 static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile,
 					 char **baselineFile, tiePointsStructure *tiepoints, char **shelfMaskFile, int32_t *ionosphereMode,
@@ -182,6 +184,7 @@ int main(int argc, char *argv[])
 	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &shelfMaskFile, &ionosphereMode, &runFile, &yamlOutput, &debugFlag, &outputFile);
 	if (outputFile != NULL && runFile != NULL)
 		error("rparams: -outputFile and -runFile are mutually exclusive");
+	omp_set_num_threads(ompThreads);
 	/*
 	  Parse input file
 	*/
@@ -239,7 +242,12 @@ int main(int argc, char *argv[])
 			dup2(probe_saved, STDOUT_FILENO);
 			close(probe_saved);
 		}
-		fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
+		/*  initWithSV is set by getBaselineFile() when baselineFile is missing -- but that runs
+		    AFTER this block, so until now the test below read an uninitialised field and sv2 was
+		    never loaded for a DELTABNONE run without baselines.orig.  computeLinearBaseline()
+		    then interpolated a zeroed sv2 and died in polintVec.  Probe the file here instead. */
+		tiePoints.initWithSV = (access(baselineFile, F_OK) != 0);
+		fprintf(stderr, "%s %s %i initWithSV %i\n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB, tiePoints.initWithSV);
 		if (offsets.geo1 != NULL && offsets.geo2 != NULL &&
 			((tiePoints.deltaB != DELTABNONE) || (tiePoints.initWithSV == TRUE)))
 		{
@@ -428,8 +436,11 @@ int main(int argc, char *argv[])
 		int anyDeltaB = 0;
 		for (i = 0; i < nRuns; i++)
 			if (runs[i].deltaB != DELTABNONE) { anyDeltaB = 1; break; }
-		fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, anyDeltaB);
-		if (offsets.geo1 != NULL && offsets.geo2 != NULL && anyDeltaB)
+		/*  As in the single-run path: a missing baselines.orig means every run initialises its
+		    baseline from the state vectors, which needs sv2 whatever the deltaB mode. */
+		tiePoints.initWithSV = (access(baselineFile, F_OK) != 0);
+		fprintf(stderr, "%s %s %i initWithSV %i\n", offsets.geo1, offsets.geo2, anyDeltaB, tiePoints.initWithSV);
+		if (offsets.geo1 != NULL && offsets.geo2 != NULL && (anyDeltaB || tiePoints.initWithSV == TRUE))
 		{
 			parseInputFile(offsets.geo2, &inputImage2);
 			fprintf(stderr, "inputImage2 %s\n", offsets.geo2);
@@ -630,6 +641,7 @@ static void usage()
 		"  -quiet             Don't echo tiepoints to solution\n"
 		"  -yaml              Write baseline output in YAML format\n"
 		"  -noMask            Ignore any embedded VRT dataset mask band on offsetFile; default off (mask honored when present)\n"
+		"  -ompThreads <n>    OpenMP thread count for the tiepoint geolocation loop (default: 1)\n"
 		"  -debug             Write every tiepoint used in the fit, plus its residual, to a\n"
 		"                     GeoPackage (<outputFile>.residuals.gpkg, or rparams.<mode>.gpkg\n"
 		"                     if -outputFile not given; in -runFile mode, always <outfile>.residuals.gpkg)\n"
@@ -743,6 +755,11 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 		else if (strcmp(argv[i], "-noMask") == 0)
 		{
 			noMask = TRUE;
+		}
+		else if (strcmp(argv[i], "-ompThreads") == 0)
+		{
+			if (++i >= argc - nPos) usage();
+			ompThreads = atoi(argv[i]);
 		}
 		else
 		{

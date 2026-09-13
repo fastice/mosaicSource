@@ -12,6 +12,7 @@ int32_t indentRegionOutput = FALSE;
    every program in mosaicSource/ -- each program's own CLI parser sets this
    via its own -noMask flag. */
 int32_t noMask = FALSE;
+int32_t useAzIonosphere = FALSE; /* -useAzIonosphere: apply the azimuth ionosphere correction the az fit recorded */
 /*  Skip the azimuth-offset raster read entirely.  Set by mosaic3d ONLY when -noAzimuthRows is
     given AND the hopper is running, i.e. when nothing downstream can consume offsets->da.  Lives
     here rather than in mosaic3d.c because readOffsets.c is linked into every binary, and an

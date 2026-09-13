@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <libgen.h>
+#include <omp.h>
 //#include "gdalIO/gdalIO/grimpgdal.h"
 /*
   Estimate baseline using tiepoints.
@@ -17,7 +19,7 @@
   which means there is alot of unused junk to initialize everything correctly.
 */
 
-static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints, int32_t *yamlOutput, int32_t *debugFlag, char **outputFile, char **runFile);
+static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints, int32_t *yamlOutput, int32_t *debugFlag, char **outputFile, char **runFile, int32_t *ionosphereMode, double *ionSigmaMargin);
 static void usage();
 static const char *azparamsModeString(tiePointsStructure *tiePoints);
 
@@ -89,6 +91,18 @@ static void setAzMode(tiePointsStructure *tiePoints, int32_t mode)
    (mask honored when present). Defined once in common/getRegion.c since
    common/readOffsets.c is linked into every program in mosaicSource/. */
 extern int32_t noMask;
+/* ionosphereMode values -- names and semantics deliberately match rparams.c */
+#define ION_AUTO    0   /* default: fit with and without, keep the better sigma */
+#define ION_NONE    1   /* -noIonosphere: never apply the correction */
+#define ION_FORCE   2   /* -forceIonosphere: always apply it if one exists */
+#define AZIONSIGMAMARGIN 0.05 /* fractional sigma improvement required to accept */
+
+static double fitAzParamsWithIonChoice(tiePointsStructure *tiePoints, inputImageStructure *inputImage,
+                                       char *baselineFile, Offsets *offsets, char *offsetFile,
+                                       int32_t yamlOutput, char *debugFile,
+                                       int32_t ionosphereMode, double ionSigmaMargin);
+
+static int32_t ompThreads = 1; /* OpenMP threads for the computeTiePoints loop; default 1 (-ompThreads) */
 
 
 int32_t llConserveMem = 999; /* NO mem conserve Kluge to maintain backwards compat 9/13/06 */
@@ -125,6 +139,8 @@ int main(int argc, char *argv[])
 	int32_t imageCoords;
 	int32_t constOnlyFlag, linFlag;
 	int32_t yamlOutput, debugFlag;
+	int32_t ionosphereMode;
+	double ionSigmaMargin;
 	int32_t i, j; /* LCV */
 	Abuf1 = NULL;
 	Abuf2 = NULL;
@@ -141,7 +157,8 @@ int main(int argc, char *argv[])
 	*/
 	outputFile = NULL;
 	runFile = NULL;
-	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &yamlOutput, &debugFlag, &outputFile, &runFile);
+	readArgs(argc, argv, &geodatFile, &tiePointFile, &offsetFile, &baselineFile, &tiePoints, &yamlOutput, &debugFlag, &outputFile, &runFile, &ionosphereMode, &ionSigmaMargin);
+	omp_set_num_threads(ompThreads);
 	/*
 	  Parse input file
 	*/
@@ -186,7 +203,7 @@ int main(int argc, char *argv[])
 			dup2(out_fd, STDOUT_FILENO);
 			close(out_fd);
 			computeTiePoints(&inputImage, &tiePoints, dem, noDEM, geodatFile, NULL, tiePoints.quiet);
-			getOffsets(offsetFile, &tiePoints, inputImage, &offsets, offsetsLoaded);
+			getOffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE, offsetsLoaded);
 			offsetsLoaded = 1;
 			tiePoints.initWithSV = FALSE;
 			if (offsets.geo1 != NULL && offsets.geo2 != NULL)
@@ -207,7 +224,8 @@ int main(int argc, char *argv[])
 				snprintf(runDebugFileBuf, sizeof(runDebugFileBuf), "%s.residuals.gpkg", runs[i].outfile);
 				runDebugFile = runDebugFileBuf;
 			}
-			computeAzParams(&tiePoints, &inputImage, baselineFile, &offsets, yamlOutput, runDebugFile);
+			fitAzParamsWithIonChoice(&tiePoints, &inputImage, baselineFile, &offsets, offsetFile,
+			                         yamlOutput, runDebugFile, ionosphereMode, ionSigmaMargin);
 			fflush(stdout);
 			dup2(run_saved, STDOUT_FILENO);
 			close(run_saved);
@@ -250,7 +268,7 @@ int main(int argc, char *argv[])
 	/*
 	  Extract phases from phase file.
 	*/
-	getOffsets(offsetFile, &tiePoints, inputImage, &offsets, 0);
+	getOffsets(offsetFile, &tiePoints, inputImage, &offsets, ionosphereMode == ION_NONE, 0);
 	fprintf(stderr, "%s %s %i \n", offsets.geo1, offsets.geo2, (int)tiePoints.deltaB);
 	tiePoints.initWithSV = FALSE;
 	if (offsets.geo1 != NULL && offsets.geo2 != NULL)
@@ -305,7 +323,8 @@ int main(int argc, char *argv[])
 		dup2(fileno(outFp), STDOUT_FILENO);
 	}
 
-	computeAzParams(&tiePoints, &inputImage, baselineFile, &offsets, yamlOutput, debugFile);
+	fitAzParamsWithIonChoice(&tiePoints, &inputImage, baselineFile, &offsets, offsetFile,
+	                         yamlOutput, debugFile, ionosphereMode, ionSigmaMargin);
 
 	if (outFp != NULL)
 	{
@@ -323,7 +342,103 @@ static const char *azparamsModeString(tiePointsStructure *tiePoints)
 	return tiePoints->linFlag ? "linear" : "default";
 }
 
-static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints, int32_t *yamlOutput, int32_t *debugFlag, char **outputFile, char **runFile)
+/*
+ * Fit the azimuth parameters, choosing whether to use the ionosphere
+ * correction.  Mirrors rparams.c's ION_AUTO block.
+ *
+ * The caller has already run getOffsets() once (which loaded the offsets and,
+ * unless ION_NONE, the correction) and addOffsetCorrections().  When there is
+ * no correction to weigh up we therefore fit exactly what the caller prepared
+ * and touch nothing -- so a frame without a correction is bit-identical to the
+ * pre-ionosphere behaviour.  Otherwise both fits are re-derived from the
+ * already-loaded rasters (skipLoad = 1), the better one is copied to stdout,
+ * and BOTH sigmas are recorded so the decision can be overridden downstream.
+ */
+static double fitAzParamsWithIonChoice(tiePointsStructure *tiePoints, inputImageStructure *inputImage,
+                                       char *baselineFile, Offsets *offsets, char *offsetFile,
+                                       int32_t yamlOutput, char *debugFile,
+                                       int32_t ionosphereMode, double ionSigmaMargin)
+{
+	double sigma;
+	char ionBase[2048], tmpName[2048];
+
+	if (offsets->aOffCorrection.azimuthOffsetCorrection == NULL || ionosphereMode == ION_NONE)
+		return computeAzParams(tiePoints, inputImage, baselineFile, offsets, yamlOutput, debugFile);
+
+	strncpy(tmpName, offsets->aOffCorrection.correctionFile, sizeof(tmpName) - 1);
+	tmpName[sizeof(tmpName) - 1] = '\0';
+	strncpy(ionBase, basename(tmpName), sizeof(ionBase) - 1);
+	ionBase[sizeof(ionBase) - 1] = '\0';
+
+	if (ionosphereMode == ION_FORCE)
+	{
+		sigma = computeAzParams(tiePoints, inputImage, baselineFile, offsets, yamlOutput, debugFile);
+		if (yamlOutput)
+			fprintf(stdout, "usingIon: True\nionosphereAzimuthOffsetCorrection: %s\n", ionBase);
+		else
+			fprintf(stdout, ";* ionosphereAzimuthOffsetCorrection %s\n", ionBase);
+		return sigma;
+	}
+
+	/* ION_AUTO: fit both ways into temp files, then emit the winner. */
+	char tmp1[] = "/tmp/azparams_ion_XXXXXX";
+	char tmp2[] = "/tmp/azparams_noion_XXXXXX";
+	int fd1 = mkstemp(tmp1);
+	int fd2 = mkstemp(tmp2);
+	if (fd1 < 0 || fd2 < 0)
+		error("azparams: mkstemp failed\n");
+	int saved_stdout = dup(STDOUT_FILENO);
+
+	dup2(fd1, STDOUT_FILENO);
+	getOffsets(offsetFile, tiePoints, *inputImage, offsets, FALSE, 1);
+	addOffsetCorrections(inputImage, tiePoints);
+	double sigmaIon = computeAzParams(tiePoints, inputImage, baselineFile, offsets, yamlOutput, debugFile);
+	fflush(stdout);
+
+	dup2(fd2, STDOUT_FILENO);
+	getOffsets(offsetFile, tiePoints, *inputImage, offsets, TRUE, 1);
+	addOffsetCorrections(inputImage, tiePoints);
+	double sigmaNoIon = computeAzParams(tiePoints, inputImage, baselineFile, offsets, yamlOutput, debugFile);
+	fflush(stdout);
+
+	dup2(saved_stdout, STDOUT_FILENO);
+	close(saved_stdout);
+	close(fd1);
+	close(fd2);
+
+	/* sigma < 0 is the no-solution sentinel (fewPointsAz), not a good fit --
+	   a naive numeric comparison would let it win every time. */
+	int32_t ionOK = (sigmaIon >= 0.0);
+	int32_t noIonOK = (sigmaNoIon >= 0.0);
+	int32_t useIon;
+	if (ionOK && noIonOK)
+		useIon = (sigmaIon < sigmaNoIon * (1.0 - ionSigmaMargin));
+	else
+		useIon = (ionOK && !noIonOK);
+	fprintf(stderr, "azimuth sigma with ion correction: %f  without: %f  -- using %s\n",
+	        sigmaIon, sigmaNoIon, useIon ? "with ion" : "without ion");
+
+	FILE *winner = fopen(useIon ? tmp1 : tmp2, "r");
+	char buf[4096];
+	size_t nRead;
+	while ((nRead = fread(buf, 1, sizeof(buf), winner)) > 0)
+		fwrite(buf, 1, nRead, stdout);
+	fclose(winner);
+	if (yamlOutput)
+		fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\n"
+		                "usingIon: %s\nionosphereAzimuthOffsetCorrection: %s\n",
+		        sigmaIon, sigmaNoIon, useIon ? "True" : "False", useIon ? ionBase : "nil");
+	else
+		fprintf(stdout, "; azimuth sigma with ion correction: %f  without: %f  -- using %s\n",
+		        sigmaIon, sigmaNoIon, useIon ? "with ion" : "without ion");
+	if (useIon)
+		fprintf(stdout, yamlOutput ? "" : ";* ionosphereAzimuthOffsetCorrection %s\n", ionBase);
+	unlink(tmp1);
+	unlink(tmp2);
+	return useIon ? sigmaIon : sigmaNoIon;
+}
+
+static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointFile, char **offsetFile, char **baselineFile, tiePointsStructure *tiePoints, int32_t *yamlOutput, int32_t *debugFlag, char **outputFile, char **runFile, int32_t *ionosphereMode, double *ionSigmaMargin)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -341,17 +456,35 @@ static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointF
 			break;
 		}
 	nPos = (*runFile != NULL) ? 3 : 4;
-	if (argc < nPos + 2 || argc > 25)
+	if (argc < nPos + 2 || argc > 32)
 		usage(); /* Check number of args */
 	n = argc - nPos - 1;
 	tiePoints->quiet = FALSE;
 	*yamlOutput = FALSE;
 	*debugFlag = FALSE;
 	*outputFile = NULL;
+	*ionosphereMode = ION_AUTO;
+	*ionSigmaMargin = AZIONSIGMAMARGIN;
 	for (i = 1; i <= n; i++)
 	{
 		argString = strchr(argv[i], '-');
-		if (strstr(argString, "runFile") != NULL)
+		/* Ionosphere flags first: the loop dispatches on strstr, and putting the
+		   longer names ahead of everything else keeps a future short flag from
+		   swallowing them (the -rhoOffsets/offsets trap in mosaic3d.c). */
+		if (strstr(argString, "noIonosphere") != NULL)
+		{
+			*ionosphereMode = ION_NONE;
+		}
+		else if (strstr(argString, "forceIonosphere") != NULL)
+		{
+			*ionosphereMode = ION_FORCE;
+		}
+		else if (strstr(argString, "ionSigmaMargin") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", ionSigmaMargin);
+			i++;
+		}
+		else if (strstr(argString, "runFile") != NULL)
 		{
 			i++; /* value already captured in the first pass */
 		}
@@ -390,6 +523,11 @@ static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointF
 			*debugFlag = TRUE;
 		else if (strstr(argString, "noMask") != NULL)
 			noMask = TRUE;
+		else if (strstr(argString, "ompThreads") != NULL)
+		{
+			ompThreads = atoi(argv[i + 1]);
+			i++;
+		}
 		else if (i != n)
 			usage();
 	}
@@ -427,7 +565,8 @@ static void usage()
 		"\n\n"
 		"Compute parameters to calibrate azimuth offsets\n"
 		"Usage:\n"
-		" azparams  -constOnly -linear -useSV -quiet -yaml -noMask -nDays nDays geodatFile tiepointsFile offsetFile "
+		" azparams  -constOnly -linear -useSV -quiet -yaml -noMask -noIonosphere -forceIonosphere "
+		"-ionSigmaMargin frac -nDays nDays geodatFile tiepointsFile offsetFile "
 		"baselineFile\n"
 		"where\n"
 		"  constOnly    = do not estimate baseline dependent terms, can be combined with linear fit\n"
@@ -436,6 +575,11 @@ static void usage()
 		"  quiet          = don't echo tiepoints to solution\n"
 		"  yaml           = write YAML output instead of legacy semicolon format\n"
 		"  noMask       = ignore any embedded VRT dataset mask band on offsetFile; default off (mask honored when present)\n"
+		"  noIonosphere = never apply the azimuth ionosphere correction, even if the VRT names one\n"
+		"  forceIonosphere = always apply it if one exists, without comparing sigmas\n"
+		"  ionSigmaMargin = fractional sigma improvement the correction must give to be\n"
+		"                 accepted in the default (auto) mode (default 0.05)\n"
+		"  ompThreads   = OpenMP thread count for the tiepoint geolocation loop (default=1)\n"
 		"  debug        = write every tiepoint used in the fit, plus its residual, to a\n"
 		"                 GeoPackage (<outputFile>.residuals.gpkg, or azparams.<mode>.gpkg\n"
 		"                 if -outputFile not given)\n"

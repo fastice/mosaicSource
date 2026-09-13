@@ -271,6 +271,9 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 							if (currentParams->offsetFlag == TRUE)
 							{
 								da = interpAzOffset(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
+/* azimuth ionosphere: no-op unless the az fit recorded one and -useAzIonosphere is set */
+if (da > -0.98 * LARGEINT)
+	da += azIonCorrectionMeters(&(currentParams->offsets), myImg, range, azimuth, azSLPixSize);
 								sigmaA = interpAzSigma(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
 							}
 							else

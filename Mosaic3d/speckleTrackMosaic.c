@@ -166,6 +166,17 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 		if (iMin <= iMax && jMin <= jMax)
 		{
 			double t0 = now();
+			/*  GUARDED READ -- see mosaicHopper.c: a corrupt input for this product is
+			    recorded and skipped instead of exiting.  Disarmed before the parallel region. */
+			jmp_buf readJmp;
+			if (setjmp(readJmp) != 0)
+			{
+				errorRecoveryJmp = NULL;
+				recordFailedProduct(currentParams->offsets.rFile, errorRecoveryMsg);
+				currentParams = currentParams->next;
+				continue;
+			}
+			errorRecoveryJmp = &readJmp;
 			readOffsetDataAndParams(&(currentParams->offsets), azimuthMin, azimuthMax);
 			double t1 = now();
 			fprintf(stderr, "Time read offsets: %f seconds\n", t1-t0);
@@ -177,6 +188,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 				svAzOffset(currentImage, &(currentParams->offsets), 0.0, 0.0);
 				svInterpBnBp(currentImage, &(currentParams->offsets), 0.0, &bnS, &bpS);
 			}
+			errorRecoveryJmp = NULL;
 		}
 		else
 		{
@@ -280,6 +292,9 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 							cotanpsi = 1.0 / tan(psi);
 							// Get azimuth and range components from the offset field. Note these values come back as meters
 							da = interpAzOffset(range, azimuth, &(currentParams->offsets), myImg, Range, theta, azSLPixSize);
+/* azimuth ionosphere: no-op unless the az fit recorded one and -useAzIonosphere is set */
+if (da > -0.98 * LARGEINT)
+	da += azIonCorrectionMeters(&(currentParams->offsets), myImg, range, azimuth, azSLPixSize);
 							dr = interpRangeOffsetInMeters(range, azimuth, &(currentParams->offsets), myImg, Range, thetaD, rSLPixSize, theta, &demError);
 							if (currentParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)
 							{

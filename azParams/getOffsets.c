@@ -4,10 +4,15 @@
 #include "azparams.h"
 #include <stdlib.h>
 #include "math.h"
+#include <unistd.h>
+#include "gdalIO/gdalIO/grimpgdal.h"
 /*
    Input azimuth offsets  image and extract phases for tiepoint locations.
+
+   noIonosphere == TRUE suppresses the azimuth ionosphere correction even when
+   the VRT names one.  Mirrors getROffsets() on the range side.
 */
-void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, Offsets *offsets, int32_t skipLoad)
+void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStructure inputImage, Offsets *offsets, int32_t noIonosphere, int32_t skipLoad)
 {
    FILE *fp;
    double range, azimuth;
@@ -18,7 +23,49 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
       the tiepoints below every run). The interpolation loop always runs.
    */
    if (!skipLoad)
+   {
+      /*
+        If the correction is wanted and nothing has pre-filled correctionFile,
+        peek at the azimuth offsets VRT now so checkForAzimuthIonosphereCorrection
+        (inside readAzimuthOffsets) sees a non-empty name and loads the raster.
+      */
+      if (!noIonosphere && offsets->aOffCorrection.correctionFile[0] == '\0')
+      {
+         char vrtBuf[2048];
+         char *vrtFile = NULL;
+         if (has_suffix(offsets->file, ".vrt"))
+         {
+            vrtFile = offsets->file;
+         }
+         else
+         {
+            snprintf(vrtBuf, sizeof(vrtBuf), "%s.vrt", offsets->file);
+            if (access(vrtBuf, F_OK) == 0)
+               vrtFile = vrtBuf;
+         }
+         if (vrtFile != NULL)
+         {
+            GDALDatasetH hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+            if (hDS != NULL)
+            {
+               dictNode *metaData = NULL;
+               readDataSetMetaData(hDS, &metaData);
+               char *ionName = get_value(metaData, "ionosphereAzimuthOffsetCorrection");
+               if (ionName != NULL)
+               {
+                  strncpy(offsets->aOffCorrection.correctionFile, ionName,
+                          sizeof(offsets->aOffCorrection.correctionFile) - 1);
+                  offsets->aOffCorrection.correctionFile[sizeof(offsets->aOffCorrection.correctionFile) - 1] = '\0';
+                  fprintf(stderr, "getOffsets: found azimuth ionosphere correction in VRT: %s\n",
+                          offsets->aOffCorrection.correctionFile);
+               }
+               free_dictionary(metaData);
+               GDALClose(hDS);
+            }
+         }
+      }
       readAzimuthOffsets(offsets);
+   }
    offsets->azInit = FALSE;
    /*
        Interpolate offsets
@@ -32,6 +79,19 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
       azimuth = (tiePoints->a[i] * inputImage.nAzimuthLooks - offsets->aO) / offsets->deltaA;
       /* only scale valide values */
       tiePoints->phase[i] = bilinearInterp((float **)offsets->da, range, azimuth, offsets->nr, offsets->na, -0.99 * LARGEINT, (float)-LARGEINT);
+      if (offsets->aOffCorrection.azimuthOffsetCorrection != NULL && noIonosphere == FALSE)
+      {
+         /* SLC pixel coordinates of the tiepoint (not the offset-image index) */
+         double rSLC = tiePoints->r[i] * inputImage.nRangeLooks;
+         double aSLC = tiePoints->a[i] * inputImage.nAzimuthLooks;
+         float ionoCorr = interpolateAzOffsetIonCorrectionInPixels(&offsets->aOffCorrection,
+                                                                 rSLC, aSLC,
+                                                                 -0.99 * LARGEINT, (float)-LARGEINT);
+         /* Correction is in SLC azimuth pixels, same units as da; ADD it, the
+            same sign convention the range screen uses. */
+         if (ionoCorr > -0.98 * LARGEINT && tiePoints->phase[i] > -0.98 * LARGEINT)
+            tiePoints->phase[i] += ionoCorr;
+      }
       if (tiePoints->phase[i] > -0.98 * LARGEINT)
       {
          tiePoints->phase[i] *= inputImage.azimuthPixelSize / inputImage.nAzimuthLooks;
