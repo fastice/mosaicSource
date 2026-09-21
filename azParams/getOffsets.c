@@ -17,6 +17,9 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
    FILE *fp;
    double range, azimuth;
    int32_t i, count = 0;
+   char ionName[2048];
+
+   ionName[0] = '\0';
    /*
       Init image. skipLoad reuses offsets->da already read from disk (the
       -runFile multi-run path reads azimuth.offsets once, then re-interpolates
@@ -29,7 +32,7 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
         peek at the azimuth offsets VRT now so checkForAzimuthIonosphereCorrection
         (inside readAzimuthOffsets) sees a non-empty name and loads the raster.
       */
-      if (!noIonosphere && offsets->aOffCorrection.correctionFile[0] == '\0')
+      if (!noIonosphere)
       {
          char vrtBuf[2048];
          char *vrtFile = NULL;
@@ -50,14 +53,13 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
             {
                dictNode *metaData = NULL;
                readDataSetMetaData(hDS, &metaData);
-               char *ionName = get_value(metaData, "ionosphereAzimuthOffsetCorrection");
-               if (ionName != NULL)
+               char *ionVal = get_value(metaData, "ionosphereAzimuthOffsetCorrection");
+               if (ionVal != NULL)
                {
-                  strncpy(offsets->aOffCorrection.correctionFile, ionName,
-                          sizeof(offsets->aOffCorrection.correctionFile) - 1);
-                  offsets->aOffCorrection.correctionFile[sizeof(offsets->aOffCorrection.correctionFile) - 1] = '\0';
+                  strncpy(ionName, ionVal, sizeof(ionName) - 1);
+                  ionName[sizeof(ionName) - 1] = '\0';
                   fprintf(stderr, "getOffsets: found azimuth ionosphere correction in VRT: %s\n",
-                          offsets->aOffCorrection.correctionFile);
+                          ionName);
                }
                free_dictionary(metaData);
                GDALClose(hDS);
@@ -65,6 +67,17 @@ void getOffsets(char *phaseFile, tiePointsStructure *tiePoints, inputImageStruct
          }
       }
       readAzimuthOffsets(offsets);
+      /*  Load AFTER the rasters: readOffsetsOptionalErrors deliberately clears
+          aOffCorrection (it cannot tell a real pre-set name from uninitialised
+          memory -- see its comment), and readOffsetCorrection needs the
+          rO/aO/deltaR/deltaA that reading the offsets has just populated. */
+      if (!noIonosphere && ionName[0] != '\0')
+      {
+         strncpy(offsets->aOffCorrection.correctionFile, ionName,
+                 sizeof(offsets->aOffCorrection.correctionFile) - 1);
+         offsets->aOffCorrection.correctionFile[sizeof(offsets->aOffCorrection.correctionFile) - 1] = '\0';
+         loadAzimuthIonosphereCorrection(offsets);
+      }
    }
    offsets->azInit = FALSE;
    /*

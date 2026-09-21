@@ -69,7 +69,11 @@ void readOffsetDataAndParams(Offsets *offsets, float azimuthMin, float azimuthMa
 	/* getAzParams runs AFTER the rasters, so the in-line check inside
 	   readOffsetsOptionalErrors cannot have seen the name the az fit recorded.
 	   Load it here instead, gated on the caller having asked for it. */
-	loadAzimuthIonosphereCorrection(offsets);
+	{
+		extern int32_t useAzIonosphere;
+		if (useAzIonosphere == TRUE)
+			loadAzimuthIonosphereCorrection(offsets);
+	}
 	fprintf(stderr, "Offsets and parameters read\n");
 	if (offsets->deltaB != DELTABNONE && offsets->geo2 == NULL)
 		error("offsets deltaB set but no second geodat for %s\n", offsets->rFile);
@@ -899,13 +903,21 @@ int32_t readGDALOffsets(GDALDatasetH hDS, Offsets *offsets, int bufferMode, floa
 /*
  This combines funtionality of historical readOffsets and readAzimuthOffsets.
 */
-static void checkForAzimuthIonosphereCorrection(GDALDatasetH hDS, Offsets *offsets);
-
 void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float azimuthMin, float azimuthMax)
 {
 	char *datFile, buf[1024], bufa[2048], vrtBuffer[2048], *vrtFile;
 	char *eFileA, *file;
 	GDALDatasetH hDS;
+
+	/*  The azimuth ionosphere name is never inherited from whatever happened to be
+	    in this struct.  mosaic3d's -makeTies path reuses an Offsets that no caller
+	    zeroes, and an earlier version preserved that uninitialised field across
+	    initOffParams() -- which made checkForAzimuthIonosphereCorrection see a
+	    garbage filename and error() 1194 products out of the tie mosaics on both
+	    Antarctic projects (2026-09-12..14).  Callers that genuinely want a
+	    correction call loadAzimuthIonosphereCorrection() AFTER this returns. */
+	offsets->aOffCorrection.correctionFile[0] = '\0';
+	offsets->aOffCorrection.azimuthOffsetCorrection = NULL;
 
 	//fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
 	if (has_suffix(offsets->file, ".vrt") == TRUE)
@@ -916,18 +928,13 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float az
 	//vrtFile = checkForOffsetsVrt(offsets->file, vrtBuffer);
 	if (vrtFile != NULL)
 	{	// Zero params — but preserve any correctionFile pre-set by caller
-		char savedCorrFile2[2048], savedAzCorrFile[2048];
+		char savedCorrFile2[2048];
 		strncpy(savedCorrFile2, offsets->rOffCorrection.correctionFile, sizeof(savedCorrFile2) - 1);
 		savedCorrFile2[sizeof(savedCorrFile2) - 1] = '\0';
-		strncpy(savedAzCorrFile, offsets->aOffCorrection.correctionFile, sizeof(savedAzCorrFile) - 1);
-		savedAzCorrFile[sizeof(savedAzCorrFile) - 1] = '\0';
 		initOffParams(offsets);
 		if (savedCorrFile2[0] != '\0')
 			strncpy(offsets->rOffCorrection.correctionFile, savedCorrFile2,
 			        sizeof(offsets->rOffCorrection.correctionFile));
-		if (savedAzCorrFile[0] != '\0')
-			strncpy(offsets->aOffCorrection.correctionFile, savedAzCorrFile,
-			        sizeof(offsets->aOffCorrection.correctionFile));
 		//fprintf(stderr, "OPENING VRT %s\n", vrtFile);
 		// Open data set
 		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
@@ -941,7 +948,6 @@ void readOffsetsOptionalErrors(Offsets *offsets, int32_t includeErrors, float az
 			readGDALOffsets(hDS, offsets, AZIMUTHBUFF, azimuthMin, azimuthMax);
 			if(includeErrors == TRUE)
 				readGDALOffsets(hDS, offsets, AZIMUTHERRORBUFF, azimuthMin, azimuthMax);
-			checkForAzimuthIonosphereCorrection(hDS, offsets);
 		}
 		GDALClose(hDS);
 	}
@@ -1071,11 +1077,10 @@ static void checkForAzimuthIonosphereCorrection(GDALDatasetH hDS, Offsets *offse
  */
 void loadAzimuthIonosphereCorrection(Offsets *offsets)
 {
-	extern int32_t useAzIonosphere;
 	char vrtBuffer[2048], *vrtFile;
 	GDALDatasetH hDS;
 
-	if (useAzIonosphere == FALSE || offsets->aOffCorrection.correctionFile[0] == '\0')
+	if (offsets->aOffCorrection.correctionFile[0] == '\0')
 		return;
 	if (offsets->aOffCorrection.azimuthOffsetCorrection != NULL)
 		return;                                  /* already loaded */
