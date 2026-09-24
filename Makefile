@@ -422,7 +422,8 @@ GEOMOSAIC =	geoMosaic/$(MACHTYPE)-$(OSTYPE)/makeGeoMosaic.o \
                 geoMosaic/$(MACHTYPE)-$(OSTYPE)/subpixelRTC.o \
                 geoMosaic/$(MACHTYPE)-$(OSTYPE)/linearSubpixelRTC.o \
                 geoMosaic/$(MACHTYPE)-$(OSTYPE)/jacobianSubpixelRTC.o \
-                geoMosaic/$(MACHTYPE)-$(OSTYPE)/readComplexAsPower.o
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/readComplexAsPower.o \
+                geoMosaic/$(MACHTYPE)-$(OSTYPE)/gcovMosaic.o
 
 GEOMOSAICDIRS =	geoMosaic common landsatMosaic $(PROGDIR)/gdalIO/gdalIO $(PROGDIR)/triangle $(PROGDIR)/clib  $(PROGDIR)/cRecipes
 

@@ -53,7 +53,7 @@ geomosaic [options] inputFile demFile outFile
 
 | Option                        | Description |
 |-------------------------------|-------------|
-| `-fl <length>`                | Feathering length (m) at image edges |
+| `-fl <length>`                | Feathering length in **output pixels** (not metres), tapering each input's weight linearly to its data edge; e.g. `-fl 100` at 100 m = 10 km. Allowed with `-S1Cal` since 2026-09-23 (was refused), not with `-ascending/-descending` |
 | `-date1 MM-DD-YYYY`           | Start date for mosaic |
 | `-date2 MM-DD-YYYY`           | End date for mosaic |
 | `-descending`                 | Give descending-pass images priority in overlap regions |
@@ -76,6 +76,12 @@ geomosaic [options] inputFile demFile outFile
 | `-jacobianSubPixelRTC`        | Implies `-subPixelRTC`; weights each sub-pixel by $A_\beta \cdot |J|$ where $J$ is the map→radar Jacobian determinant — corrects foreshortening bias when reading SLC directly; suppresses γ₀ in pure layover (see [Jacobian Sub-pixel RTC](#jacobian-weighted-sub-pixel-rtc-jacobiansubpixelrtc)) |
 | `-maskLayover`                | Used with any sub-pixel RTC mode: suppresses output pixels classified as layover (more than half of sub-pixels have reversed Jacobian sign) to $-30$ dB no-data, instead of passing through their elevated but unreliable brightness values |
 | `-ompThreads N`               | Set the OpenMP thread count at runtime (default: 10, or `OMP_NUM_THREADS` if set in the shell) |
+| `-nearRange` / `-farRange`    | Keep only inputs whose ellipsoidal incidence angle is within `-angleTolerance` of the per-pixel minimum (near) or maximum (far). Mutually exclusive; not allowed with `-min`/`-max`, `-ascending`/`-descending` or `-nearestDate` (see [Range selection](#near-range--far-range-selection-nearrange--farrange)) |
+| `-angleTolerance <deg>`       | Tolerance for the above [1.0] |
+| `-angleStride <n>`            | Output pixels per cell in the selection pre-pass [10] |
+| `-gcov <file.yaml>`           | Also mosaic already-geocoded NISAR GCOV HDF5 products listed in the YAML file (see [NISAR GCOV Inputs](#nisar-gcov-inputs-gcov)). With GCOVs, `inputFile` may list 0 range/Doppler images |
+| `-calOutput sigma0\|gamma0\|both` | With `-S1Cal`: write only `.sigma0`, only `.gamma0`, or both [both, the previous behaviour]. Without `-S1Cal` it only selects the quantity GCOVs contribute [gamma0] |
+| `-int16`                     | With `-S1Cal` and `-GTiff`/`-COG`: write `.sigma0`/`.gamma0` as Int16 round(dB×100), with scale 0.01 and nodata −3000 in the file. Lossless and about 2× smaller as a COG (a predictor is used) |
 | `-byteScale`                  | ⚠️ Write output as scaled 8-bit byte image |
 | `-BSlowerBound <val>`         | ⚠️ Lower bound for byte scaling [default: 0.53] |
 | `-BSupperBound <val>`         | ⚠️ Upper bound for byte scaling [default: 2.4] |
@@ -125,6 +131,227 @@ imageFile  geodatFile  weight  [antPatFile]
 | `geodatFile` | SAR image geometry parameter file |
 | `weight`     | Image weight for feathered averaging (typically 1.0) |
 | `antPatFile` | Optional antenna pattern file; use `poly` for RADARSAT fine-beam polynomial, `alos` for ALOS |
+
+`nFiles` may be 0 when `-gcov` supplies the inputs; the grid line is still required.
+
+---
+
+## Near-range / far-range selection (`-nearRange` / `-farRange`)
+
+Normally every input covering a pixel is averaged, so the mosaic mixes near- and far-range looks
+and its viewing geometry follows the track layout rather than the ice. These flags keep, at each
+output pixel, only the inputs whose incidence angle is within `-angleTolerance` of the **minimum**
+(`-nearRange`) or **maximum** (`-farRange`) over all inputs there. Works for range/Doppler and
+GCOV inputs, together or separately. Without either flag the output is byte-identical to before.
+
+### What the tolerance actually does
+
+Across a NISAR swath the incidence angle spans ~20 deg and is strictly monotone, so **cross-track
+overlaps differ by 20-26 deg** (median 9.1 deg over 1358 measured overlapping pairs) while
+**adjacent frames of the same track differ by exactly 0**. A 1 deg tolerance therefore rejects the
+neighbouring track outright; its real job is to keep **repeat passes of the same track and
+along-track frame neighbours**, which then average and feather together as usual.
+
+The consequence is that cross-track seams become deliberate hard boundaries. Feathering cannot
+soften them, because the selection removes the overlap that feathering needs — on either side of
+the seam a different track is the only contributor, and the weighted average normalises its taper
+away. That step is physical (different geometry), not an artifact, and widening the tolerance
+moves the seam rather than removing it.
+
+**But the step is small, and shrinks with overlap — as does the whole point of the mode.** With
+swath width `W`, track spacing `D` and incidence spanning `Δ` across a swath, each track is used
+only over the strip where it is nearest (or farthest), of width `D`. So the output incidence
+sawtooths over `Δ·D/W`, and the seam step is that *same* quantity — not `Δ`. Heavy overlap shrinks
+both together; at 50% overlap you get half of each.
+
+Measured on the PIG box below, against a ~20 deg single-frame swath span:
+
+| | incidence span (p1-p99) | seam step p99.9 | pixels with a step > 1 deg |
+|---|---|---|---|
+| plain | 9.58 deg | 0.01 deg | 0.009% |
+| `-nearRange` | 6.17 deg | 3.42 deg | 0.230% |
+| `-farRange` | 2.77 deg | 5.91 deg | 0.331% |
+
+so `Δ·D/W` ≈ 6.2 deg implies `D/W` ≈ 0.31, i.e. ~69% overlap at this latitude. Two notes:
+
+- `-farRange` gives the *narrower* span, because `dψ/dx` flattens with range: a strip of width `D`
+  at far range covers fewer degrees than the same strip at near range. The trade is the far-range
+  end of the SNR and resolution range.
+- `D/W` is set by the orbit and latitude, not by how much data accumulates. Tracks converge toward
+  the pole, so the mode tightens up exactly over the Antarctic interior; extra cycles add repeats
+  at the same geometry rather than narrowing the span further.
+
+### Why two passes
+
+The obvious single pass — track the running extremum and test each input against it as it
+arrives — is order-dependent. A pixel seen by track 4 at 46 deg and track 5 at 35 deg, with files
+in name order, has extremum 46 when track 4 is tested, so track 4 is included and averaged in;
+reverse the order and it is rejected. So pass 1 establishes the extremum over every input before
+any accumulation, and pass 2 mosaics and filters.
+
+### Pass 1 is cheap
+
+Pass 1 reads no image data. Incidence varies ~0.05 deg/km and is monotone, so it is evaluated on a
+coarse grid (`-angleStride`, default 10 output pixels) — 0.03 deg of quantisation at 100 m against
+a 1 deg tolerance. Measured: stride 5 vs 10 moves 0.6% of pixels, all at selection boundaries.
+
+- Range/Doppler: geometry only (`xytoll1` -> `getXYHeight` -> `llToImageNew` -> `psiRReZReH`), about
+  1/stride^2 of a geocoding pass. `llToImageNew`'s warm start (`lastTime`) is saved and restored so
+  pass 2 solves exactly as it would alone — verified byte-identical.
+- GCOV: the `metadata/radarGrid/incidenceAngle` cube (11 MB, 0.4 s per frame, against 15 s for
+  HHHH) plus the `mask` layer for the footprint. The footprint test is essential: the cube is valid
+  over the **whole rectangle**, including the ~39% of it that is no-data, and since psi is monotone
+  the extremum over the rectangle sits at a corner outside the swath.
+
+### It cannot leave a hole
+
+Pass 1 sees geometry, not data, so it can pick an input that turns out to have no valid pixel
+there — GCOV NaN corners, `bilinearInterp` rejecting a pixel whose 4 neighbours are not all valid,
+`smoothImage`, `removePad`, interior dropouts. Rather than trying to predict all of that, pass 2
+accumulates a **second, unfiltered mosaic**, and any pixel the filter empties falls back to it,
+carrying the matching incidence and gamma correction across. Coverage is therefore identical to the
+plain mosaic by construction, which is checked in testing.
+
+The fallback rate is logged per run (`rangeSelect: N of M valid pixels ... fell back`). It should
+be a fraction of a percent; a large or structured count means the pre-pass footprint is wrong. This
+is also why pass 1 applies **exactly** pass 2's mask test: an earlier version accepted `mask != 255`
+instead of `mask == 1`, which over-claims coverage and drove the far-range fallback to 11.6%
+against 0.3% once matched.
+
+### Incidence angle used
+
+The **ellipsoidal** angle, not the local (terrain) one: `psiRReZReH(aRange, Re + h, ReH)` for
+range/Doppler, and the GCOV cube, both of which are free of any terrain-slope term and so cannot
+toggle on slopes. Forcing `h = 0` was tried and rejected — the true sensitivity at fixed ground
+position is only 0.075 deg per 2 km of elevation, but zeroing `h` while the range still comes from
+geocoding at the DEM height decouples the two and injects 0.15-0.42 deg of elevation-dependent
+error instead.
+
+The angle is computed explicitly rather than reusing the `psiE` in the pixel loop, which
+`applyCorrections` leaves at 0 on the antenna-pattern path. `-linearSubPixelRTC` without `-S1Cal`
+is refused, because that branch leaves `range`/`azimuth`/`h` unset.
+
+### Refused combinations
+
+`-min`/`-max` compare the *feathered* value, so pixels tapered at a selection boundary would win
+MIN and draw lines along every boundary. `-ascending`/`-descending` and `-nearestDate` key off the
+scale buffer (a passType or a date), which the fallback test would misread. All are rejected at
+startup rather than silently doing something odd.
+
+### Measured behaviour (PIG, cycle 30, 150 km box at 200 m)
+
+| | valid px | incidence p5/50/95 | sigma0 median | fell back |
+|---|---|---|---|---|
+| plain | 562500 | 35.63 / 39.67 / 43.38 | -16.50 dB | - |
+| `-nearRange` | 562500 | 34.36 / 36.47 / 40.64 | -15.96 dB | 0.47% |
+| `-farRange` | 562500 | 44.37 / 45.64 / 46.85 | -17.09 dB | 0.30% |
+
+Coverage identical; the gamma correction tracks the selection (gBuf median 0.95 / 1.14 / 1.56 dB).
+Tiled (2x2) and untiled agree exactly, as do `-ompThreads 1` and `8`.
+
+---
+
+## NISAR GCOV Inputs (`-gcov`)
+
+NISAR L2 GCOV products are already geocoded, RTC-corrected covariance terms (γ₀ for the
+diagonal terms). `geomosaic -gcov file.yaml` adds them to the mosaic in a stage that runs after
+the range/Doppler loop (`geoMosaic/gcovMosaic.c`, called from `makeGeoMosaic`). GCOVs can
+supplement range/Doppler images or replace them entirely. Without `-gcov`, output is
+byte-identical to earlier builds.
+
+### YAML file
+
+```yaml
+polarization: HH      # HH -> HHHH, HV -> HVHV, or a full covariance term (HHHH) [HH]
+frequency: A          # A or B [A]
+useMask: true         # drop samples flagged 0 (invalid) or 255 (fill) in the GCOV mask [true]
+glob: /Volumes/insar4/ian/Data/NISAR/Antarctica-GCOV/*.h5   # optional, may repeat; sorted
+files:                # optional, "- path [weight]", weight default 1.0
+  - /path/a.h5
+  - /path/b.h5 0.5
+```
+
+If the same granule appears more than once with different product counters (the final `_NNN`
+field, e.g. an `_001` and a reprocessed `_002`), only the highest counter is kept, and the
+dropped files are logged. The date and pass direction come from the NISAR file name, so
+`-date1/-date2`, `-nearestDate`, and `-ascending/-descending` behave as they do for
+range/Doppler inputs.
+
+### Reading
+
+The HDF5 file is read directly through GDAL's HDF5 driver (no extra library). GDAL does not
+attach a geotransform or CRS to GCOV subdatasets, so the grid is rebuilt from
+`grids/frequencyX/xCoordinates`/`yCoordinates` (pixel centres) and the
+`..._projection_epsg_code` attribute. Output grid points are converted into the GCOV CRS with
+OGR (EPSG 3031/3413 → the GCOV EPSG; one transform per thread). Antarctic GCOVs are EPSG:3031
+at 10 m; Greenland ones seen so far are EPSG:4326.
+
+For each GCOV, only the window covering the output region is read. It is **block-averaged** in
+linear power, `k×k` source pixels per block with `k = floor(output spacing / GCOV spacing)` per
+axis, which averages rather than decimates. NaN, non-positive, and masked samples are excluded.
+The averaged grid is then bilinearly sampled at each output pixel. The blocks are **aligned
+to the output grid**: a block centre falls on an output pixel centre. Results therefore do not
+depend on how a mosaic is tiled (tiled and untiled were identical, 0 of 10⁶ pixels different).
+When the output spacing is an exact multiple of the GCOV spacing in the same CRS, each output
+pixel is exactly the box average of the GCOV pixels inside it. Before this alignment, 35% of
+pixels differed between tiled and untiled runs, by up to 2.5 dB. The phase anchor is the
+output-lattice pixel nearest the GCOV origin (`gcovAnchor`), not the tile centre. With a tile-
+centre anchor, a spacing that is not a whole number of GCOV pixels (25 m from 10 m, ratio 2.5)
+still gave different phases in different tiles: 99% of pixels differed between 4×5 and 12×12
+tilings, median 0.23 dB. Now 0 of 4×10⁶ pixels differ at 25 m.
+
+**Feathering cost:** `computeScale` touches a (2·fl+1)² window for every data-edge pixel. At
+25 m with a 10 km feather (fl = 400), feathering took 475 s of an 841 s tile (29 frames); with
+`-fl 0` the tile took 366 s. The cost is proportional to the number of edge pixels times fl²,
+and tiling does not reduce it.
+
+**Fast feathering (2026-09-23), geomosaic only:** `computeScaleFast` (`makeGeoMosaic.c`) gets the
+same weights from an exact squared Euclidean distance transform (Felzenszwalb–Huttenlocher),
+over the output region plus fl. Its cost is proportional to the pixel count, and the kernel
+formula is evaluated as in `fillRadialKernel`, so output is **byte-identical**. That was verified
+for: a 25 m GCOV tile at fl 400 (841 s → 397 s, of which 275 s is reading); range/Doppler inputs,
+uncalibrated and `-S1Cal`, at fl 20; and a mixed-weight input.
+
+Weight quirk: `computeScale` caches its taper (`rDistSave`) built with the FIRST image's input
+weight. A later image with a different weight has its interior at its own weight but is tapered
+with the first image's weight. `computeScaleFast` handles the equal-weight case and falls back
+to `computeScale` otherwise, so that case is identical by construction. `common/computeScale.c`,
+used by every mosaic3d solver, is unchanged. Reads are made in strips of
+about 1024 rows, because the layers are gzip-compressed in 512×512 chunks. Reading only `k` rows
+at a time decompresses each chunk row about 512/k times, and was measured to be 14× slower
+(493 s vs 34 s for one 32k×32k frame at 200 m).
+
+### Radiometry
+
+| Mode | Contribution to the mosaic |
+|------|----------------------------|
+| `-S1Cal` | σ₀ = γ₀·`rtcGammaToSigmaFactor` (averaged over the same samples) is mosaicked. The γ₀ correction `gBufTmp = 10·log10(γ₀/σ₀)` uses the same rounding and [-29.9, 35] dB clamp as the range/Doppler path, so `.sigma0` and `.gamma0` come out consistent. With `-S1Psi`, `.inc` is trilinearly interpolated from the `metadata/radarGrid/incidenceAngle` cube at the DEM height |
+| no `-S1Cal` | GCOV γ₀ in linear power (σ₀ with `-calOutput sigma0`). Range/Doppler images in this mode are `power·sin³ψ`, a different quantity, so mixing the two is cosmetic only |
+
+GCOV pixels are accumulated with the same `geoMosaicScaling` call as range/Doppler pixels,
+applying weights, `-fl` feathering, min/max, orbit priority, and nearest date in the same way.
+Each input counts once, so a pixel covered by one S1 image and two overlapping GCOVs is
+(R + G₁ + G₂)/3 in linear power.
+
+The `.gamma0` limitation noted elsewhere applies here too: in average mode, `gBuf` is
+"last image wins" rather than averaged.
+
+### Verification (2026-09-23, PIG, NISAR cycle 30 ascending)
+
+- **Range/Doppler regression.** Checked against a build from git HEAD on an S1 PIG tile.
+  - Uncalibrated `.unc`: byte-identical single-threaded. The multi-threaded HEAD binary itself
+    varies in about 50 pixels at 1e-5 relative between runs.
+  - `-S1Cal` `.sigma0/.gamma0/.inc/.gamcor`: byte-identical.
+  - `-calOutput both` gives the same output as no flag.
+  - `-calOutput sigma0` and `-calOutput gamma0` each write only the selected file, and it is
+    identical to the default.
+- **Radiometry.** For one GCOV at 200 m, against an independent Python block average of the raw
+  HDF5, the median difference was -0.002 dB (σ₀) and -0.006 dB (γ₀).
+- **Geolocation.** A ±1-pixel shift search is minimised at zero shift (0.075 dB RMS). The four
+  one-pixel shifts give a symmetric 0.19 dB, so there is no offset.
+- **Blending.** A GCOV blended with one S1 image reproduces the linear mean to within the
+  0.01 dB output rounding. Pixels covered by only one of the two are reproduced exactly.
+- **Threads.** `-ompThreads 1` and `-ompThreads 8` give byte-identical output.
 
 ---
 
@@ -657,6 +884,7 @@ The thread count is resolved in this priority order:
 - `llToImageNew` — lat/lon to SAR range/azimuth projection
 - `getXYHeight` — DEM elevation lookup
 - `computeScale` — feathering weight computation
+- GDAL HDF5 driver + OGR/PROJ — NISAR GCOV reading and CRS transforms (`-gcov`)
 - `outputGeocodedImage` / `outputGeocodedImageTiff` — binary and GeoTIFF output
 - `subPixelGammaRTC` (`subpixelRTC.c`) — full sub-pixel RTC accumulation loop
 - `subPixelGammaRTCLinear` (`linearSubpixelRTC.c`) — Jacobian-approximated sub-pixel RTC

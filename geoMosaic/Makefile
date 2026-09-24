@@ -7,7 +7,7 @@ $(shell mkdir -p $(OBJDIR))
 
 CFLAGS =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
-SRCS =	geomosaic.c makeGeoMosaic.c processInputFileGeo.c subpixelRTC.c linearSubpixelRTC.c jacobianSubpixelRTC.c readComplexAsPower.c
+SRCS =	geomosaic.c makeGeoMosaic.c processInputFileGeo.c subpixelRTC.c linearSubpixelRTC.c jacobianSubpixelRTC.c readComplexAsPower.c gcovMosaic.c
 
 OBJS =	$(SRCS:%.c=$(OBJDIR)/%.o)
 

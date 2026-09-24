@@ -74,6 +74,15 @@ void outputGeocodedImage(outputImageStructure outputImage, char *outputFile)
 void outputGeocodedImageTiff(outputImageStructure outputImage, char *outputFile, char *driverType, const char *epsg,
                             dictNode *summaryMetaData, float noDataValue, int32_t dataType)
 {
+    outputGeocodedImageTiffScaled(outputImage, outputFile, driverType, epsg, summaryMetaData, noDataValue, dataType,
+                                  1.0, 0.0);
+}
+
+/* As outputGeocodedImageTiff, recording a band scale/offset (value = offset + scale * stored) */
+void outputGeocodedImageTiffScaled(outputImageStructure outputImage, char *outputFile, char *driverType,
+                                   const char *epsg, dictNode *summaryMetaData, float noDataValue, int32_t dataType,
+                                   double scale, double offset)
+{
     double geoTransform[6];
     char *outputFileTiff;
     if(hasSuffix(outputFile, ".tif"))
@@ -96,6 +105,7 @@ void outputGeocodedImageTiff(outputImageStructure outputImage, char *outputFile,
 	char *timeStamp = timeStampMeta();
 	insert_node(&summaryMetaData, "CreationTime", timeStamp);
     // Write to tiff file
-    saveAsGeotiff(outputFileTiff, (float *)outputImage.image[0], outputImage.xSize,
-				outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, dataType, noDataValue);
+    saveAsGeotiffScaled(outputFileTiff, (float *)outputImage.image[0], outputImage.xSize,
+				outputImage.ySize, geoTransform, epsg, summaryMetaData, driverType, dataType, noDataValue,
+				scale, offset);
 }

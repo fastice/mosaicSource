@@ -28,9 +28,18 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 							 float **psiBufTmp, float **gBuf, float **gBufTmp,
 							 float **scale, float **scaleTmp, void *dem, outputImageStructure *outputImage, int32_t orbitPriority,
 							 int32_t imageDate, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
-static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority);
+static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority,
+						 float **imageAll, float **scaleAll, float **psiBuf, float **gBuf,
+						 float **psiBufAll, float **gBufAll);
+static float **mallocPlane(outputImageStructure *outputImage, float initValue);
+static void applySelection(float **imageTmp, float **scaleTmp, unsigned char **selTmp,
+						   inputImageStructure *inputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
+static void applyRamp(float **scaleTmp, unsigned char **selTmp,
+					  int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
 static void initImageBuffers(outputImageStructure *outputImage, float **scaleTmp, int32_t orbitPriority, float **psiBuf,
 							 float **psiBufTmp, float **gBuf, float **gBufTmp);
+static void computeScaleFast(float **inImage, float **scale, int32_t ySize, int32_t xSize, float fl, float weight,
+							 double minVal, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
 
 /*
   Compute the lenth of an edge in 3-D
@@ -333,9 +342,230 @@ static void oversampledxdy(int32_t os, double dx[3], double dy[3])
 /*
   Make mosaic of insar and other dems.
 */
+/*
+  ---- Near/far range incidence selection -------------------------------------------------------
+
+  A cheap geometry-only first pass builds a COARSE buffer (stride angleStride output pixels) of
+  the per-pixel minimum (-nearRange) or maximum (-farRange) ellipsoidal incidence angle over all
+  inputs. Pass 2 then keeps only inputs within angleTolerance of it. Incidence varies ~0.05 deg/km
+  and is monotone across a frame, so a stride of 10 costs ~0.03 deg of quantisation at 100 m.
+
+  Cells are addressed by ABSOLUTE output-lattice index, so a tiled run and an untiled run put the
+  cell boundaries in the same places. Pass 1 evaluates each cell at its centre even when that
+  falls outside the current tile, so a cell's contents do not depend on the tiling either.
+
+  Pass 1 cannot know where an input has valid DATA (only where it has geometry), so the filter can
+  empty a pixel that the plain mosaic would have filled. That is handled downstream by the
+  unfiltered fallback accumulator in makeGeoMosaic, not here.
+*/
+
+/* Absolute output-lattice pixel index of the grid's first row/column. */
+int32_t incCoarseIndex(double origin, double delta, int32_t stride)
+{
+	return (int32_t)floor(origin / delta + 0.5);
+}
+
+/* Floor division; C division truncates toward zero, which would fold cells together at 0. */
+static int32_t floorDiv(int32_t a, int32_t b)
+{
+	return (a >= 0) ? (a / b) : -(((-a) + b - 1) / b);
+}
+
+/* Local cell index of output pixel k along one axis (abs0 = absolute index of pixel 0). */
+static int32_t cellOf(int32_t abs0, int32_t k, int32_t stride)
+{
+	return floorDiv(abs0 + k, stride) - floorDiv(abs0, stride);
+}
+
+/* Output pixel at the centre of local cell c; may fall outside the grid, which is intended. */
+static int32_t cellCentrePixel(int32_t abs0, int32_t c, int32_t stride)
+{
+	return (floorDiv(abs0, stride) + c) * stride + stride / 2 - abs0;
+}
+
+void incCellSpan(incBuffer *incBuf, int32_t isX, int32_t kMin, int32_t kMax, int32_t *cMin, int32_t *cMax)
+{
+	int32_t abs0 = isX ? incBuf->j0 : incBuf->i0;
+	*cMin = cellOf(abs0, kMin, incBuf->stride);
+	*cMax = cellOf(abs0, kMax, incBuf->stride);
+}
+
+int32_t incCellCentre(incBuffer *incBuf, int32_t isX, int32_t c)
+{
+	int32_t abs0 = isX ? incBuf->j0 : incBuf->i0;
+	return cellCentrePixel(abs0, c, incBuf->stride);
+}
+
+static incBuffer *allocIncBuffer(outputImageStructure *outputImage, int32_t stride)
+{
+	incBuffer *incBuf;
+	float *buf;
+	int32_t i, j;
+	incBuf = (incBuffer *)malloc(sizeof(incBuffer));
+	if (incBuf == NULL)
+	{
+		error("allocIncBuffer: malloc failed");
+	}
+	incBuf->stride = stride;
+	incBuf->j0 = incCoarseIndex(outputImage->originX, outputImage->deltaX, stride);
+	incBuf->i0 = incCoarseIndex(outputImage->originY, outputImage->deltaY, stride);
+	incBuf->nX = cellOf(incBuf->j0, outputImage->xSize - 1, stride) + 1;
+	incBuf->nY = cellOf(incBuf->i0, outputImage->ySize - 1, stride) + 1;
+	buf = (float *)malloc((size_t)incBuf->nX * incBuf->nY * sizeof(float));
+	incBuf->inc = (float **)malloc((size_t)incBuf->nY * sizeof(float *));
+	if (buf == NULL || incBuf->inc == NULL)
+	{
+		error("allocIncBuffer: malloc failed for %i x %i cells", incBuf->nX, incBuf->nY);
+	}
+	for (i = 0; i < incBuf->nY; i++)
+	{
+		incBuf->inc[i] = &(buf[(size_t)i * incBuf->nX]);
+		for (j = 0; j < incBuf->nX; j++)
+		{
+			incBuf->inc[i][j] = INCUNSET;
+		}
+	}
+	fprintf(stderr, "rangeSelect: %i x %i incidence cells, stride %i\n", incBuf->nX, incBuf->nY, stride);
+	return incBuf;
+}
+
+/*
+  Fold psi at output pixel (i1, j1) into the running extremum. Callers must keep one thread per
+  cell ROW (the row index depends only on i1), which is what makes this lock free.
+*/
+void incUpdate(incBuffer *incBuf, int32_t i1, int32_t j1, double psi)
+{
+	extern int32_t rangeSelect;
+	int32_t i, j;
+	float cur;
+	if (incBuf == NULL)
+	{
+		return;
+	}
+	i = cellOf(incBuf->i0, i1, incBuf->stride);
+	j = cellOf(incBuf->j0, j1, incBuf->stride);
+	if (i < 0 || i >= incBuf->nY || j < 0 || j >= incBuf->nX)
+	{
+		return;
+	}
+	cur = incBuf->inc[i][j];
+	if (cur <= INCUNSET ||
+		(rangeSelect == RANGESELECT_NEAR && psi < cur) ||
+		(rangeSelect == RANGESELECT_FAR && psi > cur))
+	{
+		incBuf->inc[i][j] = (float)psi;
+	}
+}
+
+float incLookup(incBuffer *incBuf, int32_t i1, int32_t j1)
+{
+	int32_t i, j;
+	if (incBuf == NULL)
+	{
+		return INCUNSET;
+	}
+	i = cellOf(incBuf->i0, i1, incBuf->stride);
+	j = cellOf(incBuf->j0, j1, incBuf->stride);
+	if (i < 0 || i >= incBuf->nY || j < 0 || j >= incBuf->nX)
+	{
+		return INCUNSET;
+	}
+	return incBuf->inc[i][j];
+}
+
+/*
+  Selection weight at (i1, j1), as a byte: 0 rejects the pixel, 255 keeps it at full weight.
+  Without -angleRamp this is a hard cut (0 or 255). With it, the weight falls linearly from 255 at
+  the extremum to 0 at the tolerance, so an input fades out instead of switching off - which
+  matters where two tracks sit near the tolerance boundary and the switch would draw a hairline
+  seam. A cell no input reached filters nothing.
+*/
+int32_t incWeight(incBuffer *incBuf, int32_t i1, int32_t j1, double psi)
+{
+	extern double angleTolerance;
+	extern int32_t angleRamp;
+	double d;
+	float ext;
+	ext = incLookup(incBuf, i1, j1);
+	if (ext <= INCUNSET)
+	{
+		return 255;
+	}
+	d = fabs(psi - (double)ext);
+	if (d > angleTolerance)
+	{
+		return 0;
+	}
+	if (angleRamp == FALSE)
+	{
+		return 255;
+	}
+	return (int32_t)(255.0 * (1.0 - d / angleTolerance) + 0.5);
+}
+
+/*
+  Pass 1 for one range/Doppler input: geometry only, no raster read. Evaluates the ellipsoidal
+  incidence angle at each coarse cell centre covering the image's region and folds it in.
+*/
+static void incidenceCoarseRD(inputImageStructure *inputImage, outputImageStructure *outputImage,
+							  void *dem, incBuffer *incBuf, int32_t iMin, int32_t iMax,
+							  int32_t jMin, int32_t jMax)
+{
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	extern double minIncidence;
+	extern double maxIncidence;
+	double savedLastTime;
+	int32_t cMinX, cMaxX, cMinY, cMaxY, ci;
+	/* cells covering the region; evaluated at their centres even if those fall outside the tile */
+	incCellSpan(incBuf, TRUE, jMin, jMax - 1, &cMinX, &cMaxX);
+	incCellSpan(incBuf, FALSE, iMin, iMax - 1, &cMinY, &cMaxY);
+	/* llToImageNew warm start: restore it so pass 2 solves exactly as it would have alone */
+	savedLastTime = inputImage->lastTime;
+#pragma omp parallel for schedule(static) private(ci)
+	for (ci = cMinY; ci <= cMaxY; ci++)
+	{
+		inputImageStructure myImg = *inputImage;
+		int32_t cj, i1, j1;
+		double x, y, lat, lon, h, hWGS, range, azimuth, aRange, ReH, psiSel;
+		i1 = incCellCentre(incBuf, FALSE, ci);
+		y = (outputImage->originY + i1 * outputImage->deltaY) * MTOKM;
+		for (cj = cMinX; cj <= cMaxX; cj++)
+		{
+			j1 = incCellCentre(incBuf, TRUE, cj);
+			x = (outputImage->originX + j1 * outputImage->deltaX) * MTOKM;
+			xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+			h = getXYHeight(lat, lon, dem, myImg.cpAll.Re, SPHERICAL);
+			hWGS = sphericalToWGSElev(h, lat, myImg.cpAll.Re);
+			llToImageNew(lat, lon, hWGS, &range, &azimuth, &myImg);
+			/*
+			  Explicit bounds: llToImageNew only rejects past range +-2000 pixels and checkLL pads
+			  the footprint by 50 km, so "not -9999" would let a frame claim tens of km of ground
+			  it never imaged and win the extremum there.
+			*/
+			if (range < 0.0 || azimuth < 0.0 ||
+				range > (double)(myImg.rangeSize - 1) || azimuth > (double)(myImg.azimuthSize - 1))
+			{
+				continue;
+			}
+			aRange = range * myImg.rangePixelSize + myImg.cpAll.RNear;
+			ReH = getReH(&(myImg.cpAll), &myImg, azimuth);
+			psiSel = psiRReZReH(aRange, myImg.cpAll.Re + h, ReH) * RTOD;
+			/* a gated angle must not set the extremum: pass 2 throws that data away, so the
+			   nearest ALLOWED look would otherwise be measured against a discarded one */
+			if (psiSel < minIncidence || psiSel > maxIncidence)
+			{
+				continue;
+			}
+			incUpdate(incBuf, i1, j1, psiSel);
+		}
+	}
+	inputImage->lastTime = savedLastTime;
+}
+
 void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputImage,
 				   void *dem, int32_t nFiles, int32_t maxR, int32_t maxA, char **imageFiles, float fl, int32_t smoothL,
-				   int32_t smoothOut, int32_t orbitPriority, float ***psiData, float ***gamma)
+				   int32_t smoothOut, int32_t orbitPriority, float ***psiData, float ***gamma, gcovInputs *gcov)
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
@@ -345,7 +575,18 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	extern int32_t noPower;
 	extern int32_t S1Cal;
 	extern int32_t useSubPixelRTC;
+	extern int32_t rangeSelect;
+	extern int32_t angleStride;
+	extern int32_t angleRamp;
+	extern int32_t useIncidence;
+	extern double minIncidence;
+	extern double maxIncidence;
 	double psiE;
+	/* near/far range selection: coarse extremum buffer, per-pixel keep flag, and the unfiltered
+	   fallback accumulator that makes the filter unable to leave a hole */
+	incBuffer *incBuf = NULL;
+	unsigned char **selTmp = NULL, *selBuf = NULL;
+	float **imageAll = NULL, **scaleAll = NULL, **psiBufAll = NULL, **gBufAll = NULL;
 	float **scale, **psiBuf, **psiBufTmp, **gBufTmp, **gBuf;
 	FILE *fp;
 	double x, y, lat, lon, h, hWGS;
@@ -376,6 +617,48 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	image = (float **)outputImage.image;
 	scale = (float **)outputImage.scale;
 	fprintf(stderr, "\norbitPriority %i\n", orbitPriority);
+	/*
+	  Pass 1 of the range selection: build the coarse incidence extremum over every input before
+	  any accumulation. Geometry only - no raster is read here.
+	*/
+	if (rangeSelect != RANGESELECT_NONE)
+	{
+		size_t nPix = (size_t)outputImage.xSize * outputImage.ySize;
+		incBuf = allocIncBuffer(&outputImage, angleStride);
+		imageAll = mallocPlane(&outputImage, 0.0);
+		scaleAll = mallocPlane(&outputImage, 0.0);
+		/* the unfiltered accumulation needs its own incidence and gamma-correction planes: it
+		   runs after the previous file's filtered pass, so sharing psiBuf/gBuf would let an
+		   unselected image supply the gamma correction for selected sigma0 */
+		psiBufAll = mallocPlane(&outputImage, 0.0);
+		gBufAll = mallocPlane(&outputImage, MINS1DB);
+		selBuf = (unsigned char *)malloc(nPix);
+		selTmp = (unsigned char **)malloc((size_t)outputImage.ySize * sizeof(unsigned char *));
+		if (selBuf == NULL || selTmp == NULL)
+		{
+			error("makeGeoMosaic: malloc failed for the range-selection buffers");
+		}
+		for (i = 0; i < outputImage.ySize; i++)
+		{
+			selTmp[i] = &(selBuf[(size_t)i * outputImage.xSize]);
+		}
+		for (i = 0; i < nFiles; i++)
+		{
+			inputImage[i].file = imageFiles[i];
+			if (!getRegion(&(inputImage[i]), &iMin, &iMax, &jMin, &jMax, &outputImage) ||
+				inputImage[i].weight < 1e-20)
+			{
+				continue;
+			}
+			initllToImageNew(&(inputImage[i]));
+			incidenceCoarseRD(&(inputImage[i]), &outputImage, dem, incBuf, iMin, iMax, jMin, jMax);
+		}
+		if (gcov != NULL)
+		{
+			gcovIncidenceCoarse(gcov, &outputImage, dem, incBuf);
+		}
+		fprintf(stderr, "rangeSelect pass 1 done\n");
+	}
 	/*
 	  Main mosaicing loop
 	*/
@@ -511,6 +794,31 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 						}
 						else
 							value = -LARGEINT;
+						/*
+						  Range selection: the ellipsoidal incidence angle, computed here rather
+						  than taken from psiE, which applyCorrections leaves at 0 on the antenna
+						  pattern path. Rejection is deferred to applySelection so the unfiltered
+						  fallback can be accumulated first.
+						*/
+						if (useIncidence == TRUE)
+						{
+							double aRangeSel = range * myImg->rangePixelSize + myImg->cpAll.RNear;
+							double psiSel = psiRReZReH(aRangeSel, myImg->cpAll.Re + h,
+													   getReH(&(myImg->cpAll), myImg, azimuth)) * RTOD;
+							if (psiSel < minIncidence || psiSel > maxIncidence)
+							{
+								/* hard gate: drop it from the fallback accumulator too */
+								value = -LARGEINT;
+								if (rangeSelect != RANGESELECT_NONE)
+								{
+									selTmp[i1][j1] = 0;
+								}
+							}
+							else if (rangeSelect != RANGESELECT_NONE)
+							{
+								selTmp[i1][j1] = (unsigned char)incWeight(incBuf, i1, j1, psiSel);
+							}
+						}
 						/* Scaling */
 						imageTmp[i1][j1] = value;
 						if (value > 0 || (noPower > 0 && value > myImg->noData))
@@ -523,10 +831,29 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 			free(localImgs);
 		}
 		/*
+		  With range selection, accumulate the UNFILTERED mosaic first - with its own feathering,
+		  since the filtered and unfiltered data edges differ - then apply the filter in place and
+		  fall through to the normal accumulation below.
+		*/
+		if (rangeSelect != RANGESELECT_NONE)
+		{
+			if (fl > 0 && (iMax > 0 && jMax > 0) && (iMax > iMin && jMax > jMin))
+				computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, inputImage[i].weight, (float)0.0,
+								 iMin, iMax, jMin, jMax);
+			geoMosaicScaling(&(inputImage[i]), imageAll, imageTmp, psiBufAll, psiBufTmp, gBufAll, gBufTmp, scaleAll,
+							 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+			applySelection(imageTmp, scaleTmp, selTmp, &(inputImage[i]), iMin, iMax, jMin, jMax);
+		}
+		/*
 		  Compute scale array for feathering.
 		*/
 		if (fl > 0 && (iMax > 0 && jMax > 0) && (iMax > iMin && jMax > jMin))
-			computeScale(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, inputImage[i].weight, (float)0.0);
+			computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, inputImage[i].weight, (float)0.0,
+							 iMin, iMax, jMin, jMax);
+		if (rangeSelect != RANGESELECT_NONE && angleRamp == TRUE)
+		{
+			applyRamp(scaleTmp, selTmp, iMin, iMax, jMin, jMax);
+		}
 		/*
 		  Now sum current result. Falls through if no intersection (iMax&jMax==0)
 		*/
@@ -534,9 +861,47 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 						 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
 	} /* End for i=0; i < nFiles */
 	/*
+	  Add already geocoded NISAR GCOV products, accumulated the same way as the range/Doppler products
+	*/
+	if (gcov != NULL)
+	{
+		for (i = 0; i < gcov->nFiles; i++)
+		{
+			inputImageStructure gcovImage;
+			if (!gcovToOutputGrid(gcov, i, &outputImage, dem, imageTmp, scaleTmp, psiBufTmp, gBufTmp,
+								  &gcovImage, &imageDate, &iMin, &iMax, &jMin, &jMax, incBuf, selTmp, 2))
+			{
+				continue;
+			}
+			if (rangeSelect != RANGESELECT_NONE)
+			{
+				if (fl > 0)
+				{
+					computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, gcovImage.weight, (float)0.0,
+									 iMin, iMax, jMin, jMax);
+				}
+				geoMosaicScaling(&gcovImage, imageAll, imageTmp, psiBufAll, psiBufTmp, gBufAll, gBufTmp, scaleAll,
+								 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+				applySelection(imageTmp, scaleTmp, selTmp, &gcovImage, iMin, iMax, jMin, jMax);
+			}
+			if (fl > 0)
+			{
+				computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, gcovImage.weight, (float)0.0,
+								 iMin, iMax, jMin, jMax);
+			}
+			if (rangeSelect != RANGESELECT_NONE && angleRamp == TRUE)
+			{
+				applyRamp(scaleTmp, selTmp, iMin, iMax, jMin, jMax);
+			}
+			geoMosaicScaling(&gcovImage, image, imageTmp, psiBuf, psiBufTmp, gBuf, gBufTmp, scale,
+							 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+		}
+	}
+	/*
 	  Final rescaling if not nearestDate
 	*/
-	finalReScale(&outputImage, image, scale, orbitPriority);
+	finalReScale(&outputImage, image, scale, orbitPriority, imageAll, scaleAll,
+				 psiBuf, gBuf, psiBufAll, gBufAll);
 	/* Convert values to log db if calibrated  added 11/18/2013 */
 	if (rsatFineCal == TRUE)
 	{
@@ -552,9 +917,188 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	return;
 }
 
-static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority)
+/*
+  1-D squared distance transform (Felzenszwalb & Huttenlocher): d[q] = min_p (q - p)^2 + f[p].
+  v (n ints) and z (n + 1 doubles) are workspace. All inputs are integers < 2^53, so the
+  results are exact.
+*/
+static void edt1d(const double *f, int32_t n, double *d, int32_t *v, double *z)
+{
+	int32_t k = 0, q;
+	double s;
+	v[0] = 0;
+	z[0] = -1e300;
+	z[1] = 1e300;
+	for (q = 1; q < n; q++)
+	{
+		s = ((f[q] + (double)q * q) - (f[v[k]] + (double)v[k] * v[k])) / (2.0 * q - 2.0 * v[k]);
+		while (s <= z[k])
+		{
+			k--;
+			s = ((f[q] + (double)q * q) - (f[v[k]] + (double)v[k] * v[k])) / (2.0 * q - 2.0 * v[k]);
+		}
+		k++;
+		v[k] = q;
+		z[k] = s;
+		z[k + 1] = 1e300;
+	}
+	k = 0;
+	for (q = 0; q < n; q++)
+	{
+		while (z[k + 1] < q)
+		{
+			k++;
+		}
+		d[q] = (double)(q - v[k]) * (q - v[k]) + f[v[k]];
+	}
+}
+
+/*
+  Same feathering weights as common/computeScale.c, in O(pixels) instead of O(edge pixels * fl^2).
+
+  computeScale sets every pixel to weight, then for each data-edge pixel (valid, with an invalid
+  pixel in its 3x3 neighbourhood) lowers the pixels within +-fl to the radial kernel
+  w1 * min(max(dist, 0.5) / fl, 1), where w1 is the weight of the FIRST call (the kernel is
+  cached in rDistSave). With weight == w1 that is weight * min(max(d, 0.5) / fl, 1) for d the
+  distance to the nearest edge pixel, which an exact squared-distance transform gives directly;
+  the kernel expression is evaluated identically, so results are bit-identical. Only the output
+  region [iMin,iMax) x [jMin,jMax) is used by geoMosaicScaling, so the transform covers that
+  region plus fl (edges further away cannot reach it); elsewhere scale is weight, as initialised.
+  If weight != w1 the original computeScale is called, keeping that case identical by construction.
+*/
+static void computeScaleFast(float **inImage, float **scale, int32_t ySize, int32_t xSize, float fl, float weight,
+							 double minVal, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
+{
+	extern double **rDistSave;
+	static float firstWeight = -1.0;
+	int32_t i0, i1, j0, j1, ny, nx, n, i, j, is, il;
+	int32_t flInt = (int32_t)fl;
+	double cap, dMax, rA;
+	float minV, v;
+	if (fl == 0)
+	{
+		computeScale(inImage, scale, ySize, xSize, fl, weight, minVal);
+		return;
+	}
+	if (firstWeight < 0)
+	{
+		firstWeight = weight;
+	}
+	if (weight != firstWeight)
+	{
+		/* computeScale's cached kernel must hold the first weight, exactly as if it had made it */
+		if (rDistSave == NULL)
+		{
+			rDistSave = dmatrix(-fl, fl, -fl, fl);
+			fillRadialKernel(rDistSave, fl, firstWeight);
+		}
+		computeScale(inImage, scale, ySize, xSize, fl, weight, minVal);
+		return;
+	}
+	initFloatMatrix(scale, ySize, xSize, weight);
+	if (iMax <= iMin || jMax <= jMin)
+	{
+		return;
+	}
+	i0 = max(0, iMin - flInt);
+	i1 = min(ySize, iMax + flInt);
+	j0 = max(0, jMin - flInt);
+	j1 = min(xSize, jMax + flInt);
+	ny = i1 - i0;
+	nx = j1 - j0;
+	n = max(nx, ny);
+	/* anything beyond fl is weight; cap keeps the arithmetic small and exact */
+	dMax = (double)flInt * flInt;
+	cap = 4.0 * (flInt + 2.0) * (flInt + 2.0);
+	double *g = (double *)malloc(sizeof(double) * (size_t)nx * ny);
+	if (g == NULL)
+	{
+		error("computeScaleFast: malloc failed");
+	}
+	/* edge pixels (0) vs others (cap), exactly computeScale's test */
+	for (i = i0; i < i1; i++)
+	{
+		for (j = j0; j < j1; j++)
+		{
+			g[(size_t)(i - i0) * nx + (j - j0)] = cap;
+			if (inImage[i][j] > minVal)
+			{
+				minV = 1.0e30;
+				for (is = max(0, i - 1); is <= min(ySize - 1, i + 1); is++)
+				{
+					for (il = max(0, j - 1); il <= min(xSize - 1, j + 1); il++)
+					{
+						minV = min(minV, inImage[is][il]);
+					}
+				}
+				if (minV <= minVal)
+				{
+					g[(size_t)(i - i0) * nx + (j - j0)] = 0.0;
+				}
+			}
+		}
+	}
+	/* columns, then rows */
+#pragma omp parallel private(i, j)
+	{
+		double *f = (double *)malloc(sizeof(double) * n);
+		double *d = (double *)malloc(sizeof(double) * n);
+		double *z = (double *)malloc(sizeof(double) * (n + 1));
+		int32_t *vv = (int32_t *)malloc(sizeof(int32_t) * n);
+#pragma omp for schedule(static)
+		for (j = 0; j < nx; j++)
+		{
+			for (i = 0; i < ny; i++)
+			{
+				f[i] = g[(size_t)i * nx + j];
+			}
+			edt1d(f, ny, d, vv, z);
+			for (i = 0; i < ny; i++)
+			{
+				g[(size_t)i * nx + j] = min(d[i], cap);
+			}
+		}
+#pragma omp for schedule(static)
+		for (i = 0; i < ny; i++)
+		{
+			for (j = 0; j < nx; j++)
+			{
+				f[j] = g[(size_t)i * nx + j];
+			}
+			edt1d(f, nx, d, vv, z);
+			for (j = 0; j < nx; j++)
+			{
+				g[(size_t)i * nx + j] = d[j];
+			}
+		}
+		free(f);
+		free(d);
+		free(z);
+		free(vv);
+	}
+	/* kernel value, evaluated as fillRadialKernel does, then FMIN with the initial weight */
+	for (i = i0; i < i1; i++)
+	{
+		for (j = j0; j < j1; j++)
+		{
+			double d2 = g[(size_t)(i - i0) * nx + (j - j0)];
+			if (d2 <= dMax)
+			{
+				rA = firstWeight * min(max(sqrt(d2), 0.5) / fl, 1);
+				v = (float)rA;
+				scale[i][j] = (v < scale[i][j]) ? v : scale[i][j];
+			}
+		}
+	}
+	free(g);
+}
+
+static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority,
+						 float **imageAll, float **scaleAll, float **psiBuf, float **gBuf,
+						 float **psiBufAll, float **gBufAll)
 {
 	int32_t i1, j1;
+	size_t nRescued = 0, nValid = 0;
 	if (orbitPriority >= 0)
 		return;
 
@@ -567,6 +1111,97 @@ static void finalReScale(outputImageStructure *outputImage, float **image, float
 				/* this assumes that dates are larger than 1000, and we won't sum more than 1000*/
 				if (scale[i1][j1] < 10000)
 					image[i1][j1] /= scale[i1][j1];
+				nValid++;
+			}
+			else if (imageAll != NULL && scaleAll[i1][j1] > 0)
+			{
+				/*
+				  Range selection emptied this pixel: pass 1 sees only geometry, so it can pick an
+				  input that turns out to have no data here. Fall back to the unfiltered average
+				  so the filter can never remove coverage the plain mosaic would have had.
+				*/
+				image[i1][j1] = (scaleAll[i1][j1] < 10000) ? imageAll[i1][j1] / scaleAll[i1][j1]
+														   : imageAll[i1][j1];
+				/* carry the matching incidence and gamma correction across too */
+				psiBuf[i1][j1] = psiBufAll[i1][j1];
+				gBuf[i1][j1] = gBufAll[i1][j1];
+				nRescued++;
+				nValid++;
+			}
+		}
+	}
+	if (imageAll != NULL)
+	{
+		fprintf(stderr, "rangeSelect: %lu of %lu valid pixels (%.3f%%) fell back to the "
+				"unfiltered average\n", nRescued, nValid,
+				(nValid > 0) ? 100.0 * (double)nRescued / (double)nValid : 0.0);
+	}
+}
+
+/* One full-grid float plane, contiguous with a row-pointer array, filled with initValue. */
+static float **mallocPlane(outputImageStructure *outputImage, float initValue)
+{
+	float **plane, *buf;
+	size_t n = (size_t)outputImage->xSize * outputImage->ySize, k;
+	int32_t i;
+	buf = (float *)malloc(n * sizeof(float));
+	plane = (float **)malloc((size_t)outputImage->ySize * sizeof(float *));
+	if (buf == NULL || plane == NULL)
+	{
+		error("mallocPlane: malloc failed for %i x %i", outputImage->xSize, outputImage->ySize);
+	}
+	for (k = 0; k < n; k++)
+	{
+		buf[k] = initValue;
+	}
+	for (i = 0; i < outputImage->ySize; i++)
+	{
+		plane[i] = &(buf[(size_t)i * outputImage->xSize]);
+	}
+	return plane;
+}
+
+/*
+  Scale the feather weight by the -angleRamp selection weight. Must run AFTER computeScaleFast,
+  which rebuilds scaleTmp from imageTmp and would otherwise discard it.
+*/
+static void applyRamp(float **scaleTmp, unsigned char **selTmp,
+					  int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
+{
+	int32_t i1, j1;
+	for (i1 = iMin; i1 < iMax; i1++)
+	{
+		for (j1 = jMin; j1 < jMax; j1++)
+		{
+			if (selTmp[i1][j1] > 0)
+			{
+				scaleTmp[i1][j1] *= (float)selTmp[i1][j1] / 255.0f;
+			}
+		}
+	}
+}
+
+/*
+  Drop the pixels the range selection rejected. Called after the unfiltered accumulation, so the
+  fallback keeps its own values. scaleTmp is restored for kept pixels because geoMosaicScaling
+  zeroes it as it goes and, with fl == 0, nothing else would set it again.
+*/
+static void applySelection(float **imageTmp, float **scaleTmp, unsigned char **selTmp,
+						   inputImageStructure *inputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
+{
+	extern int32_t noPower;
+	int32_t i1, j1;
+	for (i1 = iMin; i1 < iMax; i1++)
+	{
+		for (j1 = jMin; j1 < jMax; j1++)
+		{
+			if (selTmp[i1][j1] == 0)
+			{
+				imageTmp[i1][j1] = -LARGEINT;
+			}
+			else if (imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage->noData))
+			{
+				scaleTmp[i1][j1] = 1;
 			}
 		}
 	}

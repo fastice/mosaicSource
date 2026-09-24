@@ -11,26 +11,25 @@
 #include "ogr_srs_api.h"
 #include <omp.h>
 
-#define PSISAVE 2
-#define GAMMACORSAVE 4
-#define GAMMASAVE 8
 /*
   Mosaic several insar dems with altimetry dem.
 */
 static void parseAntPat(char *antPatFile, inputImageStructure *inputImage);
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
-					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale);
+					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale,
+					 char **gcovYaml);
 static void usage();
 static void processMosaicDateGeo(outputImageStructure *outputImage, char *date1, char *date2);
 static void parseBetaNought(inputImageStructure *inputImage);
 static void parseImages(inputImageStructure *inputImages, outputImageStructure *outputImage, char **imageFiles, char **geodatFiles,
 						float *weights, char **antPatFiles, int32_t nFiles, int32_t S1Cal, int32_t *maxR, int32_t *maxA, float noData);
-static void outputBounds(inputImageStructure *inputImage, outputImageStructure *outputImage, int32_t nFiles);
+static void outputBounds(inputImageStructure *inputImage, outputImageStructure *outputImage, int32_t nFiles, gcovInputs *gcov);
 static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStructure *outputImage,
 							  int32_t maxR, int32_t maxA, int32_t nFiles, int32_t removePad);
 static void outputS1Cal(outputImageStructure outputImage, char *outputFile, float **psi, float **gamma, int32_t s1Cal, char *driver);
 static void byteScaleImage(outputImageStructure *outputImage, double lowerBound, double upperBound, double scale, double exponent);
+static void writeCalTiff(outputImageStructure outputImage, char *file, char *driver, const char *epsg);
 
 typedef struct {
     double lowerBound;
@@ -67,6 +66,15 @@ int32_t linearSubPixelRTC = FALSE;   /* use Jacobian range/az interpolation with
 int32_t jacobianSubPixelRTC = FALSE; /* use |J|-weighted sub-pixel accumulation for SLC input */
 int32_t maskLayover = FALSE;         /* suppress layover pixels (return MINS1DB) in all sub-pixel RTC flavors */
 int32_t geoMosaicMode = GEOMOSAIC_AVERAGE; /* 0=weighted avg, 1=min, 2=max */
+int32_t calOutput = CALOUTPUT_BOTH;        /* -calOutput: sigma0, gamma0, or both */
+int32_t int16Output = FALSE;               /* -int16: calibrated dB tiffs as Int16 dB*100, scale 0.01 */
+int32_t rangeSelect = RANGESELECT_NONE;    /* -nearRange / -farRange incidence selection */
+double angleTolerance = 1.0;               /* -angleTolerance, degrees */
+int32_t angleStride = 10;                  /* -angleStride: output pixels per incidence cell */
+int32_t angleRamp = FALSE;                 /* -angleRamp: fade out over the tolerance, not a hard cut */
+double minIncidence = -1.0;                /* -minIncidence: hard reject below this (deg) */
+double maxIncidence = 1000.0;              /* -maxIncidence: hard reject above this (deg) */
+int32_t useIncidence = FALSE;              /* any of the above needs the incidence angle */
 //char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 1234;		/* Kluge to maintain backwards compat 9/13/06 */
 //float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
@@ -96,6 +104,8 @@ int main(int argc, char *argv[])
 	char **imageFiles, **geodatFiles, **antPatFiles;
 	char tmp[2048];
 	char *driver;
+	char *gcovYaml;
+	gcovInputs gcovData, *gcov;
 	/*
 	   Read command line args and compute filenames
 	*/
@@ -104,7 +114,15 @@ int main(int argc, char *argv[])
 	GDALAllRegister();
 	smoothBuf = NULL;
 	readArgs(argc, argv, &inputFile, &demFile, &outFile, &fl, &removePad, &nearestDate, &noPower,
-			 &hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData, &driver, &byteScale);
+			 &hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData, &driver, &byteScale,
+			 &gcovYaml);
+	/* Optional already geocoded NISAR GCOV inputs */
+	gcov = NULL;
+	if (gcovYaml != NULL)
+	{
+		readGCOVYaml(gcovYaml, &gcovData);
+		gcov = &gcovData;
+	}
 	/* This step just reads in the dem projection info, which is then used for the outputs */
 	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
 	outputImage.slat = xyDem.stdLat;
@@ -113,6 +131,10 @@ int main(int argc, char *argv[])
 	  read inputfile (uses routine from mosaicDEMS).
 	*/
 	processInputFileGeo(inputFile, &imageFiles, &geodatFiles, &outputImage, &nFiles, &weights, &antPatFiles);
+	if (nFiles == 0 && (gcov == NULL || gcov->nFiles == 0))
+	{
+		error("No range/Doppler or GCOV inputs");
+	}
 	/*
 	  Malloc input images
 	*/
@@ -129,7 +151,7 @@ int main(int argc, char *argv[])
 	/*
 	  Find output bounds
 	*/
-	outputBounds(inputImage, &outputImage, nFiles);
+	outputBounds(inputImage, &outputImage, nFiles, gcov);
 	/*
 	   Memory allocation
 	*/
@@ -148,7 +170,7 @@ int main(int argc, char *argv[])
 	  Do the mosaicking
 	*/
 	makeGeoMosaic(inputImage, outputImage, dem, nFiles, maxR, maxA, imageFiles, fl, smoothL,
-				  smoothOut, orbitPriority, &psi, &gamma);
+				  smoothOut, orbitPriority, &psi, &gamma, gcov);
 	fprintf(stderr, "Outputting result....");
 	/*
 	  Output result
@@ -219,19 +241,21 @@ static void outputS1Cal(outputImageStructure outputImage, char *outFile, float *
 	float **tmpFloat;
 	int32_t i, j;
 	const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);	
-	int32_t dataType = GDT_Float32;
 	/*
 	  output image
 	 */
 	sigFile = appendSuffix(outFile, ".sigma0", tmp);
-	if(driver == NULL)
+	if (calOutput == CALOUTPUT_GAMMA0)
+	{
+		fprintf(stderr, "calOutput gamma0: not writing %s\n", sigFile);
+	}
+	else if(driver == NULL)
 	{
 		outputGeocodedImage(outputImage, sigFile);
 	}
 	else
 	{
-		dictNode *summaryMetaData = NULL;
-		outputGeocodedImageTiff(outputImage, sigFile, driver, epsg, summaryMetaData, -30., dataType);
+		writeCalTiff(outputImage, sigFile, driver, epsg);
 	}
 	fprintf(stderr, "%i %i %i\n", S1Cal, S1Cal & PSISAVE, S1Cal & GAMMACORSAVE);
 	/*
@@ -260,8 +284,7 @@ static void outputS1Cal(outputImageStructure outputImage, char *outFile, float *
 		}
 		else
 		{
-			dictNode *summaryMetaData = NULL;
-			outputGeocodedImageTiff(outputImage, gFile, driver, epsg, summaryMetaData, -30., dataType);
+			writeCalTiff(outputImage, gFile, driver, epsg);
 		}
 	}
 	/* Output psi 	*/
@@ -282,6 +305,41 @@ static void outputS1Cal(outputImageStructure outputImage, char *outFile, float *
 	}
 }
 
+/*
+  Write a calibrated (dB) image as a tiff: Float32, or with -int16 as Int16 round(dB*100) with a
+  0.01 scale recorded in the file. Values are already rounded to 0.01 dB, so Int16 is lossless;
+  the -30 dB no-data value becomes -3000.
+*/
+static void writeCalTiff(outputImageStructure outputImage, char *file, char *driver, const char *epsg)
+{
+	dictNode *summaryMetaData = NULL;
+	float **fImage;
+	int16_t *iBuf;
+	void *rows[1];
+	size_t k, n;
+	if (int16Output == FALSE)
+	{
+		outputGeocodedImageTiff(outputImage, file, driver, epsg, summaryMetaData, -30., GDT_Float32);
+		return;
+	}
+	fImage = (float **)outputImage.image;
+	n = (size_t)outputImage.xSize * outputImage.ySize;
+	iBuf = (int16_t *)malloc(sizeof(int16_t) * n);
+	if (iBuf == NULL)
+	{
+		error("writeCalTiff: malloc failed");
+	}
+	/* image rows are contiguous (memAllocGeomosaic) */
+	for (k = 0; k < n; k++)
+	{
+		iBuf[k] = (int16_t)lroundf(min(max(fImage[0][k], -327.68), 327.67) * 100.0f);
+	}
+	rows[0] = iBuf;
+	outputImage.image = rows;
+	outputGeocodedImageTiffScaled(outputImage, file, driver, epsg, summaryMetaData, -3000., GDT_Int16, 0.01, 0.0);
+	free(iBuf);
+}
+
 static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStructure *outputImage,
 							  int32_t maxR, int32_t maxA, int32_t nFiles, int32_t removePad)
 {
@@ -296,7 +354,7 @@ static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStruct
 	/*Dbuf1=malloc((size_t)MAXADBUF);  add these 9/13/06 for initlltoimage */
 	Dbuf1 = NULL;
 	Dbuf2 = malloc((size_t)MAXADBUF);
-	buf1 = (float *)malloc((size_t)(sizeof(float) * maxR * maxA));
+	buf1 = (float *)malloc((size_t)(sizeof(float) * max(maxR * maxA, 1))); /* 0 if only GCOV inputs */
 	fprintf(stderr, "mallocing image buf1 %f\n", (sizeof(float) * maxR * maxA) / 1e6);
 	smoothBuf = malloc((size_t)(sizeof(float) * max(maxR, maxA)));
 	if (buf1 == NULL)
@@ -336,7 +394,7 @@ static void memAllocGeomosaic(inputImageStructure *inputImage, outputImageStruct
 	}
 }
 
-static void outputBounds(inputImageStructure *inputImage, outputImageStructure *outputImage, int32_t nFiles)
+static void outputBounds(inputImageStructure *inputImage, outputImageStructure *outputImage, int32_t nFiles, gcovInputs *gcov)
 {
 	double minX, maxX, minY, maxY, x, y;
 	int32_t i, j;
@@ -356,6 +414,11 @@ static void outputBounds(inputImageStructure *inputImage, outputImageStructure *
 			maxX = max(x, maxX);
 			maxY = max(y, maxY);
 		}
+	}
+	/* Include footprints of geocoded GCOV inputs (only needed for autosizing) */
+	if (outputImage->xSize == 0 || outputImage->ySize == 0)
+	{
+		gcovBounds(gcov, &minX, &maxX, &minY, &maxY);
 	}
 	/* Pad and set as output range */
 	minX = (double)((int32_t)minX - 3);
@@ -474,7 +537,8 @@ static void parseAntPat(char *antPatFile, inputImageStructure *inputImage)
 
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int32_t *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
-					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale)
+					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale,
+					 char **gcovYaml)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -483,8 +547,9 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	int32_t month, day, year;
 	int32_t doy[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 333};
 	int32_t i, n;
+	int32_t angleGiven = FALSE;
 
-	if (argc < 4 || argc > 30)
+	if (argc < 4 || argc > 64)
 	{
 		fprintf(stderr, "To many/few args %i", argc);
 		usage();
@@ -505,6 +570,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	*orbitPriority = -1;
 	*driver = NULL;
 	*byteScale = FALSE;
+	*gcovYaml = NULL;
 	for (i = 1; i <= n; i++)
 	{
 		argString = strchr(argv[i], '-');
@@ -663,6 +729,90 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 			extern int32_t useSubPixelRTC;
 			useSubPixelRTC = TRUE;
 		}
+		else if (strstr(argString, "minIncidence") != NULL)
+		{
+			extern double minIncidence;
+			sscanf(argv[i + 1], "%lf", &minIncidence);
+			i++;
+		}
+		else if (strstr(argString, "maxIncidence") != NULL)
+		{
+			extern double maxIncidence;
+			sscanf(argv[i + 1], "%lf", &maxIncidence);
+			i++;
+		}
+		else if (strstr(argString, "nearRange") != NULL)
+		{
+			extern int32_t rangeSelect;
+			if (rangeSelect != RANGESELECT_NONE)
+			{
+				fprintf(stderr, "\n\nCan't specify both nearRange and farRange \n\n");
+				usage();
+			}
+			rangeSelect = RANGESELECT_NEAR;
+		}
+		else if (strstr(argString, "farRange") != NULL)
+		{
+			extern int32_t rangeSelect;
+			if (rangeSelect != RANGESELECT_NONE)
+			{
+				fprintf(stderr, "\n\nCan't specify both nearRange and farRange \n\n");
+				usage();
+			}
+			rangeSelect = RANGESELECT_FAR;
+		}
+		else if (strstr(argString, "angleRamp") != NULL)
+		{
+			extern int32_t angleRamp;
+			angleRamp = TRUE;
+			angleGiven = TRUE;
+		}
+		else if (strstr(argString, "angleTolerance") != NULL)
+		{
+			extern double angleTolerance;
+			sscanf(argv[i + 1], "%lf", &angleTolerance);
+			angleGiven = TRUE;
+			i++;
+		}
+		else if (strstr(argString, "angleStride") != NULL)
+		{
+			extern int32_t angleStride;
+			sscanf(argv[i + 1], "%i", &angleStride);
+			angleGiven = TRUE;
+			i++;
+		}
+		else if (strstr(argString, "int16") != NULL)
+		{
+			extern int32_t int16Output;
+			int16Output = TRUE;
+		}
+		else if (strstr(argString, "gcov") != NULL)
+		{
+			*gcovYaml = argv[i + 1];
+			i++;
+		}
+		else if (strstr(argString, "calOutput") != NULL)
+		{
+			extern int32_t calOutput;
+			if (strcmp(argv[i + 1], "sigma0") == 0)
+			{
+				calOutput = CALOUTPUT_SIGMA0;
+			}
+			else if (strcmp(argv[i + 1], "gamma0") == 0)
+			{
+				calOutput = CALOUTPUT_GAMMA0;
+			}
+			else if (strcmp(argv[i + 1], "both") == 0)
+			{
+				calOutput = CALOUTPUT_BOTH;
+			}
+			else
+			{
+				fprintf(stderr, "\n\n-calOutput must be sigma0, gamma0, or both, not %s\n\n", argv[i + 1]);
+				usage();
+			}
+			i++;
+		}
 		else if (strstr(argString, "min") != NULL)
 		{
 			extern int32_t geoMosaicMode;
@@ -716,6 +866,74 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		fprintf(stderr, "nearest data %i %i %i\n", month, day, year);
 	}
 
+	/*
+	  Range selection composes as a per-pixel filter on the plain weighted average only. The
+	  replacement modes key off the scale buffer (a date for nearestDate, a passType for orbit
+	  priority) or compare feathered values (min/max, which would draw a line along every
+	  selection boundary), so they are refused rather than silently doing something odd.
+	*/
+	/*
+	  minIncidence/maxIncidence are a HARD gate, unlike the near/far tolerance: they drop the data
+	  from the unfiltered fallback as well, so a pixel seen only at a rejected angle is left empty
+	  rather than rescued. That is the point - the excluded geometry is considered unusable.
+	*/
+	if (minIncidence > 0.0 || maxIncidence < 1000.0)
+	{
+		extern int32_t useIncidence;
+		if (minIncidence >= maxIncidence)
+		{
+			fprintf(stderr, "\n\nminIncidence must be less than maxIncidence\n\n");
+			usage();
+		}
+		useIncidence = TRUE;
+		fprintf(stderr, "incidence gate = %.3f .. %.3f deg (hard, no fallback)\n",
+				minIncidence, maxIncidence);
+	}
+	if (rangeSelect != RANGESELECT_NONE)
+	{
+		extern int32_t geoMosaicMode;
+		extern int32_t useIncidence;
+		useIncidence = TRUE;
+		extern int32_t linearSubPixelRTC;
+		if (geoMosaicMode != GEOMOSAIC_AVERAGE)
+		{
+			fprintf(stderr, "\n\nCan't use nearRange/farRange with min or max\n\n");
+			usage();
+		}
+		if (*orbitPriority >= 0)
+		{
+			fprintf(stderr, "\n\nCan't use nearRange/farRange with ascending/descending priority\n\n");
+			usage();
+		}
+		if (*nearestDate > 0)
+		{
+			fprintf(stderr, "\n\nCan't use nearRange/farRange with nearestDate\n\n");
+			usage();
+		}
+		if (linearSubPixelRTC == TRUE && (*S1Cal & TRUE) == 0)
+		{
+			/* that branch leaves range/azimuth/h unset, so the selection angle is unavailable */
+			fprintf(stderr, "\n\nCan't use nearRange/farRange with linearSubPixelRTC unless S1Cal\n\n");
+			usage();
+		}
+		if (angleTolerance <= 0.0 || angleStride < 1)
+		{
+			fprintf(stderr, "\n\nangleTolerance must be > 0 and angleStride >= 1\n\n");
+			usage();
+		}
+		fprintf(stderr, "rangeSelect = %s, angleTolerance = %f deg, angleStride = %i, angleRamp = %i\n",
+				(rangeSelect == RANGESELECT_NEAR) ? "nearRange" : "farRange", angleTolerance, angleStride, angleRamp);
+	}
+	else if (angleGiven == TRUE)
+	{
+		fprintf(stderr, "\n\nangleTolerance/angleStride require nearRange or farRange\n\n");
+		usage();
+	}
+	if (int16Output == TRUE && (*driver == NULL || (*S1Cal & TRUE) == 0))
+	{
+		fprintf(stderr, "\n-int16 requires -S1Cal and -GTiff or -COG\n");
+		usage();
+	}
 	if(*driver == NULL && *byteScale == TRUE)
 	{
 		fprintf(stderr,"\nbyte scale only works with tiff output\n");
@@ -748,9 +966,13 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		fprintf(stderr, "\texponent %lf\n\n", byteScaleParams.exponent);
 	}
 
-	if (*orbitPriority >= 0 || (*S1Cal & TRUE) == TRUE)
-		if (*fl > 0)
-			error("Can use fl with orbitPriority or S1Cal");
+	/* Feathering is meaningless with orbit-priority replacement. (It was also refused with S1Cal
+	   since 2019 with no recorded reason; allowed from 2026-09-23 - note .gamma0 uses the last
+	   image's gamma correction in overlaps, feathered or not.) */
+	if (*orbitPriority >= 0 && *fl > 0)
+	{
+		error("Can't use fl with orbitPriority");
+	}
 
 	if (*rsatFineCal == TRUE)
 		fprintf(stderr, "rsatFineCal = TRUE\n");
@@ -762,6 +984,16 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		fprintf(stderr, "S1Cal = FALSE\n");
 	if ((*S1Cal & TRUE) == 0)
 		*S1Cal &= FALSE; /* Avoid output of sigma related vars if not cal */
+	if (calOutput == CALOUTPUT_SIGMA0)
+	{
+		*S1Cal &= ~GAMMASAVE; /* sigma0 only */
+	}
+	if (calOutput != CALOUTPUT_BOTH && (*S1Cal & TRUE) == 0)
+	{
+		fprintf(stderr, "Warning: -calOutput without -S1Cal only affects GCOV inputs\n");
+	}
+	if (*gcovYaml != NULL)
+		fprintf(stderr, "GCOV yaml = %s\n", *gcovYaml);
 	return;
 }
 
@@ -814,12 +1046,12 @@ static void parseBetaNought(inputImageStructure *inputImage)
 
 static void usage()
 {
-	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
 		  "mosaic images*",
 		  "Usage:", " \033[1mgeomosaic -rsatFineCal -S1Cal -noPower -noData -descending -ascending -nearestDate "
 					"YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL -smoothOut "
 					"smoothOut -fl fl -removePad pad -xyDEM \\ \n\t-ompThreads N -subPixelRTC -linearSubPixelRTC "
-					"-jacobianSubPixelRTC -maskLayover \\",
+					"-jacobianSubPixelRTC -maskLayover \\ \n\t-gcov gcov.yaml -calOutput sigma0|gamma0|both -int16 \\ \n\t-nearRange|-farRange -angleTolerance deg -angleStride n -angleRamp \\ \n\t-minIncidence deg -maxIncidence deg \\",
 		  "\tinputFile Demfile outPutImage\033[0m",
 		  "where\n",
 		   "\tGTiff =\t\t\t Save to geotiff files will add .tif extension if not present",
@@ -848,6 +1080,15 @@ static void usage()
 		  "\tlinearSubPixelRTC 	 = implies subPixelRTC; replace per-sub-pixel llToImageNew solves with a 3-point Jacobian + linear interpolation (~10-100x faster sub-pixel loop)",
 		  "\tjacobianSubPixelRTC	 = implies subPixelRTC; |J|-weighted sub-pixel accumulation; suppresses gamma0 in pure layover",
 		  "\tmaskLayover              = with any subPixelRTC flavor: suppress pixels where the Jacobian sign indicates layover (output MINS1DB); jacobianSubPixelRTC also masks partial layover",
+		  "\tgcov gcov.yaml     	 = also mosaic geocoded NISAR GCOV HDF5 files listed in yaml (polarization, frequency, useMask, glob, files); inputFile may list 0 products",
+		  "\tcalOutput          	 = sigma0, gamma0, or both [both]; with S1Cal selects outputs, without S1Cal selects GCOV quantity [gamma0]",
+		  "\tint16              	 = with S1Cal + GTiff/COG: write sigma0/gamma0 as Int16 dB*100 (scale 0.01, nodata -3000; lossless)",
+		  "\tnearRange, farRange	 = keep only inputs whose ellipsoidal incidence angle is within angleTolerance of the per-pixel min (nearRange) or max (farRange); not with min/max, ascending/descending or nearestDate",
+		  "\tangleTolerance deg 	 = tolerance for nearRange/farRange [1.0]",
+		  "\tangleStride n      	 = output pixels per incidence cell in the selection pre-pass [10]",
+		  "\tangleRamp           	 = fade each input out linearly over angleTolerance instead of a hard cut",
+		  "\tminIncidence deg   	 = drop data below this incidence angle (hard: not rescued by the fallback). Near-swath data is radiometrically unreliable; 32 deg trims ~21 km for NISAR 40 MHz",
+		  "\tmaxIncidence deg   	 = drop data above this incidence angle (hard)",
 		  "\tremovePad         	 = remove first pad lines from first and last col",
 		  "\txyDEM              	 = smoothDem is XY type with xyDEM.geodat file",
 		  "\tinputFile          	 = file with input params, dem and geodat filenames",

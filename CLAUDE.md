@@ -54,6 +54,51 @@ recoverable signal anyway. Flat-terrain comparisons (no layover) are good; resid
 differences are likely DEM-related (datum/geoid/resampling vs Copernicus GLO-30/90), not algorithm.
 Next step when revisiting: run with `-maskLayover` and re-compare against NISAR GCOV.
 
+## geomosaic near/far range selection (`-nearRange` / `-farRange`)
+
+Keeps only the inputs whose ellipsoidal incidence angle is within `-angleTolerance` (default 1 deg)
+of the per-pixel min or max, for both range/Doppler and GCOV inputs. Off by default and
+byte-identical to before when unused. Full description: `Documents/geomosaic.md`.
+
+Traps:
+- **Single pass does not work** - the running extremum makes the result depend on input file
+  order. Pass 1 establishes the extremum over all inputs first, on a coarse grid (`-angleStride`,
+  default 10 output pixels), reading no image data.
+- **Pass 1 sees geometry, not data**, so it can pick an input with no valid pixel there. A second,
+  unfiltered accumulator is kept and any pixel the filter empties falls back to it, so coverage is
+  identical to the plain mosaic by construction. The fallback rate is logged; it should be a
+  fraction of a percent.
+- **Pass 1 must apply exactly pass 2's validity test.** Accepting GCOV `mask != 255` rather than
+  `mask == 1` over-claims coverage and drove the far-range fallback from 0.3% to 11.6%.
+- **The unfiltered accumulator needs its own psi/gamma planes.** Sharing `psiBuf`/`gBuf` lets a
+  later file's unfiltered pass overwrite them, pairing selected sigma0 with an unselected gamma
+  correction in `.gamma0`.
+- **`lastTime` must be saved and restored** around the pass-1 geocoding, or the warm start moves
+  and a no-flag run stops being byte-identical.
+- `-min`/`-max`, `-ascending`/`-descending` and `-nearestDate` are refused: the first compares
+  feathered values, the others key off the scale buffer the fallback test reads.
+
+## NISAR GCOV inputs to geomosaic (`-gcov`, `geoMosaic/gcovMosaic.c`)
+
+`geomosaic -gcov file.yaml` mosaics already-geocoded NISAR GCOV HDF5 products, read directly
+through GDAL's HDF5 driver, either alongside range/Doppler images or instead of them (with
+`nFiles` 0 in the input list). They are added in a stage after the range/Doppler loop in
+`makeGeoMosaic`, reusing the same `computeScale`/`geoMosaicScaling` accumulation.
+`-calOutput sigma0|gamma0|both` selects the `-S1Cal` outputs; the default `both` is unchanged.
+Full description and verification are in `Documents/geomosaic.md` "NISAR GCOV Inputs".
+
+Traps:
+- **GDAL gives GCOV subdatasets no geotransform or CRS.** The grid comes from
+  `xCoordinates`/`yCoordinates` (pixel centres) plus the file-level `..._projection_epsg_code`
+  attribute. Scalar datasets such as `xCoordinateSpacing` and `zeroDopplerStartTime` are not
+  exposed through GDAL at all, so the date and pass direction come from the file name.
+- **Read in large strips.** The layers are gzip-compressed in 512×512 chunks. Reading `k` rows
+  at a time re-decompresses each chunk row about 512/k times: 493 s vs 34 s per frame.
+- The GCOV `mask` is a valid-sample / subswath mask (0 = invalid, 255 = fill), **not** a
+  layover/shadow mask.
+- `rtcGammaToSigmaFactor` can be negative or huge (seen: -59 to 3740). Samples with a factor
+  that is not positive and finite are dropped from both averages, so γ₀/σ₀ stays consistent.
+
 ## ISCE/NISAR flat-earth baseline (`tiePoints/`, `common/`)
 
 See root CLAUDE.md "ISCE/NISAR flat-earth baseline path" for the overview. Implementation:

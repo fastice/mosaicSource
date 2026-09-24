@@ -353,6 +353,7 @@ size_t fwriteOptionalBS(void *ptr, size_t nitems, size_t size, FILE *fp, int32_t
 */
 void outputGeocodedImage(outputImageStructure outputImage, char *outputFile);
 void outputGeocodedImageTiff(outputImageStructure outputImage, char *outputFile, char *driverType, const char *epsg, dictNode *summaryMetaData, float noDataValue, int32_t dataType);
+void outputGeocodedImageTiffScaled(outputImageStructure outputImage, char *outputFile, char *driverType, const char *epsg, dictNode *summaryMetaData, float noDataValue, int32_t dataType, double scale, double offset);
 /*
    Convert lat/lon and h to image coordinates using alogrithm by Shusun Li.
 */
