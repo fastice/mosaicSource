@@ -490,32 +490,61 @@ static double parseWKT(OGRSpatialReferenceH hSRS, const char *projection, const 
 	return paramValue;
 }
 
-static void getPolarStereoParams(GDALDatasetH hDataset, double *standardLat, double *rot)
-{
+static void getPolarStereoParams(GDALDatasetH hDataset, double *standardLat, double *rot, int32_t *hemisphere)
+/* Recover the GrIMP (rot, stdLat, hemisphere) triple from a polar stereographic WKT.
 
+   Three things here were wrong before and are load bearing once projections other
+   than 3413/3031 reach this code:
+
+   1. There was no check that the projection actually IS polar stereographic.  A UTM
+      WKT parses perfectly well here -- latitude_of_origin 0 and central_meridian =
+      the zone meridian -- and produced stdLat 0 / NORTH / rot = -CM with no
+      complaint: a silently wrong polar stereographic rather than an error.
+   2. stdLat was returned negative for southern grids, but lltoxy1 wants it positive
+      (the 3031 branch above hard-codes +71), so a generic southern PS came out wrong.
+   3. rot was set to -central_meridian for both hemispheres, but lltoxy1 negates the
+      longitude in the south, so its dlam corresponds to lon_0 = -dlam in the north
+      and lon_0 = +dlam in the south.  A ROTATED southern PS was therefore
+      sign-flipped.  EPSG:3031 has lon_0 = 0, which is why this never showed up. */
+{
 	const char *projectionConst = GDALGetProjectionRef(hDataset);
     if (projectionConst == NULL || strlen(projectionConst) == 0) {
         error("No projection found in the file.\n");
         return;
     }
 	char *projection = strdup(projectionConst);
+	/* OSRImportFromWkt advances the pointer, so keep the original for free(). */
+	char *projectionOrig = projection;
     OGRSpatialReferenceH hSRS = OSRNewSpatialReference(NULL);
     if (OSRImportFromWkt(hSRS, (char **)&projection) != OGRERR_NONE) {
         error("Failed to import spatial reference from WKT.\n");
     }
-	*standardLat = parseWKT(hSRS, projectionConst, "latitude_of_origin");
-	if(*standardLat < -90) {
-		*standardLat = parseWKT(hSRS, projectionConst, "latitude_of_standard_parallel");
+	const char *method = OSRGetAttrValue(hSRS, "PROJECTION", 0);
+	if (method == NULL || strstr(method, "Polar_Stereographic") == NULL)
+	{
+		error("readXYProjInfoGDAL: projection is \"%s\", not Polar_Stereographic.\n"
+		      "  Only polar stereographic grids can be described by the rot/stdLat pair.\n"
+		      "  Use -epsg or -wkt to state the output projection explicitly.",
+		      (method == NULL) ? "(none)" : method);
 	}
-	*rot = -1 * parseWKT(hSRS, projectionConst, "central_meridian");
-	
-	fprintf(stderr, "Rotation %lf\n", *rot);
-	fprintf(stderr, "Standard lat %lf\n", *standardLat);
-	if(*rot < -180. || *standardLat <= -90) 
+	double latOrigin = parseWKT(hSRS, projectionConst, "latitude_of_origin");
+	if(latOrigin < -90) {
+		latOrigin = parseWKT(hSRS, projectionConst, "latitude_of_standard_parallel");
+	}
+	double centralMeridian = parseWKT(hSRS, projectionConst, "central_meridian");
+	if(latOrigin < -90 || centralMeridian < -180.)
 	{
 		error("Could not parse Rotation and/or Standard lat");
 	}
+	*hemisphere = (latOrigin < 0) ? SOUTH : NORTH;
+	*standardLat = fabs(latOrigin);
+	/* lltoxy1's dlam: lon_0 = -dlam (north), lon_0 = +dlam (south) */
+	*rot = (*hemisphere == NORTH) ? -centralMeridian : centralMeridian;
+
+	fprintf(stderr, "Rotation %lf\n", *rot);
+	fprintf(stderr, "Standard lat %lf\n", *standardLat);
     OSRDestroySpatialReference(hSRS);
+    free(projectionOrig);
 }
 
 void readXYProjInfoGDAL(char *xyFile, void *obj,  int type)
@@ -540,14 +569,13 @@ void readXYProjInfoGDAL(char *xyFile, void *obj,  int type)
 	}
 	else
 	{
-		getPolarStereoParams(hDataset, &standardLat, &rot);
-		if(standardLat < 0)
-		{
-			setProjection(obj, type, rot, SOUTH, standardLat);
-		} else 
-		{
-			setProjection(obj, type, rot, NORTH, standardLat);
-		}
+		/* No EPSG authority code (or one we do not special-case): recover the polar
+		   stereographic parameters from the WKT.  getPolarStereoParams returns a
+		   positive standardLat and the hemisphere separately, and errors out if the
+		   projection is not polar stereographic. */
+		int32_t hemisphere = NORTH;
+		getPolarStereoParams(hDataset, &standardLat, &rot, &hemisphere);
+		setProjection(obj, type, rot, hemisphere, standardLat);
 	}
 	GDALClose(hDataset);
 }
@@ -617,11 +645,17 @@ static void getGeom(void *obj, int type, double *x0, double *y0, double *deltaX,
 
 
 static int32_t getEPSG(GDALDatasetH hDataset)
-{	// Get epsg from a tiff or vrt
-	int32_t epsg;
+{	// Get epsg from a tiff or vrt. Returns 0 when the file has no EPSG authority code,
+	// which is a legitimate case (e.g. a custom polar stereographic): the caller then
+	// falls back to parsing the projection parameters out of the WKT.
+	// epsg used to be left uninitialized on the "no authority code" path and returned as
+	// garbage, and the early return leaked both the SRS and the strdup'd WKT.
+	int32_t epsg = 0;
 	// Get the SRS
 	const char *projectionConst = GDALGetProjectionRef(hDataset);
-	char *projection = strdup(projectionConst);
+	char *projection = (projectionConst == NULL) ? NULL : strdup(projectionConst);
+	/* OSRImportFromWkt advances the pointer it is given, so keep the original to free. */
+	char *projectionOrig = projection;
 	OGRSpatialReferenceH hSRS = OSRNewSpatialReference(NULL);
 
 	if (projection != NULL && strlen(projection) > 0)
@@ -630,27 +664,24 @@ static int32_t getEPSG(GDALDatasetH hDataset)
 		if (OSRImportFromWkt(hSRS, &projection) != OGRERR_NONE)
 		{
 			fprintf(stderr, "Failed to import spatial reference.\n");
+			OSRDestroySpatialReference(hSRS);
+			free(projectionOrig);
 			return 0;
 		}
 	}
 	else
 	{
-		printf("No projection found in the file.\n");
+		fprintf(stderr, "No projection found in the file.\n");
 	}
 	// Attempt to identify the EPSG code
 	const char *epsgCode = OSRGetAuthorityCode(hSRS, NULL);
 	if (epsgCode != NULL)
 	{
-		printf("EPSG Code: %s\n", epsgCode);
 		epsg = atoi(epsgCode); // Convert EPSG code to integer
-		printf("EPSG Code as integer: %d\n", epsg);
-	}
-	else
-	{
-		printf("Failed to determine the EPSG code.\n");
 	}
 	OSRDestroySpatialReference(hSRS);
-	fprintf(stderr, "Returing epsg %i", epsg);
+	free(projectionOrig);
+	fprintf(stderr, "getEPSG: epsg %i\n", epsg);
 	return epsg;
 }
 

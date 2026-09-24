@@ -1197,12 +1197,24 @@ static void writeBinaryVRT(const char *vrtFile, const char **srcFiles,
 	}
 	GDALSetGeoTransform(ds, geoTransform);
 	if (epsg != NULL) {
+		/* OSRSetFromUserInput takes "EPSG:nnnnn", a proj string or WKT, so a grid with no
+		   EPSG code (custom polar stereographic) gets a real CRS too.  Callers pass a bare
+		   code such as "3413", which needs the "EPSG:" prefix. */
 		OGRSpatialReferenceH srs = OSRNewSpatialReference(NULL);
-		if (OSRImportFromEPSG(srs, atoi(epsg)) == OGRERR_NONE) {
+		char srsBuf[256];
+		const char *srsInput = epsg;
+		if (epsg[0] != '\0' && strspn(epsg, "0123456789") == strlen(epsg)) {
+			snprintf(srsBuf, sizeof(srsBuf), "EPSG:%s", epsg);
+			srsInput = srsBuf;
+		}
+		if (OSRSetFromUserInput(srs, srsInput) == OGRERR_NONE) {
 			char *wkt = NULL;
 			OSRExportToWkt(srs, &wkt);
 			GDALSetProjection(ds, wkt);
 			CPLFree(wkt);
+		} else {
+			fprintf(stderr, "writeBinaryVRT: could not interpret projection \"%s\" for %s\n",
+			        epsg, vrtFile);
 		}
 		OSRDestroySpatialReference(srs);
 	}
