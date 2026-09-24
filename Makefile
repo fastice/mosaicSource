@@ -72,13 +72,13 @@ CCFLAGS1= -O3
 #
 ifneq ("$(OSTYPE)", "Darwin")
 	NOPIE =	-no-pie
-	GDAL = -lgdal -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2 -lssh2 -llcms2
+	GDAL = -lgdal -lproj -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2 -lssh2 -llcms2
 	CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
 	CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) '
 else
 	GDALLIB = /opt/homebrew/lib
 	GDALINCLUDE = /opt/homebrew/include
-	GDAL = -lgdal -L/opt/homebrew/lib
+	GDAL = -lgdal -lproj -L/opt/homebrew/lib
 	CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS) -I$(GDALINCLUDE)'
 	CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) -I$(GDALINCLUDE)'
 endif
@@ -97,6 +97,7 @@ COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeScale.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeTiePoints.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/computeXYangle.o \
+	    		common/$(MACHTYPE)-$(OSTYPE)/grimpProj.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/earthRadiusFunctions.o \
 			common/$(MACHTYPE)-$(OSTYPE)/geojsonCode.o \
 			common/$(MACHTYPE)-$(OSTYPE)/iceRockMask.o \
