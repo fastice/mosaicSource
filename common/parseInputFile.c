@@ -268,23 +268,18 @@ static void parseGeoInfo(inputImageStructure *inputImage, char *line, char *inpu
 
 static void computeControlPointsXY(inputImageStructure *inputImage)
 {
-	extern int32_t HemiSphere;
-	extern double Rotation;
-	extern double SLat;
-	double lat, lon, x, y, sLat;
+	double lat, lon, x, y;
 	int i;
+	/* These bounds decide which frames overlap the output grid, so they have to be in the
+	   OUTPUT projection.  This used to build a polar stereographic from the globals,
+	   substituting stdLat 70/71 when SLat was still at its -91 sentinel; under -epsg that
+	   put every frame footprint in the wrong coordinate system and no frame intersected
+	   the output box.  grimpDefaultProj() is the resolved output projection and reproduces
+	   the old values exactly for a polar run, including the 70/71 default. */
+	const grimpProj *proj = grimpDefaultProj();
 	/*
 	  Input corner points
 	*/
-	if (SLat < -90.)
-	{ /* SLat not already set, then guess */
-		if (HemiSphere == NORTH)
-			sLat = 70.0;
-		else
-			sLat = 71.0;
-	}
-	else
-		sLat = SLat;
 	inputImage->minX = 1e30;
 	inputImage->maxX = -1.e30;
 	inputImage->minY = 1e30;
@@ -293,7 +288,7 @@ static void computeControlPointsXY(inputImageStructure *inputImage)
 	{
 		lat = inputImage->latControlPoints[i];
 		lon = inputImage->lonControlPoints[i];
-		lltoxy1(lat, lon, &x, &y, Rotation, sLat);
+		llToXYProj(lat, lon, &x, &y, proj);
 		// fprintf(stderr, "%lf %lf %lf %lf %lf\n", lat, lon, x, y, sLat);
 		inputImage->minX = min(inputImage->minX, x);
 		inputImage->maxX = max(inputImage->maxX, x);

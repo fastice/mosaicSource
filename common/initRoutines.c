@@ -332,7 +332,7 @@ double limitSlope(double slope, double maxSlope)
   Computer B matrix for 3D vel solution
  */
 void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi,
-			  double dPsi, xyDEM *xydem)
+			  double dPsi, xyDEM *xydem, const grimpProj *outProj)
 {
 	double zx1, zx2, zy1, zy2;
 	double x1, y1, x2, y2;
@@ -348,10 +348,29 @@ void computeB(double x, double y, double z, double B[2][2], double *dzdx, double
 	x2 = x - 0.5 * dx;
 	y1 = y + 0.5 * dy;
 	y2 = y - 0.5 * dy;
+	/* x,y are OUTPUT-grid coordinates, so step the four probe points in the output grid
+	   and convert each into the DEM's grid.  That makes dzdx/dzdy come out along the
+	   OUTPUT axes, which is what the B matrix needs since it couples them to the output
+	   frame's vx/vy.  Rotating afterwards would be wrong: a single rotation is only valid
+	   if the two grids differ by a constant angle, and they differ by the meridian
+	   convergence, which varies with position.
+	   When the projections match -- every case before -epsg existed -- outXYToProjXY is a
+	   no-op returning its inputs, so this is the original code with no extra work. */
+	if (outProj != NULL && !grimpProjSame(outProj, &(dem.proj)))
+	{
+		double px, py;
+		outXYToProjXY(x1, y, outProj, &(dem.proj), &px, &py);  zx1 = interpXYDEM(px, py, dem);
+		outXYToProjXY(x2, y, outProj, &(dem.proj), &px, &py);  zx2 = interpXYDEM(px, py, dem);
+		outXYToProjXY(x, y1, outProj, &(dem.proj), &px, &py);  zy1 = interpXYDEM(px, py, dem);
+		outXYToProjXY(x, y2, outProj, &(dem.proj), &px, &py);  zy2 = interpXYDEM(px, py, dem);
+	}
+	else
+	{
 	zx1 = interpXYDEM(x1, y, dem);
 	zx2 = interpXYDEM(x2, y, dem);
 	zy1 = interpXYDEM(x, y1, dem);
 	zy2 = interpXYDEM(x, y2, dem);
+	}
 	/* Zero slopes if bad data */
 	if (badZ(zx1) == TRUE || badZ(zx2) == TRUE || badZ(zy1) == TRUE || badZ(zy2) == TRUE)
 	{
@@ -553,10 +572,10 @@ void getIntersect(inputImageStructure *dPhaseImage, inputImageStructure *aPhaseI
 		int cpIdx[4] = {1, 2, 4, 3};
 		for (i = 0; i < 4; i++)
 		{
-			lltoxy1(aPhaseImage->latControlPoints[cpIdx[i]], aPhaseImage->lonControlPoints[cpIdx[i]],
-					&xaP[i], &yaP[i], Rotation, outputImage->slat);
-			lltoxy1(dPhaseImage->latControlPoints[cpIdx[i]], dPhaseImage->lonControlPoints[cpIdx[i]],
-					&xdP[i], &ydP[i], Rotation, outputImage->slat);
+			llToXYProj(aPhaseImage->latControlPoints[cpIdx[i]], aPhaseImage->lonControlPoints[cpIdx[i]],
+					&xaP[i], &yaP[i], &(outputImage->proj));
+			llToXYProj(dPhaseImage->latControlPoints[cpIdx[i]], dPhaseImage->lonControlPoints[cpIdx[i]],
+					&xdP[i], &ydP[i], &(outputImage->proj));
 		}
 	}
 	/* Fast reject: if the bounding boxes themselves don't overlap, the true
@@ -696,8 +715,8 @@ void getIntersectOld(inputImageStructure *dPhaseImage, inputImageStructure *aPha
 	*/
 	for (i = 0; i < 2; i++)
 	{
-		lltoxy1(aPhaseImage->latControlPoints[1 + i], aPhaseImage->lonControlPoints[1 + i], &xa1, &ya1, Rotation, outputImage->slat);
-		lltoxy1(aPhaseImage->latControlPoints[3 + i], aPhaseImage->lonControlPoints[3 + i], &xa2, &ya2, Rotation, outputImage->slat);
+		llToXYProj(aPhaseImage->latControlPoints[1 + i], aPhaseImage->lonControlPoints[1 + i], &xa1, &ya1, &(outputImage->proj));
+		llToXYProj(aPhaseImage->latControlPoints[3 + i], aPhaseImage->lonControlPoints[3 + i], &xa2, &ya2, &(outputImage->proj));
 		/*
 		  Compute line params
 		*/
@@ -723,8 +742,8 @@ void getIntersectOld(inputImageStructure *dPhaseImage, inputImageStructure *aPha
 
 		for (j = 0; j < 2; j++)
 		{
-			lltoxy1(dPhaseImage->latControlPoints[1 + j], dPhaseImage->lonControlPoints[1 + j], &xd1, &yd1, Rotation, outputImage->slat);
-			lltoxy1(dPhaseImage->latControlPoints[3 + j], dPhaseImage->lonControlPoints[3 + j], &xd2, &yd2, Rotation, outputImage->slat);
+			llToXYProj(dPhaseImage->latControlPoints[1 + j], dPhaseImage->lonControlPoints[1 + j], &xd1, &yd1, &(outputImage->proj));
+			llToXYProj(dPhaseImage->latControlPoints[3 + j], dPhaseImage->lonControlPoints[3 + j], &xd2, &yd2, &(outputImage->proj));
 			/*
 			  Compute line params
 			*/

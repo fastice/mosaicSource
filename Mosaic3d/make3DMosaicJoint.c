@@ -459,7 +459,7 @@ void make3DMosaicJoint(inputImageStructure *ascImages, inputImageStructure *desc
 					  row 0 is this image's own row -- reuses limitSlope()/badZ()/interpXYDEM()
 					  verbatim rather than reimplementing the slope.
 					*/
-					computeB(x, y, zWGS84, B, &dzdx, &dzdy, psi, psi, (xyDEM *)dem);
+					computeB(x, y, zWGS84, B, &dzdx, &dzdy, psi, psi, (xyDEM *)dem, &(outputImage->proj));
 					if (sMask == SHELF)
 					{
 						/* Zero slope coupling on ice shelves -- shelf-interior slope should be
@@ -600,7 +600,7 @@ void make3DMosaicJoint(inputImageStructure *ascImages, inputImageStructure *desc
 				x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
 				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
-				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem);
+				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem, &(outputImage->proj));
 				vz = vx * dzdx + vy * dzdy;
 				/*  Reduced chi-square: chi2 = Sdd - v.b (cross terms cancel at the solution).
 				    ~1 => the measurements agree with each other to within their own sigmas. */

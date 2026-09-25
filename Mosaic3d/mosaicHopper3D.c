@@ -773,7 +773,7 @@ if (da > -0.98 * LARGEINT)
 				x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
 				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
-				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem);
+				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem, &(outputImage->proj));
 				sMask2 = GROUNDED;
 				if (shelfMask != NULL) { sMask2 = getShelfMask(shelfMask, x, y); }
 				sx = dzdx;

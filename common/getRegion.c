@@ -148,8 +148,8 @@ static int clipSwathToOutputRect(inputImageStructure *image, outputImageStructur
         int cpIdx[4] = {1, 2, 4, 3};
         for (i = 0; i < 4; i++)
         {
-            lltoxy1(image->latControlPoints[cpIdx[i]], image->lonControlPoints[cpIdx[i]],
-                    &xa1, &ya1, Rotation, outputImage->slat);
+            llToXYProj(image->latControlPoints[cpIdx[i]], image->lonControlPoints[cpIdx[i]],
+                    &xa1, &ya1, &(outputImage->proj));
             xSwath[i] = xa1 * KMTOM;
             ySwath[i] = ya1 * KMTOM;
         }

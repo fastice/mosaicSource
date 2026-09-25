@@ -91,16 +91,18 @@ void initllToImageNew(inputImageStructure *inputImage)
 */
 static void computeFootprintPolygon(inputImageStructure *inputImage)
 {
-	extern int32_t HemiSphere;
-	extern double Rotation;
-	extern double SLat;
-	double sLat, cx[4], cy[4], ang[4], centX, centY;
+	/* The footprint polygon and checkLL's test point must be in the SAME projection;
+	   which one does not matter for a containment test, but under -epsg the legacy
+	   globals no longer describe the output grid, so use the resolved projection for
+	   both.  For a polar run grimpDefaultProj() reproduces the old rot/stdLat exactly,
+	   including the 70/71 substitution for the -91 sentinel. */
+	const grimpProj *proj = grimpDefaultProj();
+	double cx[4], cy[4], ang[4], centX, centY;
 	int32_t i, j, idx[4] = {0, 1, 2, 3}, tmp;
 
-	sLat = (SLat < -90.) ? ((HemiSphere == NORTH) ? 70.0 : 71.0) : SLat;
 	for (i = 0; i < 4; i++)
-		lltoxy1(inputImage->latControlPoints[i + 1], inputImage->lonControlPoints[i + 1],
-				&cx[i], &cy[i], Rotation, sLat);
+		llToXYProj(inputImage->latControlPoints[i + 1], inputImage->lonControlPoints[i + 1],
+				&cx[i], &cy[i], proj);
 	centX = (cx[0] + cx[1] + cx[2] + cx[3]) / 4.0;
 	centY = (cy[0] + cy[1] + cy[2] + cy[3]) / 4.0;
 	for (i = 0; i < 4; i++)
@@ -163,14 +165,12 @@ static double distToSegment(double px, double py, double x1, double y1, double x
 */
 static int32_t checkLL(double lat, double lon, inputImageStructure *inputImage)
 {
-	extern int32_t HemiSphere;
-	extern double Rotation;
-	extern double SLat;
-	double x, y, sLat, dmin;
+	/* Same projection as computeFootprintPolygon above -- see the note there. */
+	const grimpProj *proj = grimpDefaultProj();
+	double x, y, dmin;
 	int32_t i;
 
-	sLat = (SLat < -90.) ? ((HemiSphere == NORTH) ? 70.0 : 71.0) : SLat;
-	lltoxy1(lat, lon, &x, &y, Rotation, sLat);
+	llToXYProj(lat, lon, &x, &y, proj);
 
 	if (pointInPolygon(x, y, inputImage->footprintX, inputImage->footprintY, 4))
 		return TRUE;

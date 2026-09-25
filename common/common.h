@@ -401,7 +401,7 @@ double sphericalElev(double z, double lat, double Re);
 double sphericalToWGSElev(double z, double lat, double Re);
 void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage, inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint, const grimpProj *proj);
 double evaluateSquint(inputImageStructure *image, double rangeIndex, double azimuthIndex);
-void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi, xyDEM *xydem);
+void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi, xyDEM *xydem, const grimpProj *outProj);
 void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], double B[2][2], double *vx, double *vy, double *scaleX, double *scaleY);
 void getMosaicInputImage(inputImageStructure *inputImage, int32_t yMin, int32_t yMax);
 void getIonospherePhaseImage(inputImageStructure *inputImage, float *buf, int32_t yMin, int32_t yMax);

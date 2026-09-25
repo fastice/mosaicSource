@@ -18,7 +18,8 @@ static void parseAntPat(char *antPatFile, inputImageStructure *inputImage);
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
 					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale,
-					 char **gcovYaml);
+					 char **gcovYaml, int32_t *epsg, char **wktFile);
+static void resolveOutputProjGeo(outputImageStructure *outputImage, xyDEM *xyDem, int32_t epsg, char *wktFile);
 static void usage();
 static void processMosaicDateGeo(outputImageStructure *outputImage, char *date1, char *date2);
 static void parseBetaNought(inputImageStructure *inputImage);
@@ -105,6 +106,8 @@ int main(int argc, char *argv[])
 	char tmp[2048];
 	char *driver;
 	char *gcovYaml;
+	int32_t epsgArg;
+	char *wktFile;
 	gcovInputs gcovData, *gcov;
 	/*
 	   Read command line args and compute filenames
@@ -115,7 +118,7 @@ int main(int argc, char *argv[])
 	smoothBuf = NULL;
 	readArgs(argc, argv, &inputFile, &demFile, &outFile, &fl, &removePad, &nearestDate, &noPower,
 			 &hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData, &driver, &byteScale,
-			 &gcovYaml);
+			 &gcovYaml, &epsgArg, &wktFile);
 	/* Optional already geocoded NISAR GCOV inputs */
 	gcov = NULL;
 	if (gcovYaml != NULL)
@@ -125,7 +128,9 @@ int main(int argc, char *argv[])
 	}
 	/* This step just reads in the dem projection info, which is then used for the outputs */
 	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
-	outputImage.slat = xyDem.stdLat;
+	/* Settle the output projection: the DEM's unless -epsg/-wkt overrides it.  Must happen
+	   before outputBounds(), which already projects control points. */
+	resolveOutputProjGeo(&outputImage, &xyDem, epsgArg, wktFile);
 	processMosaicDateGeo(&outputImage, date1, date2);
 	/*
 	  read inputfile (uses routine from mosaicDEMS).
@@ -186,7 +191,7 @@ int main(int argc, char *argv[])
 		else
 		{
 			dictNode *summaryMetaData = NULL;
-			const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);
+			const char *epsg = grimpSRSString(&(outputImage.proj));
 			if(byteScale == FALSE) {
 				dataType = GDT_Float32;
 			} 
@@ -240,7 +245,7 @@ static void outputS1Cal(outputImageStructure outputImage, char *outFile, float *
 	char tmp[2048], *psiFile, *gFile, *sigFile;
 	float **tmpFloat;
 	int32_t i, j;
-	const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);	
+	const char *epsg = grimpSRSString(&(outputImage.proj));	
 	/*
 	  output image
 	 */
@@ -408,7 +413,7 @@ static void outputBounds(inputImageStructure *inputImage, outputImageStructure *
 		for (j = 1; j < 5; j++)
 		{
 			// fprintf(stderr, "%f %f\n", inputImage[i].latControlPoints[j], inputImage[i].lonControlPoints[j]);
-			lltoxy1(inputImage[i].latControlPoints[j], inputImage[i].lonControlPoints[j], &x, &y, Rotation, outputImage->slat);
+			llToXYProj(inputImage[i].latControlPoints[j], inputImage[i].lonControlPoints[j], &x, &y, &(outputImage->proj));
 			minX = min(x, minX);
 			minY = min(y, minY);
 			maxX = max(x, maxX);
@@ -535,10 +540,55 @@ static void parseAntPat(char *antPatFile, inputImageStructure *inputImage)
 	}
 }
 
+/*
+  Settle geomosaic's output map projection.  Same contract as mosaic3d's
+  resolveOutputProj: without -epsg/-wkt the projection is the DEM's, exactly as before.
+*/
+static void resolveOutputProjGeo(outputImageStructure *outputImage, xyDEM *xyDem, int32_t epsg, char *wktFile)
+{
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	extern double SLat;
+
+	if (epsg != 0 && wktFile != NULL)
+		error("geomosaic: give -epsg or -wkt, not both");
+	if (epsg == 0 && wktFile == NULL)
+	{
+		outputImage->proj = grimpProjFromLegacy(Rotation, (SLat < -90.) ? xyDem->stdLat : SLat,
+											   HemiSphere);
+	}
+	else
+	{
+		if (wktFile != NULL)
+		{
+			FILE *fp = openInputFile(wktFile);
+			static char wkt[8192];
+			size_t n = fread(wkt, 1, sizeof(wkt) - 1, fp);
+			wkt[n] = '\0';
+			fclose(fp);
+			outputImage->proj = grimpProjFromSRS(wkt);
+		}
+		else
+		{
+			outputImage->proj = grimpProjFromEPSG(epsg);
+		}
+		HemiSphere = outputImage->proj.hemisphere;
+		Rotation = outputImage->proj.rot;
+		SLat = (outputImage->proj.kind == GP_PS) ? outputImage->proj.stdLat : -91.;
+		fprintf(stderr, "\n**** OUTPUT PROJECTION OVERRIDDEN: %s ****\n",
+				grimpProjDescribe(&(outputImage->proj)));
+	}
+	outputImage->slat = outputImage->proj.stdLat;
+	grimpSetDefaultProj(&(outputImage->proj));
+	grimpProjRegisterPair(&(outputImage->proj), &(xyDem->proj));
+	grimpProjPrepareThreads();
+	fprintf(stderr, "Output projection: %s\n", grimpProjDescribe(&(outputImage->proj)));
+}
+
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int32_t *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
 					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale,
-					 char **gcovYaml)
+					 char **gcovYaml, int32_t *epsg, char **wktFile)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -549,12 +599,14 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	int32_t i, n;
 	int32_t angleGiven = FALSE;
 
-	if (argc < 4 || argc > 64)
+	if (argc < 4 || argc > 70)   /* raised for -epsg / -wkt, two argv slots each */
 	{
 		fprintf(stderr, "To many/few args %i", argc);
 		usage();
 	} /* Check number of args */
 	n = argc - 4;
+	*epsg = 0;
+	*wktFile = NULL;
 	*fl = 0.0;
 	*removePad = 0;
 	*nearestDate = -1;
@@ -733,6 +785,23 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		{
 			extern double minIncidence;
 			sscanf(argv[i + 1], "%lf", &minIncidence);
+			i++;
+		}
+		/* Output projection.  "epsg"/"wkt" collide with no other geomosaic flag, but keep
+		   them ahead of the generic -min/-max tests anyway. */
+		else if (strstr(argString, "epsg") != NULL)
+		{
+			if (i + 1 >= argc || sscanf(argv[i + 1], "%i", epsg) != 1)
+			{
+				fprintf(stderr, "-epsg needs an EPSG code, e.g. -epsg 32608\n");
+				usage();
+			}
+			i++;
+		}
+		else if (strstr(argString, "wkt") != NULL)
+		{
+			if (i + 1 >= argc) { fprintf(stderr, "-wkt needs a file\n"); usage(); }
+			*wktFile = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "maxIncidence") != NULL)

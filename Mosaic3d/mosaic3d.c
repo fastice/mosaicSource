@@ -47,7 +47,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 						char *shelfMaskFile, char *extraTieFile,
 						char *tideFile, char *verticalCorrectionFile, float fl, int32_t statsFlag, int32_t threeDOffFlag,
 						double tieThresh, referenceVelocity *refVel, mosaicArgs *args);
-static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int32_t epsg, char *wktFile);
+static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int32_t epsg, char *wktFile, int32_t final);
 static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFiles, char **phaseFiles, char **baselineFiles,
 							char **rOffsetFiles, char **rParamsFiles, char **offsetFiles, char **azParamsFiles, float *nDays, float *weights,
 							int32_t *crossFlags, int32_t nFiles, int32_t offsetFlag);
@@ -250,6 +250,12 @@ int main(int argc, char *argv[])
 	outputImage.sigmaAThresh = args.sigmaAThresh;
 	/* Added August 2021 to set projection parameters from DEM */
 	readXYDEMGeoInfo(args.demFile, &dem, TRUE);
+	/* Provisional resolution, so the routines that consult grimpDefaultProj() during
+	   setup3D (computeControlPointsXY, checkLL) have a projection.  At this point the
+	   globals hold the DEM's values, which is exactly what those routines used before --
+	   get3DProj() may still change HemiSphere below, and the final call after it picks
+	   that up for the OUTPUT grid, matching the old ordering on both counts. */
+	resolveOutputProj(&outputImage, &dem, args.epsg, args.wktFile, FALSE);
 
 	/* Removed no offset flag version */
 	processMosaicDate(&outputImage, args.date1, args.date2);
@@ -280,7 +286,7 @@ int main(int argc, char *argv[])
 	  Determine hemisphere
 	*/
 	get3DProj(ascImages, descImages, nAsc, nDesc, args.north, &outputImage);
-	resolveOutputProj(&outputImage, &dem, args.epsg, args.wktFile);
+	resolveOutputProj(&outputImage, &dem, args.epsg, args.wktFile, TRUE);
 	/* Process landsat images */
 	LSImages = NULL;
 	if (args.landSatFile != NULL)
@@ -417,6 +423,37 @@ int main(int argc, char *argv[])
 		double demXmax = (outputImage.originX + outputImage.xSize * outputImage.deltaX) * MTOKM + demPadKm;
 		double demYmin = outputImage.originY * MTOKM - demPadKm;
 		double demYmax = (outputImage.originY + outputImage.ySize * outputImage.deltaY) * MTOKM + demPadKm;
+		/* The crop window is in OUTPUT coordinates, but readXYDEMcrop indexes the DEM in
+		   the DEM's own grid.  When the two projections differ, walk the output box's
+		   perimeter into the DEM's grid and take its bounding box -- the corners alone are
+		   not enough, because the mapping between two projections is not affine and the
+		   extreme values can occur along an edge. */
+		if (!grimpProjSame(&(outputImage.proj), &(dem.proj)))
+		{
+			double bx0 = demXmin, bx1 = demXmax, by0 = demYmin, by1 = demYmax;
+			double nx = 1e30, xx = -1e30, ny = 1e30, xy = -1e30;
+			int32_t k, nStep = 100;
+			for (k = 0; k <= nStep; k++)
+			{
+				double f = (double)k / nStep;
+				double px, py, edges[4][2] = {{bx0 + f * (bx1 - bx0), by0},
+											  {bx0 + f * (bx1 - bx0), by1},
+											  {bx0, by0 + f * (by1 - by0)},
+											  {bx1, by0 + f * (by1 - by0)}};
+				int32_t e;
+				for (e = 0; e < 4; e++)
+				{
+					outXYToProjXY(edges[e][0], edges[e][1], &(outputImage.proj), &(dem.proj),
+								  &px, &py);
+					nx = min(nx, px); xx = max(xx, px);
+					ny = min(ny, py); xy = max(xy, py);
+				}
+			}
+			demXmin = nx - demPadKm; demXmax = xx + demPadKm;
+			demYmin = ny - demPadKm; demYmax = xy + demPadKm;
+			fprintf(stderr, "DEM is in a different projection; crop window in DEM coords "
+							"x %.1f..%.1f y %.1f..%.1f km\n", demXmin, demXmax, demYmin, demYmax);
+		}
 		readXYDEMcrop(args.demFile, &dem, demXmin, demXmax, demYmin, demYmax);
 	}
 	for (tmpP = params; tmpP != NULL; tmpP = tmpP->next)
@@ -982,7 +1019,7 @@ static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descI
   With -epsg or -wkt the descriptor comes from that instead, and the three globals are
   written BACK from it so the call sites not yet converted stay consistent with it.
 */
-static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int32_t epsg, char *wktFile)
+static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int32_t epsg, char *wktFile, int32_t final)
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
@@ -1018,12 +1055,13 @@ static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int
 		HemiSphere = outputImage->proj.hemisphere;
 		Rotation = outputImage->proj.rot;
 		SLat = (outputImage->proj.kind == GP_PS) ? outputImage->proj.stdLat : -91.;
-		fprintf(stderr, "\n**** OUTPUT PROJECTION OVERRIDDEN: %s ****\n",
-				grimpProjDescribe(&(outputImage->proj)));
-		if (outputImage->fpLog != NULL)
+		if (final)
+			fprintf(stderr, "\n**** OUTPUT PROJECTION OVERRIDDEN: %s ****\n",
+					grimpProjDescribe(&(outputImage->proj)));
+		if (final && outputImage->fpLog != NULL)
 			fprintf(outputImage->fpLog, "; **** output projection overridden: %s ****\n;\n",
 					grimpProjDescribe(&(outputImage->proj)));
-		if (!grimpProjSame(&(outputImage->proj), &(dem->proj)))
+		if (final && !grimpProjSame(&(outputImage->proj), &(dem->proj)))
 			fprintf(stderr, "     DEM is in a different projection (%s); its x/y will be "
 							"converted as needed\n", grimpProjDescribe(&(dem->proj)));
 	}
@@ -1035,7 +1073,8 @@ static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int
 	grimpProjRegisterPair(&(outputImage->proj), &(dem->proj));
 	/* Serial pre-init of every per-thread PROJ object, before any parallel region. */
 	grimpProjPrepareThreads();
-	fprintf(stderr, "Output projection: %s\n", grimpProjDescribe(&(outputImage->proj)));
+	if (final)
+		fprintf(stderr, "Output projection: %s\n", grimpProjDescribe(&(outputImage->proj)));
 }
 
 static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFiles, char **phaseFiles, char **baselineFiles, char **rOffsetFiles,
@@ -1316,7 +1355,10 @@ static void write3DFlatVRTs(outputImageStructure outputImage, char *outFileBase,
 	computeGeoTransform(geoTransform, outputImage.originX, outputImage.originY,
 	                    outputImage.xSize, outputImage.ySize,
 	                    outputImage.deltaX, outputImage.deltaY);
-	const char *epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere);
+	/* grimpSRSString returns "EPSG:nnnnn" when the grid has a code, and a proj string
+	   otherwise, so a custom polar stereographic (no EPSG code) can be written too.
+	   The old call could only name 3413/3031 and error()ed on anything else. */
+	const char *epsg = grimpSRSString(&(outputImage.proj));
 
 	if (outputImage.outputRAFlag) {
 		vxDesc = "vr"; vyDesc = "va";
@@ -1628,8 +1670,8 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 	// Get epsg code
 	if(epsg == NULL)
 	{
-		epsg = getEPSGFromProjectionParams(Rotation, SLat, HemiSphere); 
-	}	
+		epsg = grimpSRSString(&(outputImage.proj));
+	}
 	// Save files as tiffs
 	// Vx
 	saveAsGeotiff(outFileVx, (float *)outputImage.image[0], outputImage.xSize,

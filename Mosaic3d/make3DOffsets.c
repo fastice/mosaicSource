@@ -418,7 +418,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 							if (A[0][0] != -LARGEINT)
 							{
 								/*  Compute B (note B is really C in the TGARS paper	*/
-								computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem);
+								computeB(x, y, zWGS84, B, &dzdx, &dzdy, aPsi, dPsi, (xyDEM *)dem, &(outputImage->proj));
 								if (sMask == SHELF)
 								{
 									/* Zero slope coupling in the crossing-pair solve on ice shelves --

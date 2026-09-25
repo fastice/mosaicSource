@@ -464,7 +464,7 @@ void mosaicHopper(inputImageStructure *ascImages, inputImageStructure *descImage
 					    make3DOffsetsJoint caught. */
 					gammaPh = xyAngle - hAngleSq;
 					gamma = xyAngle - hAngle;
-					computeB(x, y, zWGS84, B, &dzdx, &dzdy, psi, psi, (xyDEM *)dem);
+					computeB(x, y, zWGS84, B, &dzdx, &dzdy, psi, psi, (xyDEM *)dem, &(outputImage->proj));
 					if (sMask == SHELF) { B[0][0] = 0.0; B[0][1] = 0.0; }
 					/*  ---- ROW 1: PHASE ------------------------------------------------
 					    Slope coupling is shared by the two LOS observables, so B[][] computed
@@ -750,7 +750,7 @@ if (da > -0.98 * LARGEINT)
 				x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
 				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
-				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem);
+				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem, &(outputImage->proj));
 				vz = vx * dzdx + vy * dzdy;
 				/*  Reduced chi-square: chi2 = Sdd - v.b (cross terms cancel at the solution).
 				    ~1 => the measurements agree with each other to within their own sigmas. */
