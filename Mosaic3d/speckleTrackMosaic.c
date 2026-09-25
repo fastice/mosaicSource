@@ -269,7 +269,7 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 						  Convert x/y stereographic coords to lat/lon
 						*/
 						x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-						xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+						xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 						/*
 						  Get slope and elevation
 						*/
@@ -374,7 +374,10 @@ if (da > -0.98 * LARGEINT)
 								/*
 								   Compute flow direction in xy coords from dem and angle of x from north
 								*/
-								computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
+								/* Velocity components live in the OUTPUT grid, so the rotation must use the
+						   output projection, not the DEM's.  Identical while the two agree,
+						   which was always true before -epsg existed. */
+						computeXYangleProj(lat, lon, &xyAngle, &(outputImage->proj));
 								/*
 								  Note va for left sign flip done in azOffset
 								*/

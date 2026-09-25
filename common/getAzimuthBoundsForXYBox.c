@@ -17,7 +17,7 @@ static void samplePoint(int i, int j,
     double lat, lon, azimuth, range;
     double y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
     double x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-    xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+    xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
     llToImageNew(lat, lon, 0, &range, &azimuth, currentImage);
     if (azimuth >= 0.0 && azimuth <= maxA && range >= 0.0 && range <= maxR)
     {

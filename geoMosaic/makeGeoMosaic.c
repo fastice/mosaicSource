@@ -289,7 +289,7 @@ static double areaAboutXY(double range, double azimuth, double x, double y, inpu
 			if (!((i == 0) && (j == 0)))
 			{ /* Don't redo (0,0) case */
 				y1 = y + j * outputImage->deltaY * MTOKM;
-				xytoll1(x1, y1, HemiSphere, &lat1, &lon1, Rotation, outputImage->slat);
+				xyToLLProj(x1, y1, &lat1, &lon1, &(outputImage->proj));
 				hWGS = getXYHeight(lat1, lon1, dem, inputImage->cpAll.Re, ELLIPSOIDAL);
 				llToImageNew(lat1, lon1, hWGS, &range1, &azimuth1, inputImage);
 				/*
@@ -534,7 +534,7 @@ static void incidenceCoarseRD(inputImageStructure *inputImage, outputImageStruct
 		{
 			j1 = incCellCentre(incBuf, TRUE, cj);
 			x = (outputImage->originX + j1 * outputImage->deltaX) * MTOKM;
-			xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+			xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 			h = getXYHeight(lat, lon, dem, myImg.cpAll.Re, SPHERICAL);
 			hWGS = sphericalToWGSElev(h, lat, myImg.cpAll.Re);
 			llToImageNew(lat, lon, hWGS, &range, &azimuth, &myImg);
@@ -1229,7 +1229,7 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 			/* Get elevation */
 			if (hybridZ > 0)
 			{
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				hWGS = getXYHeight(lat, lon, dem, inputImage->cpAll.Re, ELLIPSOIDAL);
 			}
 			else

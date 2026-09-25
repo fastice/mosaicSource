@@ -294,7 +294,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 						  Convert x/y stereographic coords to lat/lon
 						*/
 						x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-						xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+						xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 						zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 						validData = FALSE;
 						/*
@@ -409,7 +409,7 @@ void make3DOffsets(inputImageStructure *allImages, vhParams *aParams, xyDEM *dem
 								   velocity at the assigned time, independent of squint (see
 								   mosaicSource/CLAUDE.md "Squint"). So this path never applies the
 								   correction, flag or no flag -- not an oversight. */
-								computeA(lat, lon, x, y, myAImg, myDImg, A, FALSE);
+								computeA(lat, lon, x, y, myAImg, myDImg, A, FALSE, &(outputImage->proj));
 								rowAset = TRUE;
 							}
 							/*

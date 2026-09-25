@@ -88,7 +88,7 @@ void writeTieFile(outputImageStructure *outputImage, xyDEM *dem, xyDEM *vzCorrec
 			/* If valid point, output */
 			if (v < tieThresh && errorV < eThresh && errorV > 0.0 && fabs(vZimage[i][j]) < 0.04 * tieThresh)
 			{
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				z = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 				if (lon > 180)
 					lon -= 360.;

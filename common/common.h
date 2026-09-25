@@ -345,7 +345,9 @@ double azimuthAccuracyVar(Offsets *offsets);
 float bilinearInterp(float **fimage, double range, double azimuth, int32_t nr, int32_t na, float minvalue, float noData);
 
 void computeXYangle(double lat, double lon, double *xyAngle, xyDEM xydem);
-void computeXYangleXY(double x, double y, double *xyAngle);
+/* computeXYangleXY took only x,y, which cannot work for UTM (the convergence needs
+   lat/lon), so it is replaced by computeXYangleProj. */
+void computeXYangleProj(double lat, double lon, double *xyAngle, const grimpProj *proj);
 void computeXYangleNoDem(double lat, double lon, double *xyAngle, double stdLat);
 void endScale(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY, float **scaleX,
 			  float **scaleY, float **scaleZ, int statsFlag);
@@ -397,7 +399,7 @@ void interpTideError(double *phaseError, inputImageStructure *phaseImage, vhPara
 
 double sphericalElev(double z, double lat, double Re);
 double sphericalToWGSElev(double z, double lat, double Re);
-void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage, inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint);
+void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage, inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint, const grimpProj *proj);
 double evaluateSquint(inputImageStructure *image, double rangeIndex, double azimuthIndex);
 void computeB(double x, double y, double z, double B[2][2], double *dzdx, double *dzdy, double aPsi, double dPsi, xyDEM *xydem);
 void computeVxy(double aP, double dP, double aPe, double dPe, double A[2][2], double B[2][2], double *vx, double *vy, double *scaleX, double *scaleY);

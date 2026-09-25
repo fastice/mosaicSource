@@ -20,6 +20,7 @@ static void getCropBounds(GDALDatasetH hDataset, double xMin, double xMax, doubl
 static void readXYGeoInfo(char *xyFile, void *xyImage, int32_t resetProjection, int type);
 static void readXYGeoInfoGDAL(char *xyFile, void *xyImage, int type);
 static void setProjection(void *obj, int type, double rot, int hemisphere, double stdLat);
+static void setProjectionFromProj(void *obj, int type, const grimpProj *proj);
 static void getProjection(void *obj, int type, double *rot, int *hemisphere, double *stdLat);
 static void readXYProjInfoGDAL(char *xyFile, void *obj,  int type);
 static void getXYSize(void *xyImage, int32_t type, int *xSize, int *ySize);
@@ -431,19 +432,45 @@ static void getProjection(void *obj, int type, double *rot, int *hemisphere, dou
 	}
 }
 
-static void setProjection(void *obj, int type, double rot, int hemisphere, double stdLat) 
+static void setProjectionFromProj(void *obj, int type, const grimpProj *proj)
+{ // Set both representations from a resolved descriptor.  Needed for anything that is
+  // not polar stereographic: grimpProjFromLegacy() can only ever produce GP_PS, so a
+  // UTM DEM has to come in this way or it would silently be treated as polar.
+	if(type == DEM) {
+		xyDEM *xydem = (xyDEM *) obj;
+		xydem->proj = *proj;
+		xydem->rot = proj->rot;
+		xydem->hemisphere = proj->hemisphere;
+		xydem->stdLat = proj->stdLat;
+	} else if(type == VELOCITY)
+	{
+		xyVEL *xyvel = (xyVEL *) obj;
+		xyvel->proj = *proj;
+		xyvel->rot = proj->rot;
+		xyvel->hemisphere = proj->hemisphere;
+		xyvel->stdLat = proj->stdLat;
+	}
+}
+
+static void setProjection(void *obj, int type, double rot, int hemisphere, double stdLat)
 { // Set the projection parameters for an xyDEM or xyVel as indicated by type with DEM or VELOCITY
+  // Fills BOTH the legacy rot/hemisphere/stdLat triple (read by 40+ sites) and the
+  // grimpProj descriptor, which is the single place the two representations are tied
+  // together.  Every reader funnels through here, so each xyDEM/xyVEL gets a proj.
+	grimpProj proj = grimpProjFromLegacy(rot, stdLat, hemisphere);
 	if(type == DEM) {
 		xyDEM *xydem = (xyDEM *) obj;
 		xydem->rot = rot;
 		xydem->hemisphere = hemisphere;
 		xydem->stdLat = stdLat;
+		xydem->proj = proj;
 	} else if(type == VELOCITY)
 	{
 		xyVEL *xyvel = (xyVEL *) obj;
 		xyvel->rot = rot;
 		xyvel->hemisphere = hemisphere;
 		xyvel->stdLat = stdLat;
+		xyvel->proj = proj;
 	}
 }
 
@@ -566,6 +593,15 @@ void readXYProjInfoGDAL(char *xyFile, void *obj,  int type)
 	 else if(epsg == 3031)
 	{
 		setProjection(obj, type, 0.0, SOUTH, 71.0);
+	}
+	else if(epsg != 0)
+	{
+		/* Any other file with a real EPSG authority code: let grimpProjFromSRS decode
+		   it, which also accepts UTM and refuses anything non-conformal.  3413/3031 are
+		   kept as explicit branches above so their values stay literally as before. */
+		grimpProj proj = grimpProjFromEPSG(epsg);
+		fprintf(stderr, "readXYProjInfoGDAL: %s -> %s\n", xyFile, grimpProjDescribe(&proj));
+		setProjectionFromProj(obj, type, &proj);
 	}
 	else
 	{

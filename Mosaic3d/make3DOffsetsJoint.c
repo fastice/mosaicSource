@@ -241,7 +241,7 @@ void make3DOffsetsJoint(inputImageStructure *allImages, vhParams *aParams, xyDEM
 				for (jj = jMin; jj < jMax; jj++)
 				{
 					x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+					xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 					zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 					if (!(zWGS84 > MINELEVATION))
 					{
@@ -317,11 +317,10 @@ void make3DOffsetsJoint(inputImageStructure *allImages, vhParams *aParams, xyDEM
 					savedLastTime = myImg->lastTime;
 					hAngle = computeHeading(lat, lon, 0.0, myImg, &(myImg->cpAll));
 					myImg->lastTime = savedLastTime;
-					xyAngle = atan2(-y, -x);
-					if (HemiSphere == SOUTH)
-					{
-						xyAngle += PI;
-					}
+					/* xyAngle = PI/2 + meridian convergence.  For polar stereographic this returns
+					   the original atan2(-y,-x), plus PI in the south, bit for bit; for UTM it uses
+					   the true convergence.  Algebraically they are the same formula. */
+					xyAngle = grimpXYAngle(lat, lon, x, y, &(outputImage->proj));
 					gamma = xyAngle - hAngle;
 					computeB(x, y, zWGS84, B, &dzdx, &dzdy, psi, psi, (xyDEM *)dem);
 					if (sMask == SHELF)
@@ -435,7 +434,7 @@ void make3DOffsetsJoint(inputImageStructure *allImages, vhParams *aParams, xyDEM
 					continue;
 				}
 				x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem);
 				vz = vx * dzdx + vy * dzdy;

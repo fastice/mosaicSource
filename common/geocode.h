@@ -8,6 +8,7 @@
 #define LSB 0
 #define MSB 1
 #include "gdalIO/gdalIO/grimpgdal.h"
+#include "mosaicSource/common/grimpProj.h"
 /*
   This is the include file for using geocode routines with other programs.
 */
@@ -23,6 +24,9 @@ typedef struct shelfMaskType
 	double stdLat;
 	int32_t hemisphere;
 	double rot;
+	/* Full projection descriptor.  rot/stdLat/hemisphere above are kept because
+	   40+ sites read them; for kind == GP_PS they mirror this exactly. */
+	grimpProj proj;
 	unsigned char **mask;
 } ShelfMask;
 
@@ -79,6 +83,9 @@ typedef struct xyDEMTYPE
 	double stdLat;
 	int32_t hemisphere;
 	double rot;
+	/* Full projection descriptor.  rot/stdLat/hemisphere above are kept because
+	   40+ sites read them; for kind == GP_PS they mirror this exactly. */
+	grimpProj proj;
 	float **z;
 } xyDEM;
 
@@ -93,6 +100,9 @@ typedef struct xyVELTYPE
 	double stdLat;
 	int32_t hemisphere;
 	double rot;
+	/* Full projection descriptor.  rot/stdLat/hemisphere above are kept because
+	   40+ sites read them; for kind == GP_PS they mirror this exactly. */
+	grimpProj proj;
 	float **vx;
 	float **vy;
 } xyVEL;
@@ -207,6 +217,10 @@ typedef struct outputImageType
 	double originX;
 	double originY;
 	double slat; /* this has not been fully implemented yet */
+	/* The authoritative projection of the OUTPUT grid.  Set once by
+	   resolveOutputProj() and read wherever an output x/y is converted.
+	   slat is kept because a dozen sites still read it. */
+	grimpProj proj;
 	int32_t makeTies;
 	void **image;
 	void **image2; /* Second Image for special applications (i.e vx,vy) */

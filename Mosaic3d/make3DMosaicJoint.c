@@ -363,7 +363,7 @@ void make3DMosaicJoint(inputImageStructure *ascImages, inputImageStructure *desc
 				for (jj = jMin; jj < jMax; jj++)
 				{
 					x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+					xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 					zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 					if (!(zWGS84 > MINELEVATION))
 					{
@@ -449,11 +449,10 @@ void make3DMosaicJoint(inputImageStructure *ascImages, inputImageStructure *desc
 						hAngle += evaluateSquint(myImg, sqRange, sqAzimuth) * DTOR;
 					}
 					myImg->lastTime = savedLastTime;
-					xyAngle = atan2(-y, -x);
-					if (HemiSphere == SOUTH)
-					{
-						xyAngle += PI;
-					}
+					/* xyAngle = PI/2 + meridian convergence.  For polar stereographic this returns
+					   the original atan2(-y,-x), plus PI in the south, bit for bit; for UTM it uses
+					   the true convergence.  Algebraically they are the same formula. */
+					xyAngle = grimpXYAngle(lat, lon, x, y, &(outputImage->proj));
 					gamma = xyAngle - hAngle;
 					/*
 					  Slope coupling.  computeB() is called with this image's psi in both slots so
@@ -599,7 +598,7 @@ void make3DMosaicJoint(inputImageStructure *ascImages, inputImageStructure *desc
 				    planes would cost more than one interpXYDEM stencil per solved pixel.  psi is
 				    irrelevant since only dzdx/dzdy are used, so pass 1.0 twice. */
 				x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem);
 				vz = vx * dzdx + vy * dzdy;

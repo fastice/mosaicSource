@@ -248,9 +248,9 @@ double evaluateSquint(inputImageStructure *image, double rangeIndex, double azim
   Compute velocity determination matrix
 */
 void computeA(double lat, double lon, double x, double y, inputImageStructure *aPhaseImage,
-			  inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint)
+			  inputImageStructure *dPhaseImage, double A[2][2], int32_t applySquint,
+			  const grimpProj *proj)
 {
-	extern int32_t HemiSphere;
 	double alpha, beta;
 	double aHAngle, dHAngle, xyAngle;
 	conversionDataStructure *aCp, *dCp;
@@ -288,9 +288,9 @@ void computeA(double lat, double lon, double x, double y, inputImageStructure *a
 	}
 	/* other angles */
 	alpha = aHAngle - dHAngle;
-	xyAngle = atan2(-y, -x);
-	if (HemiSphere == SOUTH)
-		xyAngle += PI;
+	/* PI/2 + meridian convergence.  Identical to the old atan2(-y,-x) (+PI south) for a
+	   polar stereographic; the true convergence for UTM.  computeA already had lat/lon. */
+	xyAngle = grimpXYAngle(lat, lon, x, y, proj);
 	beta = xyAngle - aHAngle;
 	/*  Compute A matrix	*/
 	invSin2 = 1.0 / pow(sin(alpha), 2.0);

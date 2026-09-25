@@ -47,6 +47,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 						char *shelfMaskFile, char *extraTieFile,
 						char *tideFile, char *verticalCorrectionFile, float fl, int32_t statsFlag, int32_t threeDOffFlag,
 						double tieThresh, referenceVelocity *refVel, mosaicArgs *args);
+static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int32_t epsg, char *wktFile);
 static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFiles, char **phaseFiles, char **baselineFiles,
 							char **rOffsetFiles, char **rParamsFiles, char **offsetFiles, char **azParamsFiles, float *nDays, float *weights,
 							int32_t *crossFlags, int32_t nFiles, int32_t offsetFlag);
@@ -279,7 +280,7 @@ int main(int argc, char *argv[])
 	  Determine hemisphere
 	*/
 	get3DProj(ascImages, descImages, nAsc, nDesc, args.north, &outputImage);
-	outputImage.slat = dem.stdLat;
+	resolveOutputProj(&outputImage, &dem, args.epsg, args.wktFile);
 	/* Process landsat images */
 	LSImages = NULL;
 	if (args.landSatFile != NULL)
@@ -967,6 +968,74 @@ static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descI
 		fprintf(outputImage->fpLog, "; ***** Northern Hemisphere  ******\n;\n");
 	}
 	fflush(outputImage->fpLog);
+}
+
+/*
+  Settle the output map projection and publish it everywhere it is needed.
+
+  Deliberately called AFTER get3DProj(), which may overwrite HemiSphere from the image
+  control points.  Building the descriptor from whatever HemiSphere/Rotation/SLat end up
+  as means the no-flag case reproduces the previous behaviour by construction -- including
+  the awkward case where the DEM and the image latitudes disagree about the hemisphere --
+  rather than by us trying to predict it.
+
+  With -epsg or -wkt the descriptor comes from that instead, and the three globals are
+  written BACK from it so the call sites not yet converted stay consistent with it.
+*/
+static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int32_t epsg, char *wktFile)
+{
+	extern int32_t HemiSphere;
+	extern double Rotation;
+	extern double SLat;
+
+	if (epsg != 0 && wktFile != NULL)
+		error("mosaic3d: give -epsg or -wkt, not both");
+
+	if (epsg == 0 && wktFile == NULL)
+	{
+		/* Historical path: the projection is the DEM's, as recorded in the globals. */
+		outputImage->proj = grimpProjFromLegacy(Rotation, (SLat < -90.) ? dem->stdLat : SLat,
+											   HemiSphere);
+	}
+	else
+	{
+		if (wktFile != NULL)
+		{
+			/* Read the whole file as one SRS string; OSRSetFromUserInput takes WKT or a
+			   proj string. */
+			FILE *fp = openInputFile(wktFile);
+			static char wkt[8192];
+			size_t n = fread(wkt, 1, sizeof(wkt) - 1, fp);
+			wkt[n] = '\0';
+			fclose(fp);
+			outputImage->proj = grimpProjFromSRS(wkt);
+		}
+		else
+		{
+			outputImage->proj = grimpProjFromEPSG(epsg);
+		}
+		/* Keep the not-yet-converted legacy sites consistent with the override. */
+		HemiSphere = outputImage->proj.hemisphere;
+		Rotation = outputImage->proj.rot;
+		SLat = (outputImage->proj.kind == GP_PS) ? outputImage->proj.stdLat : -91.;
+		fprintf(stderr, "\n**** OUTPUT PROJECTION OVERRIDDEN: %s ****\n",
+				grimpProjDescribe(&(outputImage->proj)));
+		if (outputImage->fpLog != NULL)
+			fprintf(outputImage->fpLog, "; **** output projection overridden: %s ****\n;\n",
+					grimpProjDescribe(&(outputImage->proj)));
+		if (!grimpProjSame(&(outputImage->proj), &(dem->proj)))
+			fprintf(stderr, "     DEM is in a different projection (%s); its x/y will be "
+							"converted as needed\n", grimpProjDescribe(&(dem->proj)));
+	}
+	/* slat is still read in a dozen places; keep it meaning what it always meant. */
+	outputImage->slat = outputImage->proj.stdLat;
+	/* For the common/ routines that have no outputImage in scope. */
+	grimpSetDefaultProj(&(outputImage->proj));
+	/* Ask for a direct DEM<->output pipeline if the two differ; harmless otherwise. */
+	grimpProjRegisterPair(&(outputImage->proj), &(dem->proj));
+	/* Serial pre-init of every per-thread PROJ object, before any parallel region. */
+	grimpProjPrepareThreads();
+	fprintf(stderr, "Output projection: %s\n", grimpProjDescribe(&(outputImage->proj)));
 }
 
 static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFiles, char **phaseFiles, char **baselineFiles, char **rOffsetFiles,
@@ -1794,10 +1863,11 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   speckle solver: -noAzimuthRows, -noASigmaResidual (one each), the retired-but-accepted
 	   -speckleTrackJoint (one) and -jointMaxSigmaSpeckle (two), plus headroom.  Raised 70 -> 76 for -true3D /
 	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
-	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom. */
-	if (argc < 4 || argc > 86)
+	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom.  Raised 86 -> 92 for
+	   -epsg and -wkt (two argv slots each), plus headroom. */
+	if (argc < 4 || argc > 92)
 	{
-		fprintf(stderr, "Arg count out of range (max 80): %i\n", argc);
+		fprintf(stderr, "Arg count out of range (max 92): %i\n", argc);
 		usage(); /* Check number of args */
 	}
 	n = argc - 4;
@@ -1810,6 +1880,8 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	refVel->velFile = NULL;
 	args->date1 = NULL;
 	args->date2 = NULL;
+	args->epsg = 0;
+	args->wktFile = NULL;
 	noTide = FALSE;
 	outputImage->makeTies = FALSE;
 	args->irregFile = NULL;
@@ -2236,6 +2308,27 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		else if (strstr(argString, "date2") != NULL)
 		{
 			args->date2 = argv[i + 1];
+			i++;
+		}
+		/* Output map projection.  Without either flag the projection is taken from the
+		   DEM exactly as before.  "epsg" and "wkt" collide with no other flag string. */
+		else if (strstr(argString, "epsg") != NULL)
+		{
+			if (i + 1 >= argc || sscanf(argv[i + 1], "%i", &(args->epsg)) != 1)
+			{
+				fprintf(stderr, "-epsg needs an EPSG code, e.g. -epsg 32608\n");
+				usage();
+			}
+			i++;
+		}
+		else if (strstr(argString, "wkt") != NULL)
+		{
+			if (i + 1 >= argc)
+			{
+				fprintf(stderr, "-wkt needs a file containing WKT or a proj string\n");
+				usage();
+			}
+			args->wktFile = argv[i + 1];
 			i++;
 		}
 		else if (strstr(argString, "ompThreads") != NULL)

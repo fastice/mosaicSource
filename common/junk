@@ -1,0 +1,27 @@
+*
+   Read azimuth offsets
+ */
+void readAzimuthOffsets(Offsets *offsets)
+{
+	char *datFile, buf[1024], bufa[1024], vrtBuffer[2048], *vrtFile;
+	char *eFileA, *file;
+	GDALDatasetH hDS;
+
+	fprintf(stderr, "]n\noffsets file %s\n\n", offsets->file);
+	vrtFile = checkForVrt(offsets->file, vrtBuffer);
+	if (vrtFile != NULL)
+	{	initOffParams(offsets);
+		fprintf(stderr, "OPENING VRT %s\n", vrtFile);
+		hDS = GDALOpen(vrtFile, GDAL_OF_READONLY);
+		readGDALOffsets(hDS, offsets, AZIMUTHBUFF);
+		GDALClose(hDS);
+	}
+	else
+	{
+		datFile = appendSuffix(offsets->file, ".dat", buf);
+		fprintf(stderr, "OPENIN DAT %s\n", datFile);
+		readOffsetParams(datFile, offsets, TRUE);
+		initOffsetBuffers(offsets, AZONLY);
+		readOffsetFile(offsets->da, offsets->nr, offsets->na, offsets->file);
+	}
+}

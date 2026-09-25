@@ -414,7 +414,7 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 				for (jj = jMin; jj < jMax; jj++)
 				{
 					x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+					xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 					zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 					if (!(zWGS84 > MINELEVATION))
 					{
@@ -496,8 +496,10 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 						hAngleSq += evaluateSquint(myImg, sqRange, sqAzimuth) * DTOR;
 					}
 					myImg->lastTime = savedLastTime;
-					xyAngle = atan2(-y, -x);
-					if (HemiSphere == SOUTH) { xyAngle += PI; }
+					/* xyAngle = PI/2 + meridian convergence.  For polar stereographic this returns
+					   the original atan2(-y,-x), plus PI in the south, bit for bit; for UTM it uses
+					   the true convergence.  Algebraically they are the same formula. */
+					xyAngle = grimpXYAngle(lat, lon, x, y, &(outputImage->proj));
 					/*  TWO headings, deliberately.  Squint applies to the PHASE row only.
 					    make3DOffsets/make3DOffsetsJoint pass FALSE to computeA unconditionally
 					    because the zero-Doppler condition makes range/azimuth OFFSETS
@@ -769,7 +771,7 @@ if (da > -0.98 * LARGEINT)
 				    the UNzeroed dzdx/dzdy -- reproducing mosaicHopper.c:607-608 exactly,
 				    including its internal inconsistency. */
 				x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-				xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+				xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 				zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 				computeB(x, y, zWGS84, B, &dzdx, &dzdy, 1.0, 1.0, (xyDEM *)dem);
 				sMask2 = GROUNDED;

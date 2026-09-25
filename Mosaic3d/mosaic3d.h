@@ -15,7 +15,11 @@ typedef struct {
 	char *verticalCorrectionFile;
 	char *date1;
 	char *date2;
+	/* Output map projection, from -epsg N or -wkt file.  epsg 0 and wktFile NULL mean
+	   "infer from the DEM", which is the historical behaviour. Mutually exclusive. */
+	char *wktFile;
 	/* numeric args */
+	int32_t epsg;
 	float fl;
 	float timeThresh;
 	float timeThreshPhase;

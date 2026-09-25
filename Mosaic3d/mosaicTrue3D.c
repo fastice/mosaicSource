@@ -349,7 +349,7 @@ void mosaicTrue3D(inputImageStructure *images, vhParams *params, outputImageStru
 				for (jj = jRowMin[iRow]; jj < jRowMax[iRow]; jj++)
 				{
 					x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+					xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 					xyGetZandSlope(lat, lon, x, y, &zSp, &zWGS84, &dzda, &dzdr, cP, currentParams, myImg);
 					if (!(zWGS84 > (MINELEVATION + 1) && zWGS84 < 10000.0))
 					{
@@ -400,7 +400,10 @@ if (da > -0.98 * LARGEINT)
 					savedLastTime = myImg->lastTime;
 					hAngle = computeHeading(lat, lon, 0.0, myImg, cP);
 					myImg->lastTime = savedLastTime;
-					computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
+					/* Velocity components live in the OUTPUT grid, so the rotation must use the
+						   output projection, not the DEM's.  Identical while the two agree,
+						   which was always true before -epsg existed. */
+						computeXYangleProj(lat, lon, &xyAngle, &(outputImage->proj));
 					gamma = xyAngle - hAngle;
 					/*  Capture the xy slope for the -true3DProject reduction test.  Exactly the
 					    quantity speckleTrackMosaicJoint builds its 2D row from, including the

@@ -371,7 +371,9 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 							//fprintf(stderr, "vel lookup: lat=%f lon=%f x1=%f y1=%f\n", lat, lon, x1, y1);
 							interpXYVel(x1, y1, xyVel, &vx, &vy);
 							/* Compute rotation angles */
-							computeXYangleXY(x1, y1, &xyAngle);
+							/* siminsar works throughout in the DEM's projection (x1,y1 come from
+							   lltoxy1 on xyDem above), so the angle must use that same one. */
+							computeXYangleProj(lat, lon, &xyAngle, &(xyDem->proj));
 							/* Quadratic interpolation of pre-computed per-row heading */
 							{
 								double t = scene->rSize > 1 ? (double)jLoop / (scene->rSize - 1) : 0.5;

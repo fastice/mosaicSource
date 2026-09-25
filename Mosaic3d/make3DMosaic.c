@@ -334,7 +334,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 					{
 						/*  x-coordinate, then convert x/y stereographic coords to lat/lon	*/
 						x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-						xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, dem->stdLat);
+						xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 						zWGS84 = getXYHeight(lat, lon, dem, 0.0, ELLIPSOIDAL);
 						/*
 						   Process points where elevation is known
@@ -426,7 +426,7 @@ void make3DMosaic(inputImageStructure *ascImages, inputImageStructure *descImage
 								if ((j % 3) == 0 || rowAset == FALSE)
 								{
 									extern int32_t useSquint;
-									computeA(lat, lon, x, y, myAImg, myDImg, A, useSquint);
+									computeA(lat, lon, x, y, myAImg, myDImg, A, useSquint, &(outputImage->proj));
 									rowAset = TRUE;
 								}
 								/*

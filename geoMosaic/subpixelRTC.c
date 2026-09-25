@@ -184,17 +184,17 @@ int32_t subPixelGammaRTC(double x, double y,
         double r0, az0, r_px, az_px, r_py, az_py;
         double dRdX, dRdY, dAzdX, dAzdY, Jpix;
 
-        xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+        xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
         h    = getXYHeight(lat, lon, dem, inputImage->cpAll.Re, SPHERICAL);
         hWGS = sphericalToWGSElev(h, lat, inputImage->cpAll.Re);
         llToImageNew(lat, lon, hWGS, &r0, &az0, inputImage);
 
-        xytoll1(x + stepXkm, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+        xyToLLProj(x + stepXkm, y, &lat, &lon, &(outputImage->proj));
         h    = getXYHeight(lat, lon, dem, inputImage->cpAll.Re, SPHERICAL);
         hWGS = sphericalToWGSElev(h, lat, inputImage->cpAll.Re);
         llToImageNew(lat, lon, hWGS, &r_px, &az_px, inputImage);
 
-        xytoll1(x, y + stepYkm, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+        xyToLLProj(x, y + stepYkm, &lat, &lon, &(outputImage->proj));
         h    = getXYHeight(lat, lon, dem, inputImage->cpAll.Re, SPHERICAL);
         hWGS = sphericalToWGSElev(h, lat, inputImage->cpAll.Re);
         llToImageNew(lat, lon, hWGS, &r_py, &az_py, inputImage);
@@ -217,7 +217,7 @@ int32_t subPixelGammaRTC(double x, double y,
             yl = y + (l - 0.5 * (na - 1)) * dykm;
 
             /* Sub-pixel centre -> lat/lon/height */
-            xytoll1(xk, yl, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+            xyToLLProj(xk, yl, &lat, &lon, &(outputImage->proj));
             h    = getXYHeight(lat, lon, dem, inputImage->cpAll.Re, SPHERICAL);
             hWGS = sphericalToWGSElev(h, lat, inputImage->cpAll.Re);
 

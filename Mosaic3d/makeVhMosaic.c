@@ -189,7 +189,7 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 					  Convert x/y stereographic coords to lat/lon
 					*/
 					x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-					xytoll1(x, y, HemiSphere, &lat, &lon, Rotation, outputImage->slat);
+					xyToLLProj(x, y, &lat, &lon, &(outputImage->proj));
 					/*
 					  Get slope and elevation
 					*/
@@ -264,7 +264,10 @@ void makeVhMosaic(inputImageStructure *images, vhParams *params, outputImageStru
 							   Compute angle between range direction and north and xy angle
 							*/
 							hAngle = computeHeading(lat, lon, 0, myImg, cP);
-							computeXYangle(lat, lon, &xyAngle, currentParams->xydem);
+							/* Velocity components live in the OUTPUT grid, so the rotation must use the
+						   output projection, not the DEM's.  Identical while the two agree,
+						   which was always true before -epsg existed. */
+						computeXYangleProj(lat, lon, &xyAngle, &(outputImage->proj));
 							/*
 								Get azimuth component from the offset field.
 							*/
