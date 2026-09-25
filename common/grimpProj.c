@@ -245,12 +245,18 @@ grimpProj grimpProjFromSRS(const char *userInput)
     }
     else
     {
-        error("grimpProjFromSRS: \"%s\" is a %s projection.\n"
-              "  Only polar stereographic and UTM are supported: both are conformal, so the\n"
-              "  existing grid-rotation and isotropic-scale handling stays valid.  Equal-area\n"
-              "  projections such as Alaska Albers (EPSG:3338) would need direction-dependent\n"
-              "  scaling and are deliberately not accepted.",
-              userInput, (method == NULL) ? "(unknown)" : method);
+        /* Any other projected CRS: positions work through PROJ, but the grid angle and
+           the isotropic scale do not generalise, so grimpXYAngle/grimpXYScale refuse and
+           mosaic3d rejects one as an output grid (grimpRequireConformal).  geomosaic and
+           every input grid are fine with it -- they only ever sample positions. */
+        p.kind = GP_GENERIC;
+        p.rot = 0.0;
+        p.stdLat = 0.0;
+        p.hemisphere = NORTH;
+        p.utmZone = 0;
+        fprintf(stderr, "grimpProjFromSRS: \"%s\" is a %s projection -- usable for positions "
+                        "only (not for vx/vy decomposition)\n",
+                userInput, (method == NULL) ? "(unknown)" : method);
     }
 
     {
@@ -360,8 +366,35 @@ void grimpSetDefaultProj(const grimpProj *p)
 
 const grimpProj *grimpDefaultProj(void)
 {
+    /* Fall back to the legacy globals when no projection was set explicitly.  Only
+       mosaic3d and geomosaic call grimpSetDefaultProj(); every other binary that links
+       $(COMMON) -- siminsar, lltora, getlocc, coarsereg, tiepoints, rparams, azparams,
+       the speckle tools, unwrap -- reaches here through parseInputFile.c or
+       llToImageNew.c and has always relied on Rotation/SLat/HemiSphere.  Building the
+       descriptor from them reproduces exactly what those call sites did before,
+       including grimpProjFromLegacy's 70/71 substitution for SLat's -91 sentinel.
+
+       Thread safety: for those binaries the first call happens during serial setup
+       (computeControlPointsXY), long before any parallel region.  Even if two threads
+       did arrive together they would compute identical bytes from the same globals; the
+       write is done under a critical section and the flag set last. */
     if (!gpHaveDefault)
-        error("grimpDefaultProj: no output projection has been set");
+    {
+        extern int32_t HemiSphere;
+        extern double Rotation;
+        extern double SLat;
+        grimpProj p = grimpProjFromLegacy(Rotation, SLat, HemiSphere);
+#ifdef _OPENMP
+#pragma omp critical(grimpDefaultProj)
+#endif
+        {
+            if (!gpHaveDefault)
+            {
+                gpDefaultProj = p;
+                gpHaveDefault = TRUE;
+            }
+        }
+    }
     return &gpDefaultProj;
 }
 
@@ -369,7 +402,7 @@ const grimpProj *grimpDefaultProj(void)
 
 void llToXYProj(double lat, double lon, double *x, double *y, const grimpProj *p)
 {
-    if (p->kind != GP_UTM)
+    if (p->kind == GP_PS || p->kind == GP_UNSET)
     {
         /* Untouched legacy path: identical instructions, identical arguments. */
         lltoxy1(lat, lon, x, y, p->rot, p->stdLat);
@@ -385,7 +418,7 @@ void llToXYProj(double lat, double lon, double *x, double *y, const grimpProj *p
 
 void xyToLLProj(double x, double y, double *lat, double *lon, const grimpProj *p)
 {
-    if (p->kind != GP_UTM)
+    if (p->kind == GP_PS || p->kind == GP_UNSET)
     {
         xytoll1(x, y, p->hemisphere, lat, lon, p->rot, p->stdLat);
         return;
@@ -405,7 +438,10 @@ void xyToLLProj(double x, double y, double *lat, double *lon, const grimpProj *p
 
 double grimpXYAngle(double lat, double lon, double x, double y, const grimpProj *p)
 {
-    if (p->kind != GP_UTM)
+    if (p->kind == GP_GENERIC)
+        error("grimpXYAngle: the grid angle is only defined for a conformal projection.\n"
+              "  %s cannot be used to decompose velocity into vx/vy.", grimpProjDescribe(p));
+    if (p->kind == GP_PS || p->kind == GP_UNSET)
     {
         /* The original expression, unchanged, so the result is bit identical. */
         double xyAngle = atan2(-y, -x);
@@ -433,7 +469,10 @@ double grimpXYAngle(double lat, double lon, double x, double y, const grimpProj 
 
 double grimpXYScale(double lat, const grimpProj *p)
 {
-    if (p->kind != GP_UTM)
+    if (p->kind == GP_GENERIC)
+        error("grimpXYScale: an isotropic grid scale is only defined for a conformal\n"
+              "  projection; %s stretches x and y differently.", grimpProjDescribe(p));
+    if (p->kind == GP_PS || p->kind == GP_UNSET)
     {
         /* Historical approximation from xyGetZandSlope.c; agrees with the exact
            1/point-scale to 4 digits, which is ample for scaling DEM derivatives. */
@@ -484,7 +523,8 @@ void outXYToProjXY(double xOut, double yOut, const grimpProj *outProj,
     }
     /* Both polar stereographic and both on the legacy path: go via lat/lon using the
        original routines, so no PROJ object is needed for either side. */
-    if (outProj->kind != GP_UTM && p->kind != GP_UTM)
+    if ((outProj->kind == GP_PS || outProj->kind == GP_UNSET) &&
+        (p->kind == GP_PS || p->kind == GP_UNSET))
     {
         double lat, lon;
         xytoll1(xOut, yOut, outProj->hemisphere, &lat, &lon, outProj->rot, outProj->stdLat);
@@ -558,6 +598,19 @@ const char *grimpSRSString(const grimpProj *p)
     }
 }
 
+void grimpRequireConformal(const grimpProj *p, const char *what)
+{
+    if (p->kind == GP_GENERIC)
+        error("%s must be a conformal projection (polar stereographic or UTM).\n"
+              "  Got %s.\n"
+              "  Velocity is decomposed into vx/vy with a single grid angle and one\n"
+              "  isotropic scale, which only holds for a conformal grid; an equal-area\n"
+              "  projection such as Alaska Albers (EPSG:3338) would need direction-dependent\n"
+              "  scaling.  geomosaic has no such restriction, and input grids (DEM, velocity\n"
+              "  map, masks) may be in any projection.",
+              what, grimpProjDescribe(p));
+}
+
 const char *grimpProjDescribe(const grimpProj *p)
 {
     static char buf[4][256];
@@ -567,6 +620,8 @@ const char *grimpProjDescribe(const grimpProj *p)
     if (p->kind == GP_UTM)
         snprintf(b, 256, "EPSG:%d (UTM zone %d%c)", (int)p->epsg, (int)p->utmZone,
                  (p->hemisphere == SOUTH) ? 'S' : 'N');
+    else if (p->kind == GP_GENERIC)
+        snprintf(b, 256, "EPSG:%d (projected, non-conformal or unclassified)", (int)p->epsg);
     else if (p->epsg != 0)
         snprintf(b, 256, "EPSG:%d (polar stereographic, rot %g, stdLat %g)",
                  (int)p->epsg, p->rot, p->stdLat);

@@ -1051,6 +1051,10 @@ static void resolveOutputProj(outputImageStructure *outputImage, xyDEM *dem, int
 		{
 			outputImage->proj = grimpProjFromEPSG(epsg);
 		}
+		/* mosaic3d decomposes velocity into vx/vy with one grid angle and one isotropic
+		   scale, so its output grid has to be conformal.  geomosaic, which only resamples
+		   brightness, imposes no such restriction, and input grids may be anything. */
+		grimpRequireConformal(&(outputImage->proj), "the mosaic3d -epsg/-wkt output grid");
 		/* Keep the not-yet-converted legacy sites consistent with the override. */
 		HemiSphere = outputImage->proj.hemisphere;
 		Rotation = outputImage->proj.rot;

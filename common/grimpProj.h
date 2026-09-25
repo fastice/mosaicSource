@@ -13,10 +13,20 @@
   KILOMETRES on a hard-coded WGS84 ellipsoid.  That covers any polar stereographic but
   nothing else, and the output side could only name EPSG:3413 and EPSG:3031.
 
-  grimpProj generalises this to polar stereographic *and* UTM -- both conformal, so the
-  existing "rotate by the grid angle, scale isotropically" machinery stays valid.
-  Equal-area projections (e.g. Alaska Albers, EPSG:3338) are anisotropic and are
-  deliberately NOT supported.
+  grimpProj generalises this to polar stereographic, UTM, and -- for positions only --
+  any other projected CRS.
+
+  Conformality matters in one place, not everywhere.  mosaic3d decomposes a line-of-sight
+  velocity into vx/vy using a grid angle and an isotropic scale, so ITS OUTPUT GRID must
+  be conformal: polar stereographic or UTM.  An equal-area projection (e.g. Alaska
+  Albers, EPSG:3338) stretches x and y differently and would need direction-dependent
+  scaling, so mosaic3d refuses one.
+
+  Nothing else needs that restriction.  geomosaic resamples brightness onto a grid and
+  never decomposes a vector, and input grids -- DEM, velocity map, masks, tide and
+  correction rasters -- are only ever sampled positionally.  Those accept GP_GENERIC,
+  for which llToXYProj/xyToLLProj work normally through PROJ while grimpXYAngle and
+  grimpXYScale refuse, so a projection can never be used for vector maths by accident.
 
   Backwards compatibility
   -----------------------
@@ -54,9 +64,10 @@
 
 typedef enum
 {
-    GP_UNSET = 0, /* not yet resolved; treated as polar stereographic */
-    GP_PS = 1,    /* polar stereographic, incl. custom (possibly no EPSG code) */
-    GP_UTM = 2    /* universal transverse Mercator, one zone */
+    GP_UNSET = 0,  /* not yet resolved; treated as polar stereographic */
+    GP_PS = 1,     /* polar stereographic, incl. custom (possibly no EPSG code) */
+    GP_UTM = 2,    /* universal transverse Mercator, one zone */
+    GP_GENERIC = 3 /* any other projected CRS: positions only, see below */
 } grimpProjKind;
 
 typedef struct
@@ -78,8 +89,13 @@ typedef struct
 grimpProj grimpProjFromLegacy(double rot, double stdLat, int32_t hemisphere);
 
 /* From anything OSRSetFromUserInput accepts: "EPSG:32608", a proj string, or WKT.
-   Errors out unless the result is polar stereographic or UTM. */
+   Any projected CRS is accepted; polar stereographic and UTM are recognised as such and
+   anything else becomes GP_GENERIC (positions only). */
 grimpProj grimpProjFromSRS(const char *userInput);
+
+/* Error out unless `p` may be used for vx/vy decomposition, i.e. it is conformal.
+   `what` names the caller in the message, e.g. "mosaic3d output grid". */
+void grimpRequireConformal(const grimpProj *p, const char *what);
 
 /* Convenience wrapper: grimpProjFromSRS("EPSG:<epsg>"). */
 grimpProj grimpProjFromEPSG(int32_t epsg);
