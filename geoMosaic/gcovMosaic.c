@@ -6,6 +6,7 @@
 #include <glob.h>
 #include <unistd.h>
 #include <omp.h>
+#include <hdf5.h>
 #include "mosaicSource/common/common.h"
 #include "geomosaic.h"
 #include "gdalIO/gdalIO/grimpgdal.h"
@@ -34,6 +35,12 @@ typedef struct
 	GDALDatasetH hGamma;   /* covariance term, e.g. HHHH */
 	GDALDatasetH hFactor;  /* rtcGammaToSigmaFactor */
 	GDALDatasetH hMask;	   /* valid sample subswath mask */
+	/* Direct HDF5 handles, opened ONLY for float16 bands (slim products). GDAL reports such a
+	   band as Float32 and has libhdf5 convert it, which is a generic software path: measured
+	   1.273 s against 0.179 s for reading the raw 16-bit values and expanding them here, on
+	   the same 16 Mpx window. H5I_INVALID_HID means "not float16, use the GDAL band". */
+	hid_t h5Gamma, h5GammaFile;
+	hid_t h5Factor, h5FactorFile;
 	int32_t nx, ny;
 	double x0, y0, dx, dy; /* pixel centre of (0,0) and spacing, in the GCOV CRS */
 	int32_t epsg;
@@ -61,6 +68,153 @@ static int32_t readIncidenceCube(char *file, gcovInputs *gcov, gcovFile *g, floa
 static float interpIncidence(float ***cube, double *hgt, int32_t nh, int32_t cnx, int32_t cny,
 							 double cx0, double cy0, double cdx, double cdy, double X, double Y, double h);
 
+/* ------------------------------------------------------------------------------------------
+   float16 fast path.
+
+   Slim GCOV products store the covariance term and the RTC factor as float16. GDAL reports
+   such a band as Float32 and asks libhdf5 to convert, which lands in a generic software
+   conversion: on a 16 Mpx window, 1.273 s against 0.277 s for a real float32 band. Reading
+   the raw 16-bit values and expanding them here takes 0.179 s -- 7x faster than the GDAL
+   path, and faster than float32, since it moves 39% fewer bytes off disk.
+
+   A 65536-entry lookup table is used instead of F16C intrinsics so that no architecture
+   specific compiler flag is needed and the code stays portable to arm64. The table is built
+   once; every GCOV read is serial within a process (the loop in makeGeoMosaic is a plain
+   for, and the OpenMP regions here start after the read), so no locking is required.
+   ------------------------------------------------------------------------------------------ */
+static float f16Table[65536];
+static int32_t f16TableReady = FALSE;
+
+static void buildF16Table()
+{
+	uint32_t h, sign, exp, mant, bits;
+	if (f16TableReady == TRUE)
+	{
+		return;
+	}
+	for (h = 0; h < 65536; h++)
+	{
+		sign = (h & 0x8000u) << 16;
+		exp = (h >> 10) & 0x1fu;
+		mant = h & 0x3ffu;
+		if (exp == 0)
+		{
+			if (mant == 0)
+			{
+				bits = sign; /* +-0 */
+			}
+			else
+			{ /* subnormal: renormalise into a float32 normal */
+				exp = 127 - 15 + 1;
+				while ((mant & 0x400u) == 0)
+				{
+					mant <<= 1;
+					exp--;
+				}
+				mant &= 0x3ffu;
+				bits = sign | (exp << 23) | (mant << 13);
+			}
+		}
+		else if (exp == 31)
+		{
+			bits = sign | 0x7f800000u | (mant << 13); /* inf / NaN */
+		}
+		else
+		{
+			bits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+		}
+		memcpy(&f16Table[h], &bits, sizeof(float));
+	}
+	f16TableReady = TRUE;
+}
+
+/*
+  Open dataset `path` in `file` directly with HDF5, but only if it is 16-bit float. Returns
+  TRUE and sets *fileId/*dsetId in that case; otherwise leaves them invalid and the caller
+  keeps using GDAL.
+*/
+static int32_t openIfFloat16(char *file, char *path, hid_t *fileId, hid_t *dsetId)
+{
+	hid_t f, d, t;
+	int32_t isF16;
+	*fileId = *dsetId = H5I_INVALID_HID;
+	H5Eset_auto2(H5E_DEFAULT, NULL, NULL); /* probing: a miss is not an error */
+	if ((f = H5Fopen(file, H5F_ACC_RDONLY, H5P_DEFAULT)) < 0)
+	{
+		return FALSE;
+	}
+	if ((d = H5Dopen2(f, path, H5P_DEFAULT)) < 0)
+	{
+		H5Fclose(f);
+		return FALSE;
+	}
+	t = H5Dget_type(d);
+	isF16 = (H5Tget_class(t) == H5T_FLOAT && H5Tget_size(t) == 2) ? TRUE : FALSE;
+	H5Tclose(t);
+	if (isF16 == FALSE)
+	{
+		H5Dclose(d);
+		H5Fclose(f);
+		return FALSE;
+	}
+	buildF16Table();
+	*fileId = f;
+	*dsetId = d;
+	return TRUE;
+}
+
+/*
+  Read a window of a float16 dataset into float32. The read uses the FILE's own datatype as
+  the memory type, so HDF5 copies the bits rather than converting them -- that conversion is
+  the whole cost being avoided.
+*/
+static int32_t readF16Window(hid_t dset, int32_t x, int32_t y, int32_t w, int32_t h,
+							 float *out, unsigned short *tmp)
+{
+	hid_t fs, ms, ft;
+	hsize_t off[2], cnt[2];
+	size_t i, n = (size_t)w * (size_t)h;
+	int32_t ok;
+	off[0] = (hsize_t)y;
+	off[1] = (hsize_t)x;
+	cnt[0] = (hsize_t)h;
+	cnt[1] = (hsize_t)w;
+	fs = H5Dget_space(dset);
+	if (H5Sselect_hyperslab(fs, H5S_SELECT_SET, off, NULL, cnt, NULL) < 0)
+	{
+		H5Sclose(fs);
+		return FALSE;
+	}
+	ms = H5Screate_simple(2, cnt, NULL);
+	ft = H5Dget_type(dset);
+	ok = (H5Dread(dset, ft, ms, fs, H5P_DEFAULT, tmp) >= 0) ? TRUE : FALSE;
+	H5Tclose(ft);
+	H5Sclose(ms);
+	H5Sclose(fs);
+	if (ok == TRUE)
+	{
+		for (i = 0; i < n; i++)
+		{
+			out[i] = f16Table[tmp[i]];
+		}
+	}
+	return ok;
+}
+
+/*
+  Read one window of a band as float32, taking the float16 path when the band has one.
+*/
+static int32_t readGCOVWindow(hid_t h5, GDALRasterBandH band, int32_t x, int32_t y,
+							  int32_t w, int32_t h, float *out, unsigned short *tmp)
+{
+	if (h5 != H5I_INVALID_HID)
+	{
+		return readF16Window(h5, x, y, w, h, out, tmp);
+	}
+	return (GDALRasterIO(band, GF_Read, x, y, w, h, out, w, h, GDT_Float32, 0, 0) == CE_None)
+			   ? TRUE : FALSE;
+}
+
 /*
   Read the yaml file specifying the GCOV inputs. Hand parsed (no libyaml), same approach as
   getBaseline.c. Format:
@@ -84,6 +238,7 @@ void readGCOVYaml(char *yamlFile, gcovInputs *gcov)
 	strcpy(gcov->polarization, "HHHH");
 	strcpy(gcov->frequency, "A");
 	gcov->useMask = TRUE;
+	gcov->factorDir[0] = '\0';
 	gcov->nFiles = 0;
 	gcov->files = NULL;
 	gcov->weights = NULL;
@@ -166,6 +321,14 @@ void readGCOVYaml(char *yamlFile, gcovInputs *gcov)
 		else if (strcmp(key, "useMask") == 0)
 		{
 			gcov->useMask = (strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0) ? TRUE : FALSE;
+		}
+		else if (strcmp(key, "factorFrom") == 0)
+		{
+			if (strlen(value) >= sizeof(gcov->factorDir))
+			{
+				error("readGCOVYaml: factorFrom path too long: %s", value);
+			}
+			strcpy(gcov->factorDir, value);
 		}
 		else if (strcmp(key, "glob") == 0)
 		{
@@ -695,6 +858,7 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 {
 	float **gamma, *gBuf, *fBuf;
 	unsigned char *mBuf;
+	unsigned short *tBuf = NULL; /* raw float16 staging, only when a band is float16 */
 	double *gSum, *sSum;
 	int32_t *count, width, br, br0, bc, r, c, k, nbStrip, nbThis;
 	float gv, fv;
@@ -717,6 +881,14 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	gSum = (double *)malloc(sizeof(double) * nbc);
 	sSum = (double *)malloc(sizeof(double) * nbc);
 	count = (int32_t *)malloc(sizeof(int32_t) * nbc);
+	if (g->h5Gamma != H5I_INVALID_HID || g->h5Factor != H5I_INVALID_HID)
+	{
+		tBuf = (unsigned short *)malloc(sizeof(unsigned short) * (size_t)width * ky * nbStrip);
+		if (tBuf == NULL)
+		{
+			error("reduceGCOV: malloc failed");
+		}
+	}
 	if (gamma == NULL || gBuf == NULL || fBuf == NULL || mBuf == NULL)
 	{
 		error("reduceGCOV: malloc failed");
@@ -740,13 +912,12 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	{
 		nbThis = min(nbStrip, nbr - br0);
 		if (maskOnly == FALSE &&
-			GDALRasterIO(hG, GF_Read, c0, r0 + br0 * ky, width, ky * nbThis, gBuf, width, ky * nbThis,
-						 GDT_Float32, 0, 0) != CE_None)
+			readGCOVWindow(g->h5Gamma, hG, c0, r0 + br0 * ky, width, ky * nbThis, gBuf, tBuf) == FALSE)
 		{
 			error("reduceGCOV: read error");
 		}
-		if (hF != NULL && GDALRasterIO(hF, GF_Read, c0, r0 + br0 * ky, width, ky * nbThis, fBuf, width, ky * nbThis,
-									   GDT_Float32, 0, 0) != CE_None)
+		if (hF != NULL && readGCOVWindow(g->h5Factor, hF, c0, r0 + br0 * ky, width, ky * nbThis,
+										 fBuf, tBuf) == FALSE)
 		{
 			error("reduceGCOV: factor read error");
 		}
@@ -816,6 +987,7 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	free(gBuf);
 	free(fBuf);
 	free(mBuf);
+	free(tBuf);
 	free(gSum);
 	free(sSum);
 	free(count);
@@ -903,9 +1075,11 @@ static float interpIncidence(float ***cube, double *hgt, int32_t nh, int32_t cnx
 */
 static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needFactor)
 {
-	char path[2048], key[256], grid[256];
+	char path[2048], key[256], grid[256], h5path[2048];
 	double *xc, *yc;
 	memset(g, 0, sizeof(gcovFile));
+	/* memset gives 0, which is a valid hid_t; the "no handle" sentinel is H5I_INVALID_HID */
+	g->h5Gamma = g->h5GammaFile = g->h5Factor = g->h5FactorFile = H5I_INVALID_HID;
 	g->hFile = GDALOpen(file, GA_ReadOnly);
 	if (g->hFile == NULL)
 	{
@@ -923,13 +1097,49 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 	}
 	g->nx = GDALGetRasterXSize(g->hGamma);
 	g->ny = GDALGetRasterYSize(g->hGamma);
+	sprintf(h5path, "/science/LSAR/GCOV/grids/frequency%s/%s", gcov->frequency, gcov->polarization);
+	openIfFloat16(file, h5path, &(g->h5GammaFile), &(g->h5Gamma));
 	if (needFactor == TRUE)
 	{
-		sprintf(path, "HDF5:\"%s\"://%s/rtcGammaToSigmaFactor", file, grid);
+		char factorFile[4096], *base;
+		/* With factorFrom set, the factor lives outside the granule (slim products share one
+		   per track/frame/grid across cycles). The downloader leaves a symlink named exactly
+		   like the granule, so the basename is all we need. */
+		strcpy(factorFile, file);
+		if (gcov->factorDir[0] != '\0')
+		{
+			char shared[4096];
+			base = strrchr(file, '/');
+			base = (base == NULL) ? file : base + 1;
+			if (snprintf(shared, sizeof(shared), "%s/%s", gcov->factorDir, base) >= (int32_t)sizeof(shared))
+			{
+				error("openGCOV: factor path too long for %s", base);
+			}
+			/* Fall back to the granule when there is no external factor for it, so one
+			   directory can hold slim products (factor shared, symlink present) and
+			   archive products (factor in the file) at the same time. Still loud if
+			   neither has one: the GDALOpen below fails. */
+			if (access(shared, R_OK) == 0)
+			{
+				strcpy(factorFile, shared);
+			}
+		}
+		sprintf(path, "HDF5:\"%s\"://%s/rtcGammaToSigmaFactor", factorFile, grid);
 		if ((g->hFactor = GDALOpen(path, GA_ReadOnly)) == NULL)
 		{
 			error("openGCOV: could not open %s", path);
 		}
+		/* A factor on a different grid than the gamma band reads at the same pixel window and
+		   silently misregisters the gamma->sigma conversion. Partial frames make this real:
+		   a track/frame that arrives partial in one cycle and full in the next has a
+		   different grid, so a shared factor must be rejected rather than reused. */
+		if (GDALGetRasterXSize(g->hFactor) != g->nx || GDALGetRasterYSize(g->hFactor) != g->ny)
+		{
+			error("openGCOV: factor grid %i x %i does not match gamma grid %i x %i in %s",
+				  GDALGetRasterXSize(g->hFactor), GDALGetRasterYSize(g->hFactor), g->nx, g->ny, factorFile);
+		}
+		sprintf(h5path, "/science/LSAR/GCOV/grids/frequency%s/rtcGammaToSigmaFactor", gcov->frequency);
+		openIfFloat16(factorFile, h5path, &(g->h5FactorFile), &(g->h5Factor));
 	}
 	if (gcov->useMask == TRUE)
 	{
@@ -982,6 +1192,24 @@ static void closeGCOV(gcovFile *g)
 		GDALClose(g->hFile);
 	}
 	g->hGamma = g->hFactor = g->hMask = g->hFile = NULL;
+	/* the float16 handles, when this product had any */
+	if (g->h5Gamma != H5I_INVALID_HID)
+	{
+		H5Dclose(g->h5Gamma);
+	}
+	if (g->h5GammaFile != H5I_INVALID_HID)
+	{
+		H5Fclose(g->h5GammaFile);
+	}
+	if (g->h5Factor != H5I_INVALID_HID)
+	{
+		H5Dclose(g->h5Factor);
+	}
+	if (g->h5FactorFile != H5I_INVALID_HID)
+	{
+		H5Fclose(g->h5FactorFile);
+	}
+	g->h5Gamma = g->h5GammaFile = g->h5Factor = g->h5FactorFile = H5I_INVALID_HID;
 }
 
 /*

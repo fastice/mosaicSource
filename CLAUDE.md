@@ -87,6 +87,48 @@ through GDAL's HDF5 driver, either alongside range/Doppler images or instead of 
 `-calOutput sigma0|gamma0|both` selects the `-S1Cal` outputs; the default `both` is unchanged.
 Full description and verification are in `Documents/geomosaic.md` "NISAR GCOV Inputs".
 
+**`factorFrom: <dir>` (yaml key, optional)** reads `rtcGammaToSigmaFactor` from outside the
+granule, so slim products can share one factor per track/frame/grid across cycles instead of
+storing ~830 MB (240 MB as fp16) in every one. `openGCOV` opens
+`<factorFrom>/<granule basename>`; the downloader leaves a per-granule **symlink** there pointing
+at the shared file, so the C never has to derive the sharing key. Absent (the default) the factor
+comes from the granule exactly as before — verified pixel- and metadata-identical.
+
+Why a path and not an HDF5 **virtual dataset**, which would need no code change: a VDS is free on
+GDAL 3.9/HDF5 1.14.3 (0.31 s vs 0.30 s on a 2048² read) and **catastrophic on GDAL 3.11.5/HDF5
+2.2.0 — 213.78 s against 0.07 s**, a ~3000x regression with ~71 GB of logical reads for a 107 MB
+window, unchanged by `GDAL_NUM_THREADS=1`. h5py reads the same file in 0.03 s under both, so it is
+specific to HDF5 2.2.0's VDS path as GDAL 3.11 drives it. A VDS also fails **silently**: an
+unresolvable source returns the fill value (0.0), which `reduceGCOV:793-801` drops *before*
+`gSum += gv`, so the granule contributes neither sigma0 nor gamma0 and feathering hides it. An
+explicit path turns that into a `GDALOpen` failure.
+
+`openGCOV` also rejects a factor whose raster size differs from the gamma band — 173 of 657
+cycle-030 granules are partial frames, so a position that is partial in one cycle and full in the
+next has a different grid, and reading the factor at the same pixel window would silently
+misregister the gamma→sigma conversion.
+
+**float16 fast path (automatic, no flag).** Slim GCOV products store the covariance term and the
+RTC factor as float16. GDAL reports such a band as Float32 and has libhdf5 convert it, which lands
+in a generic software conversion. `gcovMosaic.c` detects a 16-bit float dataset in `openGCOV`,
+opens it directly with libhdf5, reads the window **using the file's own datatype as the memory
+type** (so HDF5 copies bits instead of converting) and expands it through a 65536-entry lookup
+table. Measured on a 16 Mpx window: GDAL float32 0.277 s, GDAL float16 1.273 s, this path 0.179 s.
+
+End to end on a 300x300 km box, a slim fp16 product went **108 s -> 22.2 s, i.e. ~5% FASTER than
+the float32 archive product** (23.5 s), with the float32 path pixel-identical to before.
+
+- A lookup table, not F16C intrinsics, so no architecture-specific compiler flag is needed and
+  arm64 still builds.
+- Safe without locking because **the GCOV read is serial within a process** — the loop at
+  `makeGeoMosaic.c:866` is a plain `for`, and `gcovMosaic.c`'s OpenMP regions begin after
+  `reduceGCOV` returns. Production parallelism is separate geomosaic processes, one per tile.
+  If that loop is ever parallelised, this needs a mutex: system libhdf5 is not built thread-safe.
+- `-I/usr/include/hdf5/serial` and `-lhdf5_serial` are needed in **both** `mosaicSource/Makefile`
+  places (CFLAGS/CCFLAGS and the `geomosaic:` link rule), the same two-location trap as `-fopenmp`.
+- This removes the whole reason to upgrade GDAL for fp16: GDAL 3.11.5/HDF5 2.2.0 reads fp16 in
+  0.227 s, which this beats, on the GDAL 3.8.4/HDF5 1.10.10 already installed.
+
 Traps:
 - **GDAL gives GCOV subdatasets no geotransform or CRS.** The grid comes from
   `xCoordinates`/`yCoordinates` (pixel centres) plus the file-level `..._projection_epsg_code`

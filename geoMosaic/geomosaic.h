@@ -28,6 +28,12 @@ typedef struct
 	char polarization[16]; /* covariance term, e.g. HHHH */
 	char frequency[4];	   /* A or B */
 	int32_t useMask;	   /* drop samples flagged invalid/fill in the GCOV mask */
+	/* Directory holding rtcGammaToSigmaFactor outside the granule (yaml key factorFrom).
+	   Empty (the default) means the factor lives in the granule, as it does in an archive
+	   product. Slim products share one factor per track/frame/grid across cycles; the
+	   downloader leaves a per-granule symlink here named exactly like the granule, so this
+	   code only ever opens <factorDir>/<granule basename> and never has to derive the key. */
+	char factorDir[2048];
 	int32_t nFiles;
 	char **files;
 	float *weights;

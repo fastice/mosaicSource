@@ -73,12 +73,19 @@ CCFLAGS1= -O3
 ifneq ("$(OSTYPE)", "Darwin")
 	NOPIE =	-no-pie
 	GDAL = -lgdal -lproj -lcurl  -lsqlite3 -llzma -lpoppler -lopenjp2 -lssh2 -llcms2
-	CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS)'
-	CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) '
+#	geoMosaic/gcovMosaic.c reads float16 GCOV bands through libhdf5 directly, bypassing GDAL's
+#	generic float16->float32 conversion (7x faster). Needed in BOTH places: the include for the
+#	component compile below, and HDF5LIB in the geomosaic link rule.
+	HDF5INCLUDE = /usr/include/hdf5/serial
+	HDF5LIB = -lhdf5_serial
+	CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS) -I$(HDF5INCLUDE)'
+	CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) -I$(HDF5INCLUDE)'
 else
 	GDALLIB = /opt/homebrew/lib
 	GDALINCLUDE = /opt/homebrew/include
 	GDAL = -lgdal -lproj -L/opt/homebrew/lib
+	HDF5INCLUDE = /opt/homebrew/include
+	HDF5LIB = -lhdf5
 	CFLAGS =	'-O3 $(MEM) -I$(INCLUDEPATH) $(COMPILEFLAGS) -I$(GDALINCLUDE)'
 	CCFLAGS =  '-O3 $(MEM) $(COMPILEFLAGS) -I$(GDALINCLUDE)'
 endif
@@ -438,4 +445,4 @@ geomosaic:
 		g++ $(MEM) $(CCFLAGS1) -fopenmp \
 		 $(GEOMOSAIC) $(COMMON)   $(STANDARD) $(RECIPES)  $(TRIANGLE) $(GDALIO) \
 		landsatMosaic/$(MACHTYPE)-$(OSTYPE)/xyscale.o  \
-                -lm $(GDAL) -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o
+                -lm $(GDAL) $(HDF5LIB) -o $(BINDIR)/geomosaic geoMosaic/$(MACHTYPE)-$(OSTYPE)/geomosaic.o
