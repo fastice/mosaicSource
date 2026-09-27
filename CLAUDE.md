@@ -169,6 +169,20 @@ runs, and reading GCOVs from object storage".
   assumed). The fp16 fast path's `H5Fopen` probe cannot take a `/vsi` path but already fails
   silently to the GDAL fallback.
 
+- **Antimeridian bounds fix (geographic output).** `transformBox` reduced the granule
+  footprint with a plain min/max, so a granule straddling longitude 180 -- transforming to
+  values near BOTH +180 and -180 -- reported a box spanning nearly the globe while EXCLUDING
+  the seam. The caller then derived a column range stopping short of 180 and that granule
+  contributed nothing there. Measured on a real Antarctic granule: min -179.26, max +178.83,
+  losing 166 columns (1.16 deg) from a tile ending at 180; a tile CROSSING 180 lost 583
+  columns (~87 km). Where coverage is thin (Ross Ice Shelf) the hole is the full width, which
+  is what made it look like bad data. It is NOT: the product carries only a ~1 pixel (50 m)
+  radiometric line there, and a polar-stereographic mosaic of the same granules shows just
+  that. `transformBox` now re-measures such a span on a continuous 0..360 branch and the
+  caller intersects both that and its -360 image with the grid. Only the BOUNDS were wrong --
+  the per-pixel transform is correct either side of the seam (2.48e6 px, 0 differing).
+  Projected output is untouched (EPSG:3031 regression bit-identical).
+
 - **`frequency:` / `bandwidth:` yaml keys.** A and B are different centre frequencies on
   different grids (A 10 m, B 80 m = exactly 1/8), NOT two halves of one signal; B is the
   ionosphere band. `frequency: A` (default) is a group-name selector, so it already means

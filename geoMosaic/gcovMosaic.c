@@ -59,7 +59,7 @@ static void dropGCOVByBandwidth(gcovInputs *gcov);
 static OGRCoordinateTransformationH makeTransform(int32_t fromEPSG, int32_t toEPSG);
 static int32_t outputEPSG();
 static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double xb, double ya, double yb,
-							double *minX, double *maxX, double *minY, double *maxY);
+							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap);
 static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int32_t nbr, int32_t kx, int32_t ky,
 						  int32_t useMask, float ***sigma, int32_t maskOnly);
 static float **allocFloat2D(int32_t nr, int32_t nc);
@@ -617,7 +617,8 @@ void gcovBounds(gcovInputs *gcov, double *minX, double *maxX, double *minY, doub
 		}
 		ct = makeTransform(g.epsg, outputEPSG());
 		if (transformBox(ct, g.x0 - 0.5 * g.dx, g.x0 + (g.nx - 0.5) * g.dx,
-						 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2) == TRUE)
+						 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2,
+						 (grimpDefaultProj() != NULL && grimpDefaultProj()->kind == GP_LATLON) ? TRUE : FALSE) == TRUE)
 		{
 			*minX = min(*minX, x1 * MTOKM);
 			*maxX = max(*maxX, x2 * MTOKM);
@@ -675,6 +676,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	double spanC, spanR, jd, tRead, tSample, anchorX, anchorY;
 	int32_t year, month, day, passType, needSigma, doPsi, needCube;
 	int32_t c0, c1, r0, r1, kx, ky, nbc, nbr, nh, cnx, cny, nThreads, t;
+	int32_t lonWrap, jLo, jHi;
 	char *file;
 
 	file = gcov->files[iFile];
@@ -741,15 +743,39 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	/*
 	  Output region covered by the GCOV raster
 	*/
+	lonWrap = (outputImage->proj.kind == GP_LATLON) ? TRUE : FALSE;
 	ct = makeTransform(g.epsg, outputEPSG());
 	if (transformBox(ct, g.x0 - 0.5 * g.dx, g.x0 + (g.nx - 0.5) * g.dx,
-					 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2) == FALSE)
+					 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2, lonWrap) == FALSE)
 	{
 		error("gcovToOutputGrid: could not transform bounds for %s", file);
 	}
 	OCTDestroyCoordinateTransformation(ct);
-	*jMin = max(0, (int32_t)floor((x1 - outputImage->originX) / outputImage->deltaX));
-	*jMax = min(outputImage->xSize, (int32_t)ceil((x2 - outputImage->originX) / outputImage->deltaX) + 1);
+	jLo = (int32_t)floor((x1 - outputImage->originX) / outputImage->deltaX);
+	jHi = (int32_t)ceil((x2 - outputImage->originX) / outputImage->deltaX) + 1;
+	if (lonWrap == TRUE)
+	{
+		/* transformBox may have returned the span on the 0..360 branch (e.g. 176.0..180.74),
+		   which addresses the same ground as -184.0..-179.26.  A tile ending at 180 matches
+		   the first, one starting at -180 matches the second; test both and keep whichever
+		   meets this grid, or the union when both do. */
+		int32_t jLo2 = (int32_t)floor((x1 - 360.0 - outputImage->originX) / outputImage->deltaX);
+		int32_t jHi2 = (int32_t)ceil((x2 - 360.0 - outputImage->originX) / outputImage->deltaX) + 1;
+		int32_t hits1 = (jHi > 0 && jLo < outputImage->xSize);
+		int32_t hits2 = (jHi2 > 0 && jLo2 < outputImage->xSize);
+		if (hits2 == TRUE && hits1 == FALSE)
+		{
+			jLo = jLo2;
+			jHi = jHi2;
+		}
+		else if (hits2 == TRUE && hits1 == TRUE)
+		{
+			jLo = min(jLo, jLo2);
+			jHi = max(jHi, jHi2);
+		}
+	}
+	*jMin = max(0, jLo);
+	*jMax = min(outputImage->xSize, jHi);
 	*iMin = max(0, (int32_t)floor((y1 - outputImage->originY) / outputImage->deltaY));
 	*iMax = min(outputImage->ySize, (int32_t)ceil((y2 - outputImage->originY) / outputImage->deltaY) + 1);
 	if (*jMax <= *jMin || *iMax <= *iMin)
@@ -765,7 +791,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	ct = makeTransform(outputEPSG(), g.epsg);
 	transformBox(ct, outputImage->originX + *jMin * outputImage->deltaX, outputImage->originX + (*jMax - 1) * outputImage->deltaX,
 				 outputImage->originY + *iMin * outputImage->deltaY, outputImage->originY + (*iMax - 1) * outputImage->deltaY,
-				 &x1, &x2, &y1, &y2);
+				 &x1, &x2, &y1, &y2, FALSE); /* target is the granule CRS: projected */
 	/* GCOV pixels spanned by one output pixel, at the centre of the region */
 	/* an output pixel centre near the middle of the region (also the block-alignment anchor) */
 	xc = outputImage->originX + ((*jMin + *jMax) / 2) * outputImage->deltaX;
@@ -1519,8 +1545,10 @@ static OGRCoordinateTransformationH makeTransform(int32_t fromEPSG, int32_t toEP
   Transform the edges of the box [xa,xb] x [ya,yb] and return the bounding box of the result.
 */
 static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double xb, double ya, double yb,
-							double *minX, double *maxX, double *minY, double *maxY)
+							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap)
 {
+	double lo, hi, w;
+	int32_t k;
 	double x[4 * NEDGE], y[4 * NEDGE], z[4 * NEDGE], f;
 	int32_t ok[4 * NEDGE], i, n, nGood;
 	n = 0;
@@ -1553,6 +1581,38 @@ static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double x
 			*minY = min(*minY, y[i]);
 			*maxY = max(*maxY, y[i]);
 			nGood++;
+		}
+	}
+	/* Antimeridian.  A granule straddling longitude 180 transforms to values near BOTH +180
+	   and -180, and a plain min/max then reports a box spanning almost the whole globe while
+	   EXCLUDING the seam -- so the caller derives a column range stopping short of 180 and the
+	   granule contributes nothing there.  Measured on a real Antarctic granule: min -179.26,
+	   max +178.83, losing 166 output columns (1.16 deg) from a tile ending at 180.  Where
+	   coverage is thin, as on the Ross Ice Shelf, the hole is the full width (~10 km) against
+	   the ~1 pixel artifact actually present in the product.
+
+	   Re-measure on a continuous branch (negative longitudes + 360) -> e.g. 176.00..180.74.
+	   The caller intersects both that and its -360 image with the output grid, so a tile
+	   ending at 180 and one starting at -180 each receive their share.  Only the BOUNDS were
+	   wrong: the per-pixel transform is correct either side of the seam (verified on 2.48e6
+	   pixels, 0 differing). */
+	if (lonWrap == TRUE && nGood > 0 && (*maxX - *minX) > 180.0)
+	{
+		lo = 1.e30;
+		hi = -1.e30;
+		for (k = 0; k < n; k++)
+		{
+			if (ok[k])
+			{
+				w = (x[k] < 0.0) ? x[k] + 360.0 : x[k];
+				lo = (w < lo) ? w : lo;
+				hi = (w > hi) ? w : hi;
+			}
+		}
+		if ((hi - lo) <= 180.0)
+		{
+			*minX = lo;
+			*maxX = hi;
 		}
 	}
 	return (nGood > 0) ? TRUE : FALSE;

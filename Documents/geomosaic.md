@@ -420,6 +420,38 @@ Conversely **a geographic output grid requires `dem none`**: the DEM crop window
 projected metres and converted to km, so a degrees grid would crop a meaningless region. That
 combination errors out rather than cropping the wrong window.
 
+### The antimeridian, for geographic output
+
+A granule straddling longitude 180 transforms to longitudes near **both** +180 and -180.
+`transformBox` reduced that with a plain min/max, reporting a box spanning almost the whole
+globe while *excluding* the seam, so the column range stopped short of 180 and the granule
+contributed nothing there.
+
+Measured on a real Antarctic granule: transformed lon min **-179.26**, max **+178.83**. For a
+tile ending at 180 that lost 166 columns (1.16 deg); for a tile *crossing* 180, 583 columns
+(4.08 deg, ~87 km). Where several granules overlap each loses a different amount and the union
+hides most of it -- but where coverage is thin, as on the Ross Ice Shelf, the hole is the full
+width. That is what made it look like a data problem.
+
+**It is not a data problem.** The products do carry a real artifact at the seam -- about one
+pixel (50 m) of 2.4 dB excursion, plus occasional invalid samples, from ISCE3 geocoding at the
+antimeridian -- but that is 200x smaller. A polar-stereographic mosaic of the same granules
+shows only the 1-pixel line, because PS coordinates do not wrap.
+
+Fixed by re-measuring a wrapping span on a continuous 0..360 branch (e.g. 176.00..180.74) and
+having the caller intersect both that and its -360 image with the output grid, so a tile
+ending at 180 and one starting at -180 each get their share. Measured after the fix:
+
+| output | gap before | gap after | valid px |
+|---|---|---|---|
+| EPSG:3031 | 0 | 0 | unchanged |
+| lat/lon ending at 180 | 11 px | 0 | +57,082 |
+| lat/lon starting at -180 | 2 px | 0 | +32,830 |
+| lat/lon crossing 180 | 583 px (87 km) | 0 | +2,599,047 |
+
+Only the BOUNDS were ever wrong: the per-pixel transform is correct either side of the seam,
+verified on 2.48e6 pixels with 0 differing. Projected output is bit-identical.
+
 ### Frequency and bandwidth selection (`frequency:`, `bandwidth:`)
 
 A GCOV carries two bands, and they are **not two halves of one signal** -- they sit at
