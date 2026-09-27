@@ -141,6 +141,71 @@ Traps:
 - `rtcGammaToSigmaFactor` can be negative or huge (seen: -59 to 3740). Samples with a factor
   that is not positive and finite are dropped from both averages, so γ₀/σ₀ stays consistent.
 
+## Geographic output / DEM-free / remote GCOVs (`geoMosaic/`, `common/grimpProj.*`)
+
+Three independent, default-off additions that together let `geomosaic` build a lat/lon mosaic
+from GCOVs sitting in a bucket, with nothing staged locally. Full description, the refusal
+matrix and the verified Seattle example: `Documents/geomosaic.md` "Geographic output, DEM-free
+runs, and reading GCOVs from object storage".
+
+- **`-epsg 4326`** adds a `GP_LATLON` kind to `grimpProj`. The grid axes ARE lon/lat, so the
+  conversions are the identity and **the input file's grid line is in DEGREES**.
+- **`grimpProj.gridScale` is the whole trick.** One field, set once by the constructors:
+  `MTOKM` for every projected kind, `1.0` for `GP_LATLON`. `processInputFileGeo.c` multiplies by
+  `1/gridScale` where it used to hard-code `KMTOM` -- that literal was the only baked-in
+  assumption, and it turned a `-122.6` degree origin into `-122300`.
+- **Velocity on a geographic grid is refused, not approximated** -- `grimpXYAngle`,
+  `grimpXYScale` and `grimpRequireConformal` all `error()` on `GP_LATLON`, because a geographic
+  grid is not conformal (E-W scale falls as `cos(lat)`). Backscatter only.
+- **`dem none`** skips the DEM entirely; everything that would sample one is refused rather than
+  given zero heights (no `-epsg`/`-wkt`, no `-gcov`, `nFiles > 0`, `-nearRange`/`-farRange`).
+  Conversely a geographic grid REQUIRES `dem none`, since the DEM crop window is built in
+  projected metres.
+- **`outputEPSG()` now prefers the resolved projection's EPSG.** Deriving it from `Rotation`/
+  `SLat` can only ever produce a polar stereographic code, so a UTM or geographic grid was
+  silently transformed as polar stereographic.
+- **Remote GCOVs need no I/O changes** -- every read is already a `GDALOpen`, and the SYSTEM
+  GDAL 3.8.4 / HDF5 1.10.10 that geomosaic links reads `/vsicurl` HDF5 fine (verified, not
+  assumed). The fp16 fast path's `H5Fopen` probe cannot take a `/vsi` path but already fails
+  silently to the GDAL fallback.
+
+- **`frequency:` / `bandwidth:` yaml keys.** A and B are different centre frequencies on
+  different grids (A 10 m, B 80 m = exactly 1/8), NOT two halves of one signal; B is the
+  ionosphere band. `frequency: A` (default) is a group-name selector, so it already means
+  "whatever that granule calls A" regardless of bandwidth. `bandwidth: 5, 20, 40, 80` is an
+  OPTIONAL one-line MHz list filtering the SELECTED frequency; omitted = all, so bandwidths
+  MIX by default, which is what production wants. **80 and 77 are the same mode** -- the 77 MHz
+  band is called "80 MHz" in mission docs and both spellings occur, so it is canonicalised on
+  both sides. Bandwidth comes from the NAME (field 8, 0-based: `AABB` in MHz, `00` = absent --
+  `4005` is A 40 + B 5, `7700` is A 77 + B absent) so a granule is rejected WITHOUT being
+  opened, which for a remote input is a saved round trip; verified against
+  `sourceData/swaths/frequency<X>/acquiredRangeBandwidth`. Rejecting ALL granules is a hard
+  error, not an empty mosaic. Slim products have frequency B stripped.
+
+- **`-calOutput gamma0` now skips sigma0 for real** when GCOVs are the only inputs (`gcovOnly`,
+  set in `geomosaic.c` once `nFiles` is known). It used to suppress only the WRITE -- `needSigma`
+  stayed TRUE under `-S1Cal`, so the whole `rtcGammaToSigmaFactor` band was read and discarded.
+  Remote Seattle scene: read 37.0 s -> 12.8 s. Gated on GCOV-only because range/Doppler images
+  put SIGMA0 in the same accumulator. Output differs from the gamma0-via-sigma0 route by exactly
+  one 0.01 dB quantum on ~25% of pixels, symmetrically -- the direct path drops a double
+  rounding and is the MORE accurate of the two.
+
+Traps, all checked: `glob:` cannot list a bucket (use `files:`); `factorFrom:` probes with
+`access()` so a remote slim product still needs a LOCAL factor dir; `dropSupersededGCOVs` keys
+on the basename, which for a signed URL includes the signature, so two signed URLs for the same
+granule will not de-duplicate.
+
+**A `/vsi` open failure is now FATAL, a local one still warns and skips.** Skipping one bad
+granule among hundreds is deliberate; skipping the only remote input produced an all-nodata
+mosaic that **exited 0 and looked finished** (observed during testing, from a transient DNS
+failure). `llToXYProj`'s 0..360 longitude convention disagrees with a grid origin written as
+`-122.6`; it does not bite because only the GCOV path reaches `GP_LATLON` and that path uses
+`OCTTransform`, but see the CAVEAT comment in `grimpProj.h` before adding another caller.
+
+**Direct S3 is region-locked, not unsupported.** ASF's credentials carry the role
+`sentinel-prod-tea-DownloadRoleInRegion` and S3 returns 403 outside us-west-2; `/vsis3/` uses
+the same GDAL path as the verified `/vsicurl/` route.
+
 ## ISCE/NISAR flat-earth baseline (`tiePoints/`, `common/`)
 
 See root CLAUDE.md "ISCE/NISAR flat-earth baseline path" for the overview. Implementation:

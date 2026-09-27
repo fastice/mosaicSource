@@ -87,6 +87,7 @@ grimpProj grimpProjFromLegacy(double rot, double stdLat, int32_t hemisphere)
     p.hemisphere = hemisphere;
     p.utmZone = 0;
     p.handle = -1;
+    p.gridScale = MTOKM;   /* projected grid stores metres, the API speaks km */
     /* The SLat global's "not set" sentinel is -91; the open-coded call sites all
        substituted 70 north / 71 south, so do exactly that here. */
     if (stdLat < -90.)
@@ -161,8 +162,31 @@ grimpProj grimpProjFromSRS(const char *userInput)
     srs = OSRNewSpatialReference(NULL);
     if (OSRSetFromUserInput(srs, userInput) != OGRERR_NONE)
         error("grimpProjFromSRS: cannot interpret projection \"%s\"", userInput);
+    if (OSRIsGeographic(srs))
+    {
+        /* A geographic CRS is not a projection to convert through: the grid axes ARE lon/lat,
+           so every conversion is the identity and no PROJ object is needed. Only WGS84 is
+           accepted, for the same reason the projected path insists on it -- the rest of the
+           code hard-codes that figure of the Earth. */
+        grimpProj p;
+        double a = OSRGetSemiMajor(srs, NULL);
+        if (fabs(a - 6378137.0) > 1.0)
+            error("grimpProjFromSRS: \"%s\" is geographic but not on the WGS84 ellipsoid\n"
+                  "  (semi-major %.1f m); the conversion routines hard-code WGS84.", userInput, a);
+        memset(&p, 0, sizeof(p));
+        p.kind = GP_LATLON;
+        p.epsg = 4326;
+        p.rot = 0.0;
+        p.stdLat = 0.0;
+        p.hemisphere = NORTH;
+        p.utmZone = 0;
+        p.handle = -1;
+        p.gridScale = 1.0;   /* the grid already stores degrees */
+        OSRDestroySpatialReference(srs);
+        return p;
+    }
     if (!OSRIsProjected(srs))
-        error("grimpProjFromSRS: \"%s\" is not a projected coordinate system", userInput);
+        error("grimpProjFromSRS: \"%s\" is neither projected nor geographic", userInput);
 
     /* Only WGS84-ellipsoid grids can use the legacy lltoxy1 fast path, and PROJ would
        give answers that differ from every existing product, so refuse outright. */
@@ -263,6 +287,7 @@ grimpProj grimpProjFromSRS(const char *userInput)
         const char *code = OSRGetAuthorityCode(srs, NULL);
         p.epsg = (code != NULL) ? atoi(code) : 0;
     }
+    p.gridScale = MTOKM;   /* every projected kind: metres stored, km through the API */
     OSRDestroySpatialReference(srs);
 
     /* A polar stereographic needs no PROJ object: it uses the legacy code path. */
@@ -402,6 +427,14 @@ const grimpProj *grimpDefaultProj(void)
 
 void llToXYProj(double lat, double lon, double *x, double *y, const grimpProj *p)
 {
+    if (p->kind == GP_LATLON)
+    {
+        /* x = lon, y = lat, in degrees. Longitude is returned in the same 0..360 convention
+           xytoll1 uses, because the pixel loops compare it against values from there. */
+        *x = (lon < 0.) ? lon + 360. : lon;
+        *y = lat;
+        return;
+    }
     if (p->kind == GP_PS || p->kind == GP_UNSET)
     {
         /* Untouched legacy path: identical instructions, identical arguments. */
@@ -418,6 +451,16 @@ void llToXYProj(double lat, double lon, double *x, double *y, const grimpProj *p
 
 void xyToLLProj(double x, double y, double *lat, double *lon, const grimpProj *p)
 {
+    if (p->kind == GP_LATLON)
+    {
+        *lat = y;
+        *lon = x;
+        while (*lon < 0.)
+            *lon += 360.;
+        while (*lon >= 360.)
+            *lon -= 360.;
+        return;
+    }
     if (p->kind == GP_PS || p->kind == GP_UNSET)
     {
         xytoll1(x, y, p->hemisphere, lat, lon, p->rot, p->stdLat);
@@ -438,7 +481,7 @@ void xyToLLProj(double x, double y, double *lat, double *lon, const grimpProj *p
 
 double grimpXYAngle(double lat, double lon, double x, double y, const grimpProj *p)
 {
-    if (p->kind == GP_GENERIC)
+    if (p->kind == GP_GENERIC || p->kind == GP_LATLON)
         error("grimpXYAngle: the grid angle is only defined for a conformal projection.\n"
               "  %s cannot be used to decompose velocity into vx/vy.", grimpProjDescribe(p));
     if (p->kind == GP_PS || p->kind == GP_UNSET)
@@ -469,7 +512,7 @@ double grimpXYAngle(double lat, double lon, double x, double y, const grimpProj 
 
 double grimpXYScale(double lat, const grimpProj *p)
 {
-    if (p->kind == GP_GENERIC)
+    if (p->kind == GP_GENERIC || p->kind == GP_LATLON)
         error("grimpXYScale: an isotropic grid scale is only defined for a conformal\n"
               "  projection; %s stretches x and y differently.", grimpProjDescribe(p));
     if (p->kind == GP_PS || p->kind == GP_UNSET)
@@ -600,6 +643,13 @@ const char *grimpSRSString(const grimpProj *p)
 
 void grimpRequireConformal(const grimpProj *p, const char *what)
 {
+    if (p->kind == GP_LATLON)
+        error("%s cannot be geographic (lat/lon).\n"
+              "  A geographic grid is not conformal -- east-west scale falls as cos(lat) --\n"
+              "  so one grid angle and one isotropic scale cannot describe it. Geographic\n"
+              "  output is supported for BACKSCATTER mosaics (geomosaic), which only resample\n"
+              "  a scalar, never for velocity.",
+              what);
     if (p->kind == GP_GENERIC)
         error("%s must be a conformal projection (polar stereographic or UTM).\n"
               "  Got %s.\n"
@@ -617,7 +667,9 @@ const char *grimpProjDescribe(const grimpProj *p)
     static int32_t next = 0;
     char *b = buf[next];
     next = (next + 1) % 4;
-    if (p->kind == GP_UTM)
+    if (p->kind == GP_LATLON)
+        snprintf(b, 256, "EPSG:%d (geographic lat/lon; grid units are DEGREES)", (int)p->epsg);
+    else if (p->kind == GP_UTM)
         snprintf(b, 256, "EPSG:%d (UTM zone %d%c)", (int)p->epsg, (int)p->utmZone,
                  (p->hemisphere == SOUTH) ? 'S' : 'N');
     else if (p->kind == GP_GENERIC)

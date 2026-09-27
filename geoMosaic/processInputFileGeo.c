@@ -32,10 +32,19 @@ void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInpu
 
 	outputImage->xSize = (int)(xs / deltaX + 0.5);
 	outputImage->ySize = (int)(ys / deltaY + 0.5);
-	outputImage->deltaX = deltaX * KMTOM;
-	outputImage->deltaY = deltaY * KMTOM;
-	outputImage->originX = xo * KMTOM;
-	outputImage->originY = yo * KMTOM;
+	/* The header is in the projection's OWN working units -- kilometres for a projected grid,
+	   DEGREES for a geographic one -- and is stored here in the units the pixel loops use:
+	   metres, or degrees unchanged. gridScale is the one place that distinction lives
+	   (MTOKM for projected, 1.0 for GP_LATLON), so dividing by it is the inverse of the
+	   MTOKM the conversion sites apply. Hard-coding KMTOM here turned a -122.3 degree origin
+	   into -122300. */
+	{
+		double toStored = 1.0 / outputImage->proj.gridScale;
+		outputImage->deltaX = deltaX * toStored;
+		outputImage->deltaY = deltaY * toStored;
+		outputImage->originX = xo * toStored;
+		outputImage->originY = yo * toStored;
+	}
 	/*
 	  Input ReMajor,ReMinor, Rc, phic, H
 	*/

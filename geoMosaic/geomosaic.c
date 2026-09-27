@@ -68,6 +68,7 @@ int32_t jacobianSubPixelRTC = FALSE; /* use |J|-weighted sub-pixel accumulation 
 int32_t maskLayover = FALSE;         /* suppress layover pixels (return MINS1DB) in all sub-pixel RTC flavors */
 int32_t geoMosaicMode = GEOMOSAIC_AVERAGE; /* 0=weighted avg, 1=min, 2=max */
 int32_t calOutput = CALOUTPUT_BOTH;        /* -calOutput: sigma0, gamma0, or both */
+int32_t gcovOnly = FALSE;                  /* GCOVs are the only inputs (nFiles == 0) */
 int32_t int16Output = FALSE;               /* -int16: calibrated dB tiffs as Int16 dB*100, scale 0.01 */
 int32_t rangeSelect = RANGESELECT_NONE;    /* -nearRange / -farRange incidence selection */
 double angleTolerance = 1.0;               /* -angleTolerance, degrees */
@@ -98,6 +99,7 @@ int main(int argc, char *argv[])
 	int32_t GTiff, COG, byteScale, dataType;
 	int32_t nFiles, maxR, maxA;
 	int32_t smoothL, smoothOut, orbitPriority, removePad;
+	int32_t noDEM;
 	int32_t i, j; /* LCV */
 	float noData;
 	char *date1, *date2; /* Date range */
@@ -126,16 +128,66 @@ int main(int argc, char *argv[])
 		readGCOVYaml(gcovYaml, &gcovData);
 		gcov = &gcovData;
 	}
-	/* This step just reads in the dem projection info, which is then used for the outputs */
-	readXYDEMGeoInfo(demFile, &xyDem, TRUE);
+	/* DEM "none" runs without one. The GCOV path touches the DEM ONLY to look up heights for
+	   the incidence cube (gcovMosaic.c:714,801), i.e. only when psi is written (-S1Cal with
+	   PSISAVE) or -nearRange/-farRange is in play. A plain -S1Cal -int16 GCOV mosaic never
+	   reads it, so requiring one just to supply the output projection means staging a DEM
+	   beside the data -- awkward when the GCOVs are in S3 and the DEM is not.
+	   Without a DEM there is nothing to take the projection from, so -epsg or -wkt is
+	   mandatory, and anything that would sample it is refused rather than silently
+	   returning zero heights. */
+	noDEM = (strcmp(demFile, "none") == 0 || strcmp(demFile, "NONE") == 0) ? TRUE : FALSE;
+	if (noDEM == TRUE)
+	{
+		if (epsgArg == 0 && wktFile == NULL)
+		{
+			error("geomosaic: dem 'none' needs -epsg or -wkt -- with no DEM there is nothing\n"
+				  "  to take the output projection from.");
+		}
+		if (gcov == NULL)
+		{
+			error("geomosaic: dem 'none' is only supported for a GCOV mosaic\n"
+				  "  (range/Doppler products are geocoded through the DEM).");
+		}
+		/* nFiles is not known until processInputFileGeo below, so the range/Doppler count is
+		   checked there rather than here. */
+		if (rangeSelect != RANGESELECT_NONE)
+		{
+			error("geomosaic: dem 'none' cannot be combined with -nearRange/-farRange --\n"
+				  "  the incidence angle is interpolated at the DEM height.");
+		}
+		memset(&xyDem, 0, sizeof(xyDem));
+	}
+	else
+	{
+		/* This step just reads in the dem projection info, which is then used for the outputs */
+		readXYDEMGeoInfo(demFile, &xyDem, TRUE);
+	}
 	/* Settle the output projection: the DEM's unless -epsg/-wkt overrides it.  Must happen
 	   before outputBounds(), which already projects control points. */
 	resolveOutputProjGeo(&outputImage, &xyDem, epsgArg, wktFile);
+	/* The DEM crop window below is built in projected metres and converted to km, so a
+	   geographic (degrees) output grid would crop a meaningless region of the DEM.  A
+	   lat/lon mosaic therefore requires dem 'none'; refused here rather than silently
+	   cropping the wrong window. */
+	if (outputImage.proj.kind == GP_LATLON && noDEM == FALSE)
+	{
+		error("geomosaic: a geographic (lat/lon) output grid requires dem 'none' --\n"
+			  "  the DEM crop bounds are computed in projected metres, not degrees.");
+	}
 	processMosaicDateGeo(&outputImage, date1, date2);
 	/*
 	  read inputfile (uses routine from mosaicDEMS).
 	*/
 	processInputFileGeo(inputFile, &imageFiles, &geodatFiles, &outputImage, &nFiles, &weights, &antPatFiles);
+	/* With GCOVs as the only contributors nothing else writes the accumulator, which is
+	   what lets the gamma0-only run skip sigma0 entirely (see gcovMosaic.c). */
+	gcovOnly = (gcov != NULL && nFiles == 0) ? TRUE : FALSE;
+	if (noDEM == TRUE && nFiles > 0)
+	{
+		error("geomosaic: dem 'none' given but the input file lists %i range/Doppler image(s);\n"
+			  "  those are geocoded through the DEM. Use nFiles 0 for a GCOV-only mosaic.", nFiles);
+	}
 	if (nFiles == 0 && (gcov == NULL || gcov->nFiles == 0))
 	{
 		error("No range/Doppler or GCOV inputs");
@@ -169,8 +221,15 @@ int main(int argc, char *argv[])
 	x2 = (outputImage.originX + outputImage.deltaX * outputImage.xSize + 10e3) / 1000.;
 	y2 = (outputImage.originY + outputImage.deltaY * outputImage.ySize + 10e3) / 1000.;
 	fprintf(stderr, "x1, x2, y1, y2, %f %f %f %f\n", x1, x2, y1, y2);
-	readXYDEMcrop(demFile, &xyDem, x1, x2, y1, y2);
-	dem = (void *)&xyDem;
+	if (noDEM == TRUE)
+	{
+		dem = NULL;
+	}
+	else
+	{
+		readXYDEMcrop(demFile, &xyDem, x1, x2, y1, y2);
+		dem = (void *)&xyDem;
+	}
 	/*
 	  Do the mosaicking
 	*/
@@ -554,6 +613,11 @@ static void resolveOutputProjGeo(outputImageStructure *outputImage, xyDEM *xyDem
 		error("geomosaic: give -epsg or -wkt, not both");
 	if (epsg == 0 && wktFile == NULL)
 	{
+		if (xyDem == NULL)
+		{
+			error("resolveOutputProjGeo: no DEM and no -epsg/-wkt, so the output projection is "
+				  "undetermined");
+		}
 		outputImage->proj = grimpProjFromLegacy(Rotation, (SLat < -90.) ? xyDem->stdLat : SLat,
 											   HemiSphere);
 	}

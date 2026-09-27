@@ -23,10 +23,18 @@
 /* coarse incidence buffer: a cell no input reached filters nothing */
 #define INCUNSET -999.0
 /* Already geocoded NISAR GCOV inputs, from the -gcov yaml file */
+#define MAXGCOVBANDWIDTHS 8
 typedef struct
 {
 	char polarization[16]; /* covariance term, e.g. HHHH */
 	char frequency[4];	   /* A or B */
+	/* Optional bandwidth filter (yaml key bandwidth:), in MHz, applied to the bandwidth of
+	   the SELECTED frequency. nBandwidths 0 -- the default -- accepts every granule, so
+	   bandwidths are mixed unless the caller asks otherwise. Values are canonicalised, which
+	   matters for exactly one mode: the 77 MHz band is called "80 MHz" in most mission
+	   documents, and both spellings turn up, so 80 and 77 are the same value here. */
+	int32_t nBandwidths;
+	int32_t bandwidths[MAXGCOVBANDWIDTHS];
 	int32_t useMask;	   /* drop samples flagged invalid/fill in the GCOV mask */
 	/* Directory holding rtcGammaToSigmaFactor outside the granule (yaml key factorFrom).
 	   Empty (the default) means the factor lives in the granule, as it does in an archive

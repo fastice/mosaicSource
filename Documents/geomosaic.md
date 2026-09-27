@@ -43,7 +43,7 @@ geomosaic [options] inputFile demFile outFile
 | Argument    | Description |
 |-------------|-------------|
 | `inputFile` | ASCII list of input images, geodat files, weights, and optional antenna pattern files |
-| `demFile`   | DEM in XY polar stereographic format — provides elevations and projection |
+| `demFile`   | DEM in XY polar stereographic format — provides elevations and projection. `none` for a GCOV-only mosaic with `-epsg`/`-wkt` (see [below](#no-dem-dem-none)) |
 | `outFile`   | Output file base name |
 
 ### Options
@@ -79,6 +79,8 @@ geomosaic [options] inputFile demFile outFile
 | `-nearRange` / `-farRange`    | Keep only inputs whose ellipsoidal incidence angle is within `-angleTolerance` of the per-pixel minimum (near) or maximum (far). Mutually exclusive; not allowed with `-min`/`-max`, `-ascending`/`-descending` or `-nearestDate` (see [Range selection](#near-range--far-range-selection-nearrange--farrange)) |
 | `-angleTolerance <deg>`       | Tolerance for the above [1.0] |
 | `-angleStride <n>`            | Output pixels per cell in the selection pre-pass [10] |
+| `-epsg <code>`                | Output projection EPSG code, overriding the DEM's. `4326` gives a **geographic lat/lon** grid whose input-file units are degrees (see [below](#geographic-lat-lon-output--epsg-4326)) |
+| `-wkt <file>`                 | Output projection from a WKT/PROJ string in a file, overriding the DEM's |
 | `-gcov <file.yaml>`           | Also mosaic already-geocoded NISAR GCOV HDF5 products listed in the YAML file (see [NISAR GCOV Inputs](#nisar-gcov-inputs-gcov)). With GCOVs, `inputFile` may list 0 range/Doppler images |
 | `-calOutput sigma0\|gamma0\|both` | With `-S1Cal`: write only `.sigma0`, only `.gamma0`, or both [both, the previous behaviour]. Without `-S1Cal` it only selects the quantity GCOVs contribute [gamma0] |
 | `-int16`                     | With `-S1Cal` and `-GTiff`/`-COG`: write `.sigma0`/`.gamma0` as Int16 round(dB×100), with scale 0.01 and nodata −3000 in the file. Lossless and about 2× smaller as a COG (a predictor is used) |
@@ -113,7 +115,9 @@ ASCII file parsed by `processInputFileGeo`. Comments begin with `;`.
 ```
 x0  y0  xSize  ySize  deltaX  deltaY
 ```
-Same format as `mosaic3d` (origin in km, size in km, pixel spacing in km).
+Same format as `mosaic3d` (origin in km, size in km, pixel spacing in km) for a **projected**
+output grid. For a **geographic** grid (`-epsg 4326`) all six numbers are in **degrees**, with
+`x0` longitude and `y0` latitude.
 
 **Line 2 — Number of input images:**
 ```
@@ -352,6 +356,202 @@ The `.gamma0` limitation noted elsewhere applies here too: in average mode, `gBu
 - **Blending.** A GCOV blended with one S1 image reproduces the linear mean to within the
   0.01 dB output rounding. Pixels covered by only one of the two are reproduced exactly.
 - **Threads.** `-ompThreads 1` and `-ompThreads 8` give byte-identical output.
+
+---
+
+## Geographic output, DEM-free runs, and reading GCOVs from object storage
+
+Three capabilities added together, because a cloud GCOV mosaic needs all three: a lat/lon output
+grid, no DEM to stage, and inputs read in place from a bucket. Each is independent and off by
+default -- a projected run with a DEM and local files is byte-identical to before (verified: a
+1500x1500 EPSG:3031 mosaic over 31 granules is pixel-identical, differing only in the GeoTIFF's
+embedded `CreationTime`).
+
+### Geographic (lat/lon) output: `-epsg 4326`
+
+The output grid axes become longitude and latitude and **the input file's grid line is in
+DEGREES**, not kilometres:
+
+```
+;  x0(lon)   y0(lat)  xSize   ySize   dLon    dLat      <- degrees, not km
+-122.60      47.40    0.60    0.40    0.0005  0.0005
+0
+```
+
+`grimpProj` gains a `GP_LATLON` kind whose lat/lon conversions are the identity. The unit
+difference lives in **one** field, `grimpProj.gridScale`, set once by the constructors:
+`MTOKM` for every projected kind (grid stores metres, the conversion API speaks km) and `1.0`
+for `GP_LATLON` (grid stores degrees, no conversion). `processInputFileGeo` multiplies by
+`1/gridScale` instead of a hard-coded `KMTOM`; that literal was the only place the assumption
+was baked in, and it turned a `-122.6` degree origin into `-122300`.
+
+The GCOV resample path needed no change at all: it hands `originX + j*deltaX` straight to
+`OCTTransform` in the output CRS's own units (`gcovMosaic.c`), which is what a geographic CRS
+wants anyway. Block averaging picks its factors per axis from the true ground span, so it
+correctly comes out anisotropic -- at 47.6 N, `0.0005 deg` is 37.5 m of longitude against
+55.7 m of latitude, giving a 3 x 5 average of 10 m GCOV pixels.
+
+**Velocity is refused, not approximated.** `grimpXYAngle`, `grimpXYScale` and
+`grimpRequireConformal` all `error()` on `GP_LATLON`: a geographic grid is not conformal --
+east-west scale falls as `cos(lat)` -- so no single grid angle and isotropic scale can describe
+it, and vx/vy cannot be decomposed on it. Geographic output is for **backscatter only**, which
+just resamples a scalar.
+
+**`outputEPSG()` now prefers the resolved projection's own code.** It used to derive the EPSG
+from `Rotation`/`SLat`, which can only ever yield a polar stereographic code -- so a UTM or
+geographic grid was transformed as if it were polar stereographic, silently and with
+plausible-looking coordinates.
+
+### No DEM: `dem none`
+
+Pass `none` (or `NONE`) as the DEM positional argument. The GCOV path only needs a DEM to
+supply heights to the incidence cube, which is only built for psi output (`-S1Cal` with
+`PSISAVE`) or `-nearRange`/`-farRange`; a plain calibrated GCOV mosaic never touches it.
+Anything that would sample a DEM is refused rather than silently given zero heights:
+
+| refused with `dem none` | why |
+|---|---|
+| no `-epsg`/`-wkt` | the output projection normally comes from the DEM |
+| no `-gcov` | range/Doppler products are geocoded *through* the DEM |
+| `nFiles > 0` in the input file | same |
+| `-nearRange`/`-farRange` | incidence is interpolated at the DEM height |
+
+Conversely **a geographic output grid requires `dem none`**: the DEM crop window is built in
+projected metres and converted to km, so a degrees grid would crop a meaningless region. That
+combination errors out rather than cropping the wrong window.
+
+### Frequency and bandwidth selection (`frequency:`, `bandwidth:`)
+
+A GCOV carries two bands, and they are **not two halves of one signal** -- they sit at
+different centre frequencies on different grids. Measured on real products:
+
+| granule | frequency A | frequency B |
+|---|---|---|
+| `..._4005_SHSH_...` | 40 MHz @ 1239.0 MHz, 10 m | 5 MHz @ 1293.5 MHz, 80 m |
+| `..._7700_SHNA_...` | 77 MHz @ 1257.5 MHz, 10 m | absent (`NA`) |
+
+Frequency B is the **ionosphere band**; A is the science band and the default. `frequency: A`
+already means "whatever that granule calls A", whatever its bandwidth -- it is a group-name
+selector, not a bandwidth one, and A is always present. `frequency: B` is kept for quick looks
+and diagnostics; note B is 80 m, exactly 1/8 of A, so it is a different output resolution.
+
+**`bandwidth:` (optional) filters on the bandwidth of the SELECTED frequency**, as a one-line
+list in MHz. Omitted -- the default -- accepts everything, so **bandwidths mix unless you ask
+otherwise**, which is the intended production behaviour:
+
+```yaml
+frequency: A
+bandwidth: 5, 20, 40, 80    # omit for all; filters whichever frequency is selected
+```
+
+**80 and 77 are the same mode.** The 77 MHz band is called "80 MHz" throughout the mission
+documentation and both spellings occur, so the value is canonicalised on *both* sides of the
+comparison -- `bandwidth: 80` and `bandwidth: 77` behave identically and the log reports 77.
+
+The bandwidth is read from the granule **NAME**, field 8 (0-based, `_`-split): a four-character
+pair `AABB` giving each band's bandwidth in MHz, `00` meaning absent. `4005` is A 40 + B 5;
+`7700` is A 77 + B absent. Read from the name, not from
+`metadata/sourceData/swaths/frequency<X>/acquiredRangeBandwidth`, precisely so a granule can be
+rejected **without opening it** -- which for a remote input means without a network round trip.
+The two were checked against each other on both modes and agree. A name that does not parse is
+dropped with a warning.
+
+With `frequency: B` the filter reads the second pair, so a `7700` granule reports
+`frequencyB bandwidth 0 MHz` and is dropped before anything tries to open a band that is not
+there.
+
+**If the filter rejects every granule it is a hard error**, not an empty mosaic -- the same
+reasoning as the remote-open failure. An empty GCOV list otherwise produces an all-nodata
+product that exits 0, and a wrong `bandwidth:` list or a changed naming convention is far more
+likely than a genuinely empty tile.
+
+Note slim products have frequency B stripped, so `frequency: B` only works against full archive
+products.
+
+### `-calOutput gamma0` now really skips sigma0 (GCOV-only runs)
+
+`-calOutput gamma0` used to suppress only the *write*: with `-S1Cal`, `needSigma` was still
+TRUE, so the whole `rtcGammaToSigmaFactor` band was read and a sigma0 plane accumulated and
+then thrown away. That is an extra band read the size of the data band, which dominates a
+remote run.
+
+When `-calOutput gamma0` is given **and GCOVs are the only inputs**, the factor band is no
+longer opened at all: `value` carries gamma0 directly and the `gBuf` offset is 0, which
+reconstructs the identical gamma0 at output (`image` holds dB, `gamma[][]` is added to it).
+Measured on the remote Seattle scene: **read 37.0 s -> 12.8 s, wall 46 s -> 15.7 s**.
+
+**Restricted to GCOV-only deliberately.** Under `-S1Cal` the range/Doppler images put *sigma0*
+in the same accumulator, so letting GCOVs contribute gamma0 to it would average two different
+quantities. `gcovOnly` (set in `geomosaic.c` once `nFiles` is known) gates it; with any
+range/Doppler input the old path runs unchanged.
+
+**Not bit-identical to the gamma0-via-sigma0 route, by one quantum, and the new one is more
+accurate.** The old route rounds the gamma0-sigma0 offset to 0.01 dB and then rounds the sum
+again; the direct route rounds once. Measured: differences are exactly +/-0.01 dB on 25.1% of
+valid pixels, symmetric (75724 low / 75109 high), so there is no bias -- just one fewer
+rounding. `-calOutput both` and `-calOutput sigma0` are untouched.
+
+### Remote GCOVs: `/vsicurl/`, `/vsis3/`
+
+Put a GDAL virtual path in the yaml's `files:` list and the granule is read in place, over HTTP
+range requests, with no download:
+
+```yaml
+frequency: A
+polarization: HHHH
+useMask: 1
+files:
+  - /vsicurl/https://<presigned ASF CloudFront URL> 1.0
+```
+
+This needed no I/O changes -- every GCOV read is already a `GDALOpen` -- but several incidental
+things had to be checked, and all hold:
+
+- The **system** GDAL 3.8.4 / HDF5 1.10.10 that `geomosaic` links reads remote HDF5, not just
+  the newer conda stack. Both the container open (for the flattened `..._projection_epsg_code`
+  attributes) and the subdataset opens work.
+- The float16 fast path probes with `H5Fopen`, which cannot take a `/vsi` path. It already
+  silences HDF5 errors and returns FALSE, so it falls back to GDAL cleanly. Full ASF products
+  are float32 anyway; a remote **slim** product would lose the fp16 fast path.
+- Path buffers are 2048 and a presigned URL runs ~780 characters, so it fits with room to spare.
+- `parseGCOVName` survives the query string: it splits the basename on `_` and reads fields 3,
+  6 and 11, all of which precede the `?`. The signature's own underscores only add fields past
+  those, and the field array is capped at 20.
+- `glob:` cannot list a bucket -- use `files:`. `factorFrom:` probes with `access()`, so a
+  remote slim product still needs a local factor directory.
+- `dropSupersededGCOVs` keys on the basename, which for a URL includes the signature, so two
+  signed URLs for the same granule will **not** de-duplicate. List each granule once.
+
+**A remote open failure is fatal.** For a local archive, a granule that will not open warns and
+is skipped, so one bad product among hundreds still leaves a usable tile -- that is deliberate
+and unchanged. A `/vsi` path is the opposite case: the usual cause is a transient network error
+or an expired presigned URL, there is no redundancy, and skipping every input yields an
+all-nodata mosaic that **exits 0 and looks finished**. That was observed during testing (a DNS
+failure produced a complete, empty, successful-looking product), so `openGCOV` now `error()`s
+on a failed open when the path starts with `/vsi`.
+
+**Direct S3 is region-locked, not unsupported.** `earthaccess.get_s3_credentials(daac='ASF')`
+returns working credentials whose role is named `sentinel-prod-tea-DownloadRoleInRegion`, and
+S3 returns **403 outside us-west-2**. That is NASA Cumulus policy, not a geomosaic limitation:
+`/vsis3/` exercises the same GDAL code path as the `/vsicurl/` route verified here and should
+work unchanged from an in-region instance.
+
+### Worked example (verified end to end)
+
+A NISAR GCOV over Seattle, read from ASF over `/vsicurl`, mosaicked onto a lat/lon grid with no
+DEM and nothing staged locally:
+
+```bash
+geomosaic -S1Cal -calOutput gamma0 -GTiff -date1 08-01-2026 -date2 09-01-2026 \
+          -epsg 4326 -gcov seattle.gcov.yaml  seattle.in  none  seattleLatLon
+```
+
+Granule `NISAR_L2_PR_GCOV_029_005_A_026_4005_DHDH_A_20260825T125541...` (36720 x 36432, 10 m,
+EPSG:32610). Output 1200 x 800 at 0.0005 deg, `-122.6002..-122.0002` lon by
+`47.3998..47.7998` lat, 46 s wall clock of which 37 s is the network read of the 4563 x 4505
+window. Result: gamma0 -19.0 to +26.2 dB, water to city contrast ~15 dB with Lake Washington at
+-13.6 dB against downtown at +1.4 dB, and both floating bridges resolved. Reruns are
+bit-identical.
 
 ---
 

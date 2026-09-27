@@ -67,7 +67,8 @@ typedef enum
     GP_UNSET = 0,  /* not yet resolved; treated as polar stereographic */
     GP_PS = 1,     /* polar stereographic, incl. custom (possibly no EPSG code) */
     GP_UTM = 2,    /* universal transverse Mercator, one zone */
-    GP_GENERIC = 3 /* any other projected CRS: positions only, see below */
+    GP_GENERIC = 3, /* any other projected CRS: positions only, see below */
+    GP_LATLON = 4  /* geographic (EPSG:4326): the grid IS lat/lon, see the units note */
 } grimpProjKind;
 
 typedef struct
@@ -79,7 +80,36 @@ typedef struct
     int32_t hemisphere;    /* NORTH or SOUTH (geocode.h) */
     int32_t utmZone;       /* GP_UTM only, 1..60; 0 otherwise */
     int32_t handle;        /* index into grimpProj.c's registry, -1 if no PROJ needed */
+    /* Multiply a STORED grid coordinate to get the units llToXYProj/xyToLLProj want.
+       Set once by the constructors; never recomputed. Projected grids store metres and the
+       conversion API works in km, so this is MTOKM; a GP_LATLON grid stores degrees and the
+       API is the identity, so it is 1.0. Call sites use p->gridScale in place of a literal
+       MTOKM, which is what lets one pixel loop serve both. */
+    double gridScale;
 } grimpProj;
+
+/* ---- units, because they differ by kind ------------------------------------------
+   For every PROJECTED kind (GP_PS, GP_UTM, GP_GENERIC) a grid coordinate is METRES in
+   outputImage->originX/deltaX, and llToXYProj/xyToLLProj speak KILOMETRES -- the historical
+   convention, unchanged.
+
+   For GP_LATLON the grid coordinate is DEGREES (x = longitude, y = latitude) and the
+   conversion functions are the identity. Nothing is scaled, so an input file for a
+   geographic mosaic gives its origin and spacing in degrees where a polar-stereographic one
+   gives kilometres.
+
+   Two consumers already want native CRS units and therefore need no change either way:
+   computeGeoTransform() (a GeoTIFF geotransform is metres for a projected CRS and degrees
+   for 4326) and gcovMosaic.c's block-average span, which feeds OCTTransform in the output
+   CRS's own units.
+
+   CAVEAT, untested because it is currently unreachable: llToXYProj/xyToLLProj normalise
+   longitude to 0..360, matching xytoll1 and the control points the range/Doppler loops
+   compare against -- but a GP_LATLON grid origin is whatever the input file said, e.g.
+   -122.6 for Seattle.  The two disagree by 360 in the western hemisphere.  It does not bite
+   today because GP_LATLON is only reachable through geomosaic's GCOV path, which converts
+   with OCTTransform and never calls llToXYProj.  Any future caller that does must either
+   write its input file in 0..360 or settle this convention first. */
 
 /* ---- constructors (SERIAL only) ------------------------------------------------- */
 

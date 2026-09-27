@@ -53,6 +53,9 @@ static void closeGCOV(gcovFile *g);
 static int32_t readCoordinates(char *file, char *dataset, int32_t n, double **coords);
 static int32_t getEPSGAttribute(GDALDatasetH hFile, char *key);
 static int32_t parseGCOVName(char *file, int32_t *year, int32_t *month, int32_t *day, int32_t *passType);
+static int32_t canonicalBandwidth(int32_t mhz);
+static int32_t gcovNameBandwidth(char *file, char freq);
+static void dropGCOVByBandwidth(gcovInputs *gcov);
 static OGRCoordinateTransformationH makeTransform(int32_t fromEPSG, int32_t toEPSG);
 static int32_t outputEPSG();
 static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double xb, double ya, double yb,
@@ -220,7 +223,9 @@ static int32_t readGCOVWindow(hid_t h5, GDALRasterBandH band, int32_t x, int32_t
   getBaseline.c. Format:
 
 	polarization: HH        # HH -> HHHH, HV -> HVHV, or a full term such as HHHH
-	frequency: A
+	frequency: A           # A (default) or B; B is the ionosphere band
+	bandwidth: 5, 20, 40, 80  # optional MHz list for the SELECTED frequency;
+	                          # omitted = all. 80 and 77 mean the same mode.
 	useMask: true           # drop samples flagged invalid (0) or fill (255) in the GCOV mask
 	glob: /path/to/*.h5     # optional, may repeat; matches are sorted
 	files:                  # optional list, "- path [weight]"
@@ -236,6 +241,7 @@ void readGCOVYaml(char *yamlFile, gcovInputs *gcov)
 	glob_t globResult;
 
 	strcpy(gcov->polarization, "HHHH");
+	gcov->nBandwidths = 0; /* no filter: every bandwidth accepted */
 	strcpy(gcov->frequency, "A");
 	gcov->useMask = TRUE;
 	gcov->factorDir[0] = '\0';
@@ -289,6 +295,35 @@ void readGCOVYaml(char *yamlFile, gcovInputs *gcov)
 		if (strcmp(key, "files") == 0)
 		{
 			inFiles = TRUE;
+		}
+		else if (strcmp(key, "bandwidth") == 0)
+		{
+			/* A list on one line: "bandwidth: 5, 20, 40, 80". Parsed from the rest of the
+			   line rather than from value, which holds only the first token. */
+			char *q = c + 1;
+			gcov->nBandwidths = 0;
+			while (*q != '\0')
+			{
+				if (isdigit((unsigned char)*q) == 0)
+				{
+					q++;
+					continue;
+				}
+				if (gcov->nBandwidths >= MAXGCOVBANDWIDTHS)
+				{
+					error("readGCOVYaml: more than %i bandwidths in %s", MAXGCOVBANDWIDTHS, yamlFile);
+				}
+				gcov->bandwidths[gcov->nBandwidths] = canonicalBandwidth(atoi(q));
+				gcov->nBandwidths++;
+				while (isdigit((unsigned char)*q) != 0)
+				{
+					q++;
+				}
+			}
+			if (gcov->nBandwidths == 0)
+			{
+				error("readGCOVYaml: bandwidth: given but no values in %s", yamlFile);
+			}
 		}
 		else if (strcmp(key, "polarization") == 0)
 		{
@@ -351,12 +386,137 @@ void readGCOVYaml(char *yamlFile, gcovInputs *gcov)
 		}
 	}
 	fclose(fp);
+	dropGCOVByBandwidth(gcov);
 	dropSupersededGCOVs(gcov);
 	fprintf(stderr, "GCOV inputs: %i files, frequency%s/%s, useMask %i\n",
 			gcov->nFiles, gcov->frequency, gcov->polarization, gcov->useMask);
+	fprintf(stderr, "GCOV bandwidth filter: ");
+	if (gcov->nBandwidths == 0)
+	{
+		fprintf(stderr, "none (all bandwidths)\n");
+	}
+	else
+	{
+		for (i = 0; i < gcov->nBandwidths; i++)
+		{
+			fprintf(stderr, "%i MHz%s", gcov->bandwidths[i],
+					(i < gcov->nBandwidths - 1) ? ", " : "\n");
+		}
+	}
 	for (i = 0; i < gcov->nFiles; i++)
 	{
 		fprintf(stderr, "  GCOV %i: %s %f\n", i + 1, gcov->files[i], gcov->weights[i]);
+	}
+}
+
+/*
+  The 77 MHz mode is called "80 MHz" in most mission documents and either spelling turns up,
+  in file names and in hand-written yaml alike. Fold them together so the comparison cannot
+  depend on which name the writer happened to use.
+*/
+static int32_t canonicalBandwidth(int32_t mhz)
+{
+	return (mhz == 80) ? 77 : mhz;
+}
+
+/*
+  Bandwidth in MHz of frequency `freq` ('A' or 'B') taken from the granule NAME: field 8
+  (0-based) is a four-character pair "AABB" giving each band's bandwidth, e.g. 4005 = A 40 MHz
+  + B 5 MHz, 7700 = A 77 MHz + B absent. Returns -1 if the name does not parse and 0 if that
+  frequency is absent.
+
+  Deliberately read from the name rather than from
+  metadata/sourceData/swaths/frequency<X>/acquiredRangeBandwidth (which is authoritative, and
+  agrees -- checked on both modes): the point of the filter is to reject a granule without
+  opening it, which for a remote input means without a network round trip.
+*/
+static int32_t gcovNameBandwidth(char *file, char freq)
+{
+	char name[1024], *base, *tok, *fields[20];
+	int32_t n, i, mhz;
+	base = strrchr(file, '/');
+	strncpy(name, (base == NULL) ? file : base + 1, sizeof(name) - 1);
+	name[sizeof(name) - 1] = '\0';
+	n = 0;
+	for (tok = strtok(name, "_"); tok != NULL && n < 20; tok = strtok(NULL, "_"))
+	{
+		fields[n++] = tok;
+	}
+	if (n < 9 || strlen(fields[8]) != 4)
+	{
+		return -1;
+	}
+	for (i = 0; i < 4; i++)
+	{
+		if (isdigit((unsigned char)fields[8][i]) == 0)
+		{
+			return -1;
+		}
+	}
+	i = (freq == 'B') ? 2 : 0;
+	mhz = (fields[8][i] - '0') * 10 + (fields[8][i + 1] - '0');
+	return canonicalBandwidth(mhz);
+}
+
+/*
+  Apply the optional bandwidth filter. A no-op unless the yaml gave a bandwidth: list, so
+  mixed bandwidths are the default.
+*/
+static void dropGCOVByBandwidth(gcovInputs *gcov)
+{
+	int32_t i, k, n, keep, bw, nBefore, nBad;
+	if (gcov->nBandwidths == 0)
+	{
+		return;
+	}
+	nBefore = gcov->nFiles;
+	nBad = 0;
+	n = 0;
+	for (i = 0; i < gcov->nFiles; i++)
+	{
+		bw = gcovNameBandwidth(gcov->files[i], gcov->frequency[0]);
+		keep = FALSE;
+		if (bw < 0)
+		{
+			fprintf(stderr, "GCOV: cannot read bandwidth from name %s -- dropped by the "
+							"bandwidth filter\n", gcov->files[i]);
+			nBad++;
+		}
+		else
+		{
+			for (k = 0; k < gcov->nBandwidths; k++)
+			{
+				if (gcov->bandwidths[k] == bw)
+				{
+					keep = TRUE;
+				}
+			}
+		}
+		if (keep == TRUE)
+		{
+			gcov->files[n] = gcov->files[i];
+			gcov->weights[n] = gcov->weights[i];
+			n++;
+		}
+		else
+		{
+			if (bw >= 0)
+			{
+				fprintf(stderr, "GCOV: dropping %s (frequency%s bandwidth %i MHz)\n",
+						gcov->files[i], gcov->frequency, bw);
+			}
+			free(gcov->files[i]);
+		}
+	}
+	gcov->nFiles = n;
+	/* Every granule failing the filter is far more likely to be a wrong bandwidth list or a
+	   changed naming convention than a real empty tile, and an empty GCOV list otherwise
+	   produces an all-nodata mosaic that exits 0. Same reasoning as the remote-open failure. */
+	if (nBefore > 0 && gcov->nFiles == 0)
+	{
+		error("readGCOVYaml: the bandwidth filter rejected all %i granules (%i had an\n"
+			  "  unparseable name). Check the bandwidth: list against frequency%s.",
+			  nBefore, nBad, gcov->frequency);
 	}
 }
 
@@ -505,6 +665,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	int32_t padC, padR;
 	extern int32_t S1Cal;
 	extern int32_t calOutput;
+	extern int32_t gcovOnly;
 	int32_t doy[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 333};
 	gcovFile g;
 	OGRCoordinateTransformationH ct, *ctThread;
@@ -549,6 +710,19 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	*imageDate = year * 365. + doy[month - 1] + day;
 	/* sigma0 needed for calibrated output or if requested for uncalibrated */
 	needSigma = ((S1Cal & TRUE) == TRUE || calOutput == CALOUTPUT_SIGMA0) ? TRUE : FALSE;
+	/* gamma0 is what the GCOV stores, so when it is the only output wanted AND GCOVs are the
+	   only inputs, sigma0 is dead work: value carries gamma0 directly and the gBuf offset is
+	   0, giving the identical gamma0 at output (image holds dB, gamma[][] is added to it).
+	   That skips the whole rtcGammaToSigmaFactor band -- an extra read the size of the data
+	   band, which dominates when the granule is remote.
+
+	   Conditional on gcovOnly because under -S1Cal the range/Doppler images put SIGMA0 in the
+	   same accumulator; mixing gamma0 from GCOVs into it would average two different
+	   quantities. */
+	if (calOutput == CALOUTPUT_GAMMA0 && gcovOnly == TRUE)
+	{
+		needSigma = FALSE;
+	}
 	doPsi = ((S1Cal & TRUE) == TRUE && (S1Cal & PSISAVE) > 0) ? TRUE : FALSE;
 	/* the range selection needs the incidence cube whether or not psi is being written out */
 	needCube = (doPsi == TRUE || rangeSelect != RANGESELECT_NONE) ? TRUE : FALSE;
@@ -1083,6 +1257,16 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 	g->hFile = GDALOpen(file, GA_ReadOnly);
 	if (g->hFile == NULL)
 	{
+		/* A local granule that will not open is one bad product among many, and skipping it
+		   so the rest of the tile still builds is deliberate.  A /vsi path is different: the
+		   usual cause is a transient network or an expired presigned URL, there is no
+		   redundancy to fall back on, and skipping every input yields an all-nodata mosaic
+		   that exits 0 and looks finished.  Fail loudly instead. */
+		if (strncmp(file, "/vsi", 4) == 0)
+		{
+			error("openGCOV: could not open remote input %s\n"
+				  "  (transient network error, or an expired presigned URL).", file);
+		}
 		fprintf(stderr, "Warning: could not open %s\n", file);
 		return FALSE;
 	}
@@ -1296,6 +1480,15 @@ static int32_t outputEPSG()
 	extern double Rotation;
 	extern double SLat;
 	extern int32_t HemiSphere;
+	const grimpProj *p = grimpDefaultProj();
+	/* Prefer the resolved output projection's own code. Deriving it from Rotation/SLat only
+	   ever produces a polar stereographic EPSG, so a UTM or geographic output grid would be
+	   transformed as if it were polar stereographic -- silently, with plausible-looking
+	   coordinates. A geographic grid has no rot/stdLat to derive from at all. */
+	if (p != NULL && p->epsg != 0)
+	{
+		return p->epsg;
+	}
 	return atoi(getEPSGFromProjectionParams(Rotation, SLat, HemiSphere));
 }
 
