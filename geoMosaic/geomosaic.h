@@ -24,6 +24,12 @@
 #define INCUNSET -999.0
 /* Already geocoded NISAR GCOV inputs, from the -gcov yaml file */
 #define MAXGCOVBANDWIDTHS 8
+/*
+  -geo (linear) mode marks absent samples with -LARGEINT, exactly as the GCOV path does, but
+  unlike backscatter a real sample may be zero or negative. GEOLINEARMIN is the "is this data"
+  threshold used in place of the > 0 test wherever the mosaic decides a pixel carries data.
+*/
+#define GEOLINEARMIN (-1.0e9)
 typedef struct
 {
 	char polarization[16]; /* covariance term, e.g. HHHH */
@@ -42,6 +48,17 @@ typedef struct
 	   downloader leaves a per-granule symlink here named exactly like the granule, so this
 	   code only ever opens <factorDir>/<granule basename> and never has to derive the key. */
 	char factorDir[2048];
+	/* Plain georeferenced-raster mode (-geo).  The same struct drives it: the windowing,
+	   block averaging, bilinear resampling and feathering in gcovToOutputGrid/reduceGCOV are
+	   not GCOV-specific -- they key off the grid in gcovFile, which a GeoTIFF or VRT fills
+	   just as well as an HDF5 subdataset.  What differs is only how the file is opened, that
+	   there is no date or pass direction to parse, and that a value <= 0 is legitimate, so
+	   validity is a no-data test rather than "> 0". */
+	int32_t isGeo;         /* -geo: inputs are ordinary georeferenced rasters */
+	int32_t band;          /* 1-based band to read [1] */
+	int32_t hasNoData;     /* noData was given in the yaml, overriding the file's own */
+	double noDataVal;      /* that value; NaN in the data is always no-data */
+	int32_t weightBand;    /* 0 = unweighted; else band holding a per-pixel weight (e.g. n) */
 	int32_t nFiles;
 	char **files;
 	float *weights;
@@ -76,6 +93,7 @@ void incCellSpan(incBuffer *incBuf, int32_t isX, int32_t kMin, int32_t kMax, int
 int32_t incCellCentre(incBuffer *incBuf, int32_t isX, int32_t c);
 void readGCOVYaml(char *yamlFile, gcovInputs *gcov);
 void gcovBounds(gcovInputs *gcov, double *minX, double *maxX, double *minY, double *maxY);
+void readGeoYaml(char *yamlFile, gcovInputs *gcov);
 int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *outputImage, void *dem,
                          float **imageTmp, float **scaleTmp, float **psiBufTmp, float **gBufTmp,
                          inputImageStructure *gcovImage, int32_t *imageDate,

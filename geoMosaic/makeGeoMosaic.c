@@ -573,6 +573,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	extern int32_t hybridZ;
 	extern int32_t rsatFineCal;
 	extern int32_t noPower;
+	extern int32_t geoLinear;
 	extern int32_t S1Cal;
 	extern int32_t useSubPixelRTC;
 	extern int32_t rangeSelect;
@@ -877,7 +878,8 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 			{
 				if (fl > 0)
 				{
-					computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, gcovImage.weight, (float)0.0,
+					computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, gcovImage.weight,
+									 (geoLinear == TRUE) ? (float)GEOLINEARMIN : (float)0.0,
 									 iMin, iMax, jMin, jMax);
 				}
 				geoMosaicScaling(&gcovImage, imageAll, imageTmp, psiBufAll, psiBufTmp, gBufAll, gBufTmp, scaleAll,
@@ -886,7 +888,8 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 			}
 			if (fl > 0)
 			{
-				computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, gcovImage.weight, (float)0.0,
+				computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, gcovImage.weight,
+								 (geoLinear == TRUE) ? (float)GEOLINEARMIN : (float)0.0,
 								 iMin, iMax, jMin, jMax);
 			}
 			if (rangeSelect != RANGESELECT_NONE && angleRamp == TRUE)
@@ -1190,6 +1193,7 @@ static void applySelection(float **imageTmp, float **scaleTmp, unsigned char **s
 						   inputImageStructure *inputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
 {
 	extern int32_t noPower;
+	extern int32_t geoLinear;
 	int32_t i1, j1;
 	for (i1 = iMin; i1 < iMax; i1++)
 	{
@@ -1199,7 +1203,8 @@ static void applySelection(float **imageTmp, float **scaleTmp, unsigned char **s
 			{
 				imageTmp[i1][j1] = -LARGEINT;
 			}
-			else if (imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage->noData))
+			else if (imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage->noData) ||
+					 (geoLinear == TRUE && imageTmp[i1][j1] > GEOLINEARMIN))
 			{
 				scaleTmp[i1][j1] = 1;
 			}
@@ -1216,6 +1221,7 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 	extern int32_t hybridZ;
 	extern int32_t nearestDate;
 	extern int32_t noPower;
+	extern int32_t geoLinear;
 	extern int32_t geoMosaicMode;
 	double x, y, hWGS;
 	double lat, lon;
@@ -1235,7 +1241,8 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 			else
 				hWGS = hybridZ - 1; /* This will force skip */
 
-			if (imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage->noData))
+			if (imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage->noData) ||
+				(geoLinear == TRUE && imageTmp[i1][j1] > GEOLINEARMIN))
 			{ /* Points with valid data */
 				if (geoMosaicMode == GEOMOSAIC_MIN || geoMosaicMode == GEOMOSAIC_MAX)
 				{ /* pixel-wise min or max across all inputs */

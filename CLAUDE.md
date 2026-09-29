@@ -220,6 +220,47 @@ failure). `llToXYProj`'s 0..360 longitude convention disagrees with a grid origi
 `sentinel-prod-tea-DownloadRoleInRegion` and S3 returns 403 outside us-west-2; `/vsis3/` uses
 the same GDAL path as the verified `/vsicurl/` route.
 
+## Geocoded raster inputs / linear output (`-geo`, `geoMosaic/gcovMosaic.c`)
+
+`geomosaic -geo file.yaml` mosaics ANY GDAL-readable georeferenced raster (GeoTIFF, VRT, ...)
+through the GCOV machinery, and writes the values **linear** instead of as backscatter. Built for
+global temporal-statistics mosaics of NISAR GCOV (coefficient of variation, mean, sigma). Yaml
+keys: `files:`/`glob:`, `band:` (default 1), `noData:` (default the file's own), `weightBand:`
+(a second band in the SAME file, turning the block average into `sum(v*w)/sum(w)`). Full
+description and verification: `Documents/geomosaic.md` "Geocoded raster inputs and linear output".
+
+- **It is the same read geometry, a raster instead of an HDF5 group.** Window selection,
+  block-average vs bilinear, `-fl` feathering and reprojection are the GCOV code paths unchanged;
+  `openGeoRaster` just builds the grid from the geotransform instead of from `xCoordinates`.
+  `-geo` and `-gcov` are mutually exclusive and `-geo` refuses a non-empty SAR input list.
+
+- **`> 0` is not a validity test for a statistic.** Backscatter validity is `gv > 0` in SIX
+  places: `reduceGCOV`'s block average, `bilinearInterp`'s `minvalue` argument (TWO call sites in
+  `gcovToOutputGrid` -- this one is easy to miss, it is an argument not a comparison), the
+  per-sample weight in `gcovToOutputGrid`, `computeScaleFast`'s feather threshold, and
+  `geoMosaicScaling`'s accumulation test. `-geo` replaces all six with `> GEOLINEARMIN` (-1e9,
+  `geomosaic.h`), which sits between the `-LARGEINT` absent-sample sentinel and any real datum.
+  Missing any ONE of them silently zeroes or drops the negatives -- each was found that way.
+
+- **Coverage comes from `outputImage.scale`, never from the value.** `image[][]` is an
+  accumulator starting at 0, so with linear data 0 is both "no contribution" and a legal result.
+  The uncovered-pixel fill loop in `geomosaic.c` tests the sample count. Fill and the GeoTIFF
+  no-data tag are NaN unless `-noData` is given (tracked by `noDataGiven`, because 0.0 is both
+  the default and a legal value).
+
+- **In `-geo` mode `hGamma` IS `hFile`** -- one dataset read by band index -- so `closeGCOV`
+  must not close both, or it is a double `GDALClose` and a segfault.
+
+- No date or direction is parsed (`parseGCOVName` is skipped), so `-nearestDate`,
+  `-ascending`/`-descending` and the date filter do not apply. `needSigma` is forced FALSE.
+
+- GCOV output is unchanged: 43-granule PIG regression against a binary built from the pre-`-geo`
+  commit, **0 differing pixels of 234,264,300** in both sigma0 and gamma0. Both arms ran off the
+  same fixed `files:` list and both logged `GCOV inputs: 43 files` -- with a `glob:` into a
+  directory being populated the two arms silently see different inputs, which is the drift trap in
+  [[project_mosaic_comparison_input_drift]]. The TIFFs differ at byte level (metadata) but not in
+  pixels, so `cmp` is not the test.
+
 ## ISCE/NISAR flat-earth baseline (`tiePoints/`, `common/`)
 
 See root CLAUDE.md "ISCE/NISAR flat-earth baseline path" for the overview. Implementation:

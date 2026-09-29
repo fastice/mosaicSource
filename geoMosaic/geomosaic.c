@@ -18,7 +18,7 @@ static void parseAntPat(char *antPatFile, inputImageStructure *inputImage);
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
 					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale,
-					 char **gcovYaml, int32_t *epsg, char **wktFile);
+					 char **gcovYaml, char **geoYaml, int32_t *epsg, char **wktFile);
 static void resolveOutputProjGeo(outputImageStructure *outputImage, xyDEM *xyDem, int32_t epsg, char *wktFile);
 static void usage();
 static void processMosaicDateGeo(outputImageStructure *outputImage, char *date1, char *date2);
@@ -69,6 +69,8 @@ int32_t maskLayover = FALSE;         /* suppress layover pixels (return MINS1DB)
 int32_t geoMosaicMode = GEOMOSAIC_AVERAGE; /* 0=weighted avg, 1=min, 2=max */
 int32_t calOutput = CALOUTPUT_BOTH;        /* -calOutput: sigma0, gamma0, or both */
 int32_t gcovOnly = FALSE;                  /* GCOVs are the only inputs (nFiles == 0) */
+int32_t geoLinear = FALSE;                 /* -geo: inputs are plain rasters, averaged and written LINEAR */
+int32_t noDataGiven = FALSE;               /* -noData was supplied explicitly (0.0 is a legal value) */
 int32_t int16Output = FALSE;               /* -int16: calibrated dB tiffs as Int16 dB*100, scale 0.01 */
 int32_t rangeSelect = RANGESELECT_NONE;    /* -nearRange / -farRange incidence selection */
 double angleTolerance = 1.0;               /* -angleTolerance, degrees */
@@ -102,12 +104,16 @@ int main(int argc, char *argv[])
 	int32_t noDEM;
 	int32_t i, j; /* LCV */
 	float noData;
+	float geoFill = 0.0;
+	extern int32_t geoLinear;
+	extern int32_t noDataGiven;
 	char *date1, *date2; /* Date range */
 	char *demFile, *inputFile, *outFile;
 	char **imageFiles, **geodatFiles, **antPatFiles;
 	char tmp[2048];
 	char *driver;
 	char *gcovYaml;
+	char *geoYaml;
 	int32_t epsgArg;
 	char *wktFile;
 	gcovInputs gcovData, *gcov;
@@ -120,9 +126,18 @@ int main(int argc, char *argv[])
 	smoothBuf = NULL;
 	readArgs(argc, argv, &inputFile, &demFile, &outFile, &fl, &removePad, &nearestDate, &noPower,
 			 &hybridZ, &rsatFineCal, &S1Cal, &date1, &date2, &smoothL, &smoothOut, &orbitPriority, &noData, &driver, &byteScale,
-			 &gcovYaml, &epsgArg, &wktFile);
+			 &gcovYaml, &geoYaml, &epsgArg, &wktFile);
 	/* Optional already geocoded NISAR GCOV inputs */
 	gcov = NULL;
+	if (gcovYaml != NULL && geoYaml != NULL)
+	{
+		error("geomosaic: -gcov and -geo are alternative input lists; give only one");
+	}
+	if (geoYaml != NULL)
+	{
+		readGeoYaml(geoYaml, &gcovData);
+		gcov = &gcovData;
+	}
 	if (gcovYaml != NULL)
 	{
 		readGCOVYaml(gcovYaml, &gcovData);
@@ -183,6 +198,11 @@ int main(int argc, char *argv[])
 	/* With GCOVs as the only contributors nothing else writes the accumulator, which is
 	   what lets the gamma0-only run skip sigma0 entirely (see gcovMosaic.c). */
 	gcovOnly = (gcov != NULL && nFiles == 0) ? TRUE : FALSE;
+	geoLinear = (gcov != NULL && gcov->isGeo == TRUE) ? TRUE : FALSE;
+	if (geoLinear == TRUE && nFiles > 0)
+	{
+		error("geomosaic: -geo rasters cannot be mixed with SAR products -- the input list must be empty");
+	}
 	if (noDEM == TRUE && nFiles > 0)
 	{
 		error("geomosaic: dem 'none' given but the input file lists %i range/Doppler image(s);\n"
@@ -243,6 +263,25 @@ int main(int argc, char *argv[])
 		outputS1Cal(outputImage, outFile, psi, gamma, S1Cal, driver);
 	else 
 	{
+		/* -geo output is LINEAR and may legitimately be zero or negative, so "no data" cannot be
+		   a value in range: write NaN where nothing contributed. The GeoTIFF's no-data is set to
+		   NaN to match (see writeCalTiff / saveAsGeotiff). */
+		if (geoLinear == TRUE)
+		{
+			int32_t ii, jj;
+			float **im = (float **)outputImage.image;
+			geoFill = (noDataGiven == TRUE) ? noData : (float)NAN;
+			for (ii = 0; ii < outputImage.ySize; ii++)
+			{
+				for (jj = 0; jj < outputImage.xSize; jj++)
+				{
+					if (!(outputImage.scale[ii][jj] > 0))
+					{
+						im[ii][jj] = geoFill;
+					}
+				}
+			}
+		}
 		if(driver == NULL)
 		{	
 			outputGeocodedImage(outputImage, outFile);
@@ -260,7 +299,7 @@ int main(int argc, char *argv[])
 				// Constants need to made user definable.
 				byteScaleImage(&outputImage, 0.53, 2.4, 0.00015 / 0.13, 0.2);
 			}
-			outputGeocodedImageTiff(outputImage, outFile, driver, epsg, summaryMetaData, 0., dataType);
+			outputGeocodedImageTiff(outputImage, outFile, driver, epsg, summaryMetaData, geoFill, dataType);
 		}
 		
 	}
@@ -652,7 +691,7 @@ static void resolveOutputProjGeo(outputImageStructure *outputImage, xyDEM *xyDem
 static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, char **outFile, float *fl, int32_t *removePad,
 					 int32_t *nearestDate, int32_t *noPower, int32_t *hybridZ, int32_t *rsatFineCal, int32_t *S1Cal, char **date1, char **date2,
 					 int32_t *smoothL, int32_t *smoothOut, int32_t *orbitPriority, float *noData, char **driver, int32_t *byteScale,
-					 char **gcovYaml, int32_t *epsg, char **wktFile)
+					 char **gcovYaml, char **geoYaml, int32_t *epsg, char **wktFile)
 {
 	int32_t filenameArg;
 	char *argString;
@@ -680,6 +719,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	*date1 = NULL;
 	*date2 = NULL;
 	*noData = 0.0;
+	noDataGiven = FALSE;
 	*smoothL = 0;
 	*smoothOut = 1;
 	stringbuf[0] = '\0';
@@ -687,6 +727,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	*driver = NULL;
 	*byteScale = FALSE;
 	*gcovYaml = NULL;
+	*geoYaml = NULL;
 	for (i = 1; i <= n; i++)
 	{
 		argString = strchr(argv[i], '-');
@@ -712,6 +753,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		else if (strstr(argString, "noData") != NULL)
 		{
 			sscanf(argv[i + 1], "%f", noData);
+			noDataGiven = TRUE;
 			i++;
 		}
 		else if (strstr(argString, "nearestDate") != NULL)
@@ -918,6 +960,14 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		{
 			extern int32_t int16Output;
 			int16Output = TRUE;
+		}
+		/* exact, unlike its neighbours: "geo" is a 3-letter prefix of too many plausible future
+		   flag names for a strstr to stay safe. strspn skips the leading dash(es) so both -geo
+		   and --geo work, as elsewhere. */
+		else if (strcmp(argString + strspn(argString, "-"), "geo") == 0)
+		{
+			*geoYaml = argv[i + 1];
+			i++;
 		}
 		else if (strstr(argString, "gcov") != NULL)
 		{
@@ -1127,6 +1177,8 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	}
 	if (*gcovYaml != NULL)
 		fprintf(stderr, "GCOV yaml = %s\n", *gcovYaml);
+	if (*geoYaml != NULL)
+		fprintf(stderr, "geo yaml = %s\n", *geoYaml);
 	return;
 }
 
@@ -1205,6 +1257,7 @@ static void usage()
 		  "\trsatFineCal       	 = set to output calibrate rsat fine beam data",
 		  "\tnoPower    	   	 = non power data",
 		  "\tnoData	    	   	 = no data value",
+		  "\tgeo	    	   	 = yaml listing georeferenced rasters (tif/vrt/...) to average LINEAR; band/noData/weightBand keys",
 		  "\tS1Cal  	          	 = set to output calibrated S1 Data",
 		  "\tS1Psi  	          	 = if S1Cal set, also output inc angle (outputImage.inc)",
 		  "\tS1GammaCorr      = if S1Cal set, also output gamma correction (outputImage.gammacorr)",

@@ -27,6 +27,11 @@
 */
 
 #define GCOVINVALID -1.0
+/* GCOV covariance terms are powers, so -1 can mark an empty block and "> 0" means valid. A
+   plain raster may legitimately be negative, so geo mode needs a sentinel outside any real
+   range and a no-data test instead. */
+#define GEOINVALID -1.0e30
+#define GEOVALID(v) ((v) > -1.0e29)
 #define NEDGE 101
 
 typedef struct
@@ -44,11 +49,16 @@ typedef struct
 	int32_t nx, ny;
 	double x0, y0, dx, dy; /* pixel centre of (0,0) and spacing, in the GCOV CRS */
 	int32_t epsg;
+	/* -geo mode: copied from gcovInputs at open time so the shared read path needs no extra
+	   arguments. isGeo FALSE leaves every GCOV behaviour exactly as it was. */
+	int32_t isGeo, band, weightBand, hasNoData;
+	double noDataVal;
 } gcovFile;
 
 static void addGCOVFile(gcovInputs *gcov, char *file, float weight);
 static void dropSupersededGCOVs(gcovInputs *gcov);
 static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needFactor);
+static int32_t openGeoRaster(gcovInputs *gcov, char *file, gcovFile *g);
 static void closeGCOV(gcovFile *g);
 static int32_t readCoordinates(char *file, char *dataset, int32_t n, double **coords);
 static int32_t getEPSGAttribute(GDALDatasetH hFile, char *key);
@@ -242,6 +252,11 @@ void readGCOVYaml(char *yamlFile, gcovInputs *gcov)
 
 	strcpy(gcov->polarization, "HHHH");
 	gcov->nBandwidths = 0; /* no filter: every bandwidth accepted */
+	gcov->isGeo = FALSE;
+	gcov->band = 1;
+	gcov->hasNoData = FALSE;
+	gcov->noDataVal = 0.0;
+	gcov->weightBand = 0;
 	strcpy(gcov->frequency, "A");
 	gcov->useMask = TRUE;
 	gcov->factorDir[0] = '\0';
@@ -520,6 +535,213 @@ static void dropGCOVByBandwidth(gcovInputs *gcov)
 	}
 }
 
+/*
+  Open an ordinary georeferenced raster (GeoTIFF, VRT, anything GDAL reads) into the same
+  gcovFile the GCOV path uses, so everything downstream is shared. The grid comes from the
+  geotransform rather than from xCoordinates/yCoordinates, and the CRS from the file rather
+  than from a flattened HDF5 attribute. A rotated geotransform is refused: the resample path
+  assumes axis-aligned pixels, as every GCOV is.
+*/
+static int32_t openGeoRaster(gcovInputs *gcov, char *file, gcovFile *g)
+{
+	double gt[6];
+	const char *wkt;
+	OGRSpatialReferenceH srs;
+	const char *code;
+	int32_t nb;
+	memset(g, 0, sizeof(gcovFile));
+	g->h5Gamma = g->h5GammaFile = g->h5Factor = g->h5FactorFile = H5I_INVALID_HID;
+	g->hFile = GDALOpen(file, GA_ReadOnly);
+	if (g->hFile == NULL)
+	{
+		if (strncmp(file, "/vsi", 4) == 0)
+		{
+			error("openGeoRaster: could not open remote input %s", file);
+		}
+		fprintf(stderr, "Warning: could not open %s\n", file);
+		return FALSE;
+	}
+	nb = GDALGetRasterCount(g->hFile);
+	if (gcov->band < 1 || gcov->band > nb)
+	{
+		error("openGeoRaster: band %i requested but %s has %i band(s)", gcov->band, file, nb);
+	}
+	if (gcov->weightBand > nb)
+	{
+		error("openGeoRaster: weightBand %i but %s has %i band(s)", gcov->weightBand, file, nb);
+	}
+	if (GDALGetGeoTransform(g->hFile, gt) != CE_None)
+	{
+		error("openGeoRaster: %s has no geotransform", file);
+	}
+	if (fabs(gt[2]) > 1.0e-9 || fabs(gt[4]) > 1.0e-9)
+	{
+		error("openGeoRaster: %s has a rotated geotransform, which is not supported", file);
+	}
+	g->hGamma = g->hFile; /* the band index is applied at read time */
+	g->isGeo = TRUE;
+	g->band = gcov->band;
+	g->weightBand = gcov->weightBand;
+	g->hasNoData = gcov->hasNoData;
+	g->noDataVal = gcov->noDataVal;
+	if (gcov->hasNoData == FALSE)
+	{
+		int32_t got = 0;
+		double nd = GDALGetRasterNoDataValue(GDALGetRasterBand(g->hFile, gcov->band), &got);
+		if (got)
+		{
+			g->hasNoData = TRUE;
+			g->noDataVal = nd;
+		}
+	}
+	g->nx = GDALGetRasterXSize(g->hFile);
+	g->ny = GDALGetRasterYSize(g->hFile);
+	g->dx = gt[1];
+	g->dy = gt[5];
+	/* gcovFile holds PIXEL CENTRES; a geotransform gives the outer corner. */
+	g->x0 = gt[0] + 0.5 * gt[1];
+	g->y0 = gt[3] + 0.5 * gt[5];
+	wkt = GDALGetProjectionRef(g->hFile);
+	if (wkt == NULL || wkt[0] == '\0')
+	{
+		error("openGeoRaster: %s has no CRS", file);
+	}
+	srs = OSRNewSpatialReference(wkt);
+	OSRAutoIdentifyEPSG(srs);
+	code = OSRGetAuthorityCode(srs, NULL);
+	g->epsg = (code != NULL) ? atoi(code) : 0;
+	OSRDestroySpatialReference(srs);
+	if (g->epsg <= 0)
+	{
+		error("openGeoRaster: cannot determine an EPSG code for %s", file);
+	}
+	return TRUE;
+}
+
+/*
+  Read the -geo input list: ordinary georeferenced rasters, mosaicked with the same windowing,
+  resampling and feathering as GCOVs. Deliberately a separate, smaller key set -- frequency,
+  polarization and bandwidth mean nothing here.
+
+	band: 1                 # 1-based band to read [1]
+	noData: -9999           # override the file's own no-data; NaN is always no-data
+	weightBand: 5           # optional: band holding a per-pixel weight (e.g. the sample count)
+	files:
+	  - /path/cv.tif
+	  - /path/other.tif 0.5 # optional per-file weight, as in -gcov
+
+  There is no date or pass direction: the names are the caller's, so -date1/-date2 and
+  -ascending/-descending simply do not apply. Output is LINEAR unless -S1Cal is given.
+*/
+void readGeoYaml(char *yamlFile, gcovInputs *gcov)
+{
+	FILE *fp;
+	char line[2048], key[256], value[2048], *c, *p;
+	float weight;
+	int32_t inFiles, i;
+	memset(gcov, 0, sizeof(gcovInputs));
+	gcov->isGeo = TRUE;
+	gcov->band = 1;
+	gcov->useMask = FALSE;
+	gcov->files = NULL;
+	gcov->weights = NULL;
+	fp = openInputFile(yamlFile);
+	inFiles = FALSE;
+	while (fgets(line, sizeof(line), fp) != NULL)
+	{
+		if ((c = strchr(line, '#')) != NULL)
+		{
+			*c = '\0';
+		}
+		line[strcspn(line, "\r\n")] = '\0';
+		for (p = line; *p == ' ' || *p == '\t'; p++)
+		{
+		}
+		if (*p == '\0')
+		{
+			continue;
+		}
+		if (*p == '-')
+		{
+			if (inFiles == FALSE)
+			{
+				error("readGeoYaml: list item outside of files: in %s\n%s", yamlFile, line);
+			}
+			weight = 1.0;
+			if (sscanf(p + 1, "%s %f", value, &weight) < 1)
+			{
+				error("readGeoYaml: missing file name in %s\n%s", yamlFile, line);
+			}
+			addGCOVFile(gcov, value, weight);
+			continue;
+		}
+		inFiles = FALSE;
+		if ((c = strchr(p, ':')) == NULL)
+		{
+			error("readGeoYaml: cannot parse line in %s\n%s", yamlFile, line);
+		}
+		*c = '\0';
+		if (sscanf(p, "%255s", key) != 1)
+		{
+			error("readGeoYaml: missing key in %s", yamlFile);
+		}
+		value[0] = '\0';
+		sscanf(c + 1, "%2047s", value);
+		if (strcmp(key, "files") == 0)
+		{
+			inFiles = TRUE;
+		}
+		else if (strcmp(key, "band") == 0)
+		{
+			gcov->band = atoi(value);
+		}
+		else if (strcmp(key, "weightBand") == 0)
+		{
+			gcov->weightBand = atoi(value);
+		}
+		else if (strcmp(key, "noData") == 0)
+		{
+			gcov->hasNoData = TRUE;
+			gcov->noDataVal = atof(value);
+		}
+		else if (strcmp(key, "glob") == 0)
+		{
+			glob_t globResult;
+			if (glob(value, 0, NULL, &globResult) == 0)
+			{
+				for (i = 0; i < (int32_t)globResult.gl_pathc; i++)
+				{
+					addGCOVFile(gcov, globResult.gl_pathv[i], 1.0);
+				}
+			}
+			else
+			{
+				fprintf(stderr, "readGeoYaml: warning, no files match glob %s\n", value);
+			}
+			globfree(&globResult);
+		}
+		else
+		{
+			error("readGeoYaml: unknown key %s in %s", key, yamlFile);
+		}
+	}
+	fclose(fp);
+	fprintf(stderr, "geo inputs: %i files, band %i, weightBand %i, noData ",
+			gcov->nFiles, gcov->band, gcov->weightBand);
+	if (gcov->hasNoData == TRUE)
+	{
+		fprintf(stderr, "%g\n", gcov->noDataVal);
+	}
+	else
+	{
+		fprintf(stderr, "from each file\n");
+	}
+	for (i = 0; i < gcov->nFiles; i++)
+	{
+		fprintf(stderr, "  geo %i: %s %f\n", i + 1, gcov->files[i], gcov->weights[i]);
+	}
+}
+
 static void addGCOVFile(gcovInputs *gcov, char *file, float weight)
 {
 	char control[2048];
@@ -690,16 +912,29 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 		fprintf(stderr, "Skip (0 weight)\n");
 		return FALSE;
 	}
-	/* Date and pass direction from the NISAR file name */
-	if (parseGCOVName(file, &year, &month, &day, &passType) == FALSE)
+	/* Date and pass direction from the NISAR file name. In -geo mode the names are the
+	   caller's own, so there is nothing to parse and the date / ascending / descending
+	   filters simply do not apply. */
+	if (gcov->isGeo == TRUE)
 	{
-		error("gcovToOutputGrid: cannot parse date/direction from NISAR name %s", file);
+		year = 2000;
+		month = 1;
+		day = 1;
+		passType = ASCENDING;
+		jd = juldayDouble(month, day, year);
 	}
-	jd = juldayDouble(month, day, year);
-	if (jd < outputImage->jd1 || jd > outputImage->jd2)
+	else
 	{
-		fprintf(stderr, "Skip (outside date range)\n");
-		return FALSE;
+		if (parseGCOVName(file, &year, &month, &day, &passType) == FALSE)
+		{
+			error("gcovToOutputGrid: cannot parse date/direction from NISAR name %s", file);
+		}
+		jd = juldayDouble(month, day, year);
+		if (jd < outputImage->jd1 || jd > outputImage->jd2)
+		{
+			fprintf(stderr, "Skip (outside date range)\n");
+			return FALSE;
+		}
 	}
 	memset(gcovImage, 0, sizeof(inputImageStructure));
 	gcovImage->file = file;
@@ -725,6 +960,12 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	{
 		needSigma = FALSE;
 	}
+	if (gcov->isGeo == TRUE)
+	{
+		/* there is no RTC factor and no sigma0 for a plain raster: the values are mosaicked
+		   as they are */
+		needSigma = FALSE;
+	}
 	doPsi = ((S1Cal & TRUE) == TRUE && (S1Cal & PSISAVE) > 0) ? TRUE : FALSE;
 	/* the range selection needs the incidence cube whether or not psi is being written out */
 	needCube = (doPsi == TRUE || rangeSelect != RANGESELECT_NONE) ? TRUE : FALSE;
@@ -735,7 +976,8 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 		doPsi = FALSE;
 		needCube = TRUE;
 	}
-	if (openGCOV(gcov, file, &g, needSigma) == FALSE)
+	if ((gcov->isGeo == TRUE ? openGeoRaster(gcov, file, &g)
+							 : openGCOV(gcov, file, &g, needSigma)) == FALSE)
 	{
 		fprintf(stderr, "Skip (could not open)\n");
 		return FALSE;
@@ -907,7 +1149,9 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 					OCTTransform(myCt, 1, &xw, &yw, &zw);
 					col = ((xw - g.x0) / g.dx - c0 - 0.5 * (kx - 1)) / kx;
 					row = ((yw - g.y0) / g.dy - r0 - 0.5 * (ky - 1)) / ky;
-					if (bilinearInterp(gamma, col, row, nbc, nbr, 0.0, GCOVINVALID) <= 0)
+					if (gcov->isGeo
+							? !GEOVALID(bilinearInterp(gamma, col, row, nbc, nbr, (float)GEOLINEARMIN, GEOINVALID))
+							: (bilinearInterp(gamma, col, row, nbc, nbr, 0.0, GCOVINVALID) <= 0))
 					{
 						continue;
 					}
@@ -977,12 +1221,17 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 				/* fractional index in reduced buffer: block b is centred on source pixel c0 + b*kx + (kx-1)/2 */
 				col = ((xr[j1 - *jMin] - g.x0) / g.dx - c0 - 0.5 * (kx - 1)) / kx;
 				row = ((yr[j1 - *jMin] - g.y0) / g.dy - r0 - 0.5 * (ky - 1)) / ky;
-				gam = bilinearInterp(gamma, col, row, nbc, nbr, 0.0, GCOVINVALID);
+				gam = bilinearInterp(gamma, col, row, nbc, nbr,
+									 gcov->isGeo ? (float)GEOLINEARMIN : (float)0.0,
+									 gcov->isGeo ? GEOINVALID : GCOVINVALID);
 				value = -LARGEINT;
-				if (gam > 0)
+				if (gcov->isGeo ? GEOVALID(gam) : (gam > 0))
 				{
 					sig = (needSigma == TRUE) ? bilinearInterp(sigma, col, row, nbc, nbr, 0.0, GCOVINVALID) : gam;
-					if (sig > 0)
+					/* sig > 0 is the GCOV validity test (backscatter is positive); a -geo raster
+					   carries arbitrary statistics, so validity there was already decided by
+					   GEOVALID above and sig must not be re-screened on sign. */
+					if (gcov->isGeo == TRUE || sig > 0)
 					{
 						if ((S1Cal & TRUE) == TRUE)
 						{
@@ -1015,7 +1264,10 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 					selTmp[i1][j1] = (unsigned char)incWeight(incBuf, i1, j1, psi);
 				}
 				imageTmp[i1][j1] = value;
-				if (value > 0)
+				/* A sample carries weight when it is DATA. For GCOV that means positive, but a
+				   plain raster's zero and negative values are real and must be averaged in;
+				   invalid samples were left at -LARGEINT above. */
+				if (gcov->isGeo ? (value > -LARGEINT) : (value > 0))
 				{
 					scaleTmp[i1][j1] = 1;
 				}
@@ -1060,7 +1312,8 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	unsigned char *mBuf;
 	unsigned short *tBuf = NULL; /* raw float16 staging, only when a band is float16 */
 	double *gSum, *sSum;
-	int32_t *count, width, br, br0, bc, r, c, k, nbStrip, nbThis;
+	double *count; /* a weight sum when weightBand is used, else a plain tally */
+	int32_t width, br, br0, bc, r, c, k, nbStrip, nbThis;
 	float gv, fv;
 	GDALRasterBandH hG, hF, hM;
 
@@ -1080,7 +1333,7 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	mBuf = (unsigned char *)malloc(sizeof(unsigned char) * (size_t)width * ky * nbStrip);
 	gSum = (double *)malloc(sizeof(double) * nbc);
 	sSum = (double *)malloc(sizeof(double) * nbc);
-	count = (int32_t *)malloc(sizeof(int32_t) * nbc);
+	count = (double *)malloc(sizeof(double) * nbc);
 	if (g->h5Gamma != H5I_INVALID_HID || g->h5Factor != H5I_INVALID_HID)
 	{
 		tBuf = (unsigned short *)malloc(sizeof(unsigned short) * (size_t)width * ky * nbStrip);
@@ -1105,8 +1358,17 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	{
 		maskOnly = FALSE;
 	}
-	hG = GDALGetRasterBand(g->hGamma, 1);
-	hF = (sigma != NULL) ? GDALGetRasterBand(g->hFactor, 1) : NULL;
+	/* A GCOV subdataset is one band; a GeoTIFF or VRT may carry several, and in geo mode the
+	   "factor" slot holds the optional weight band from the same file. */
+	hG = GDALGetRasterBand(g->hGamma, (g->isGeo == TRUE) ? g->band : 1);
+	if (g->isGeo == TRUE)
+	{
+		hF = (g->weightBand > 0) ? GDALGetRasterBand(g->hGamma, g->weightBand) : NULL;
+	}
+	else
+	{
+		hF = (sigma != NULL) ? GDALGetRasterBand(g->hFactor, 1) : NULL;
+	}
 	hM = (g->hMask != NULL && (useMask == TRUE || maskOnly == TRUE)) ? GDALGetRasterBand(g->hMask, 1) : NULL;
 	for (br0 = 0; br0 < nbr; br0 += nbStrip)
 	{
@@ -1132,7 +1394,7 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 			{
 				gSum[bc] = 0.0;
 				sSum[bc] = 0.0;
-				count[bc] = 0;
+				count[bc] = 0.0;
 			}
 			for (r = (br - br0) * ky; r < (br - br0 + 1) * ky; r++)
 			{
@@ -1149,11 +1411,21 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 							continue;
 						}
 						gSum[c / kx] += 1.0;
-						count[c / kx]++;
+						count[c / kx] += 1.0;
 						continue;
 					}
 					gv = gBuf[k];
-					if (!(gv > 0) || isinf(gv))
+					if (g->isGeo == TRUE)
+					{
+						/* a plain raster may legitimately be zero or negative, so validity is
+						   a no-data test, not "> 0" */
+						if (isnan(gv) || isinf(gv) ||
+							(g->hasNoData == TRUE && (double)gv == g->noDataVal))
+						{
+							continue;
+						}
+					}
+					else if (!(gv > 0) || isinf(gv))
 					{
 						continue;
 					}
@@ -1168,15 +1440,24 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 						{
 							continue;
 						}
+						if (g->isGeo == TRUE)
+						{
+							/* fBuf is the weight band here, not the RTC factor: accumulate a
+							   weighted mean, sum(v*w)/sum(w), rather than a plain average. */
+							gSum[c / kx] += gv * fv;
+							count[c / kx] += fv;
+							continue;
+						}
 						sSum[c / kx] += gv * fv;
 					}
 					gSum[c / kx] += gv;
-					count[c / kx]++;
+					count[c / kx] += 1.0;
 				}
 			}
 			for (bc = 0; bc < nbc; bc++)
 			{
-				gamma[br][bc] = (count[bc] > 0) ? gSum[bc] / count[bc] : GCOVINVALID;
+				gamma[br][bc] = (count[bc] > 0) ? gSum[bc] / count[bc]
+												: (g->isGeo ? GEOINVALID : GCOVINVALID);
 				if (sigma != NULL)
 				{
 					(*sigma)[br][bc] = (count[bc] > 0) ? sSum[bc] / count[bc] : GCOVINVALID;
@@ -1385,6 +1666,12 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 
 static void closeGCOV(gcovFile *g)
 {
+	/* In -geo mode hGamma is hFile itself -- one dataset, read by band index -- so closing
+	   both would be a double GDALClose (segfault). */
+	if (g->hGamma == g->hFile)
+	{
+		g->hGamma = NULL;
+	}
 	if (g->hGamma != NULL)
 	{
 		GDALClose(g->hGamma);

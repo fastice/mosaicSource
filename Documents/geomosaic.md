@@ -82,6 +82,7 @@ geomosaic [options] inputFile demFile outFile
 | `-epsg <code>`                | Output projection EPSG code, overriding the DEM's. `4326` gives a **geographic lat/lon** grid whose input-file units are degrees (see [below](#geographic-lat-lon-output--epsg-4326)) |
 | `-wkt <file>`                 | Output projection from a WKT/PROJ string in a file, overriding the DEM's |
 | `-gcov <file.yaml>`           | Also mosaic already-geocoded NISAR GCOV HDF5 products listed in the YAML file (see [NISAR GCOV Inputs](#nisar-gcov-inputs-gcov)). With GCOVs, `inputFile` may list 0 range/Doppler images |
+| `-geo <file.yaml>`            | Mosaic already-geocoded rasters (any GDAL format) listed in the YAML file, averaging and writing the values **linear** rather than as backscatter (see [Geocoded raster inputs](#geocoded-raster-inputs-and-linear-output-geo)). Mutually exclusive with `-gcov`; `inputFile` must list 0 images |
 | `-calOutput sigma0\|gamma0\|both` | With `-S1Cal`: write only `.sigma0`, only `.gamma0`, or both [both, the previous behaviour]. Without `-S1Cal` it only selects the quantity GCOVs contribute [gamma0] |
 | `-int16`                     | With `-S1Cal` and `-GTiff`/`-COG`: write `.sigma0`/`.gamma0` as Int16 round(dB×100), with scale 0.01 and nodata −3000 in the file. Lossless and about 2× smaller as a COG (a predictor is used) |
 | `-byteScale`                  | ⚠️ Write output as scaled 8-bit byte image |
@@ -584,6 +585,101 @@ EPSG:32610). Output 1200 x 800 at 0.0005 deg, `-122.6002..-122.0002` lon by
 window. Result: gamma0 -19.0 to +26.2 dB, water to city contrast ~15 dB with Lake Washington at
 -13.6 dB against downtown at +1.4 dB, and both floating bridges resolved. Reruns are
 bit-identical.
+
+---
+
+## Geocoded raster inputs and linear output (`-geo`)
+
+`-gcov` mosaics NISAR GCOV backscatter: the values are power, so "valid" means positive and the
+output is written in dB (or as a calibrated sigma0/gamma0 pair under `-S1Cal`). `-geo` reuses the
+same machinery for a different kind of input — **any GDAL-readable georeferenced raster** — and a
+different kind of value: an arbitrary statistic that may legitimately be zero or negative, written
+out **linear**.
+
+It exists for global temporal-statistics mosaics of NISAR GCOV (coefficient of variation, temporal
+mean, standard deviation and so on): the per-frame statistics are computed upstream and written as
+GeoTIFF/VRT, and `-geo` merges them onto a common grid with the same resampling, feathering and
+projection handling the GCOV path uses.
+
+```
+geomosaic -GTiff -epsg 3031 -fl 20 -geo stats.yaml inputFile none outputFile
+```
+
+`-geo` and `-gcov` are mutually exclusive, and `-geo` rasters cannot be mixed with SAR products —
+the positional input list must be empty (`nFiles == 0`), the same condition as a GCOV-only run.
+
+### YAML file
+
+```yaml
+band: 1              # band to mosaic                       [1]
+weightBand: 2        # optional: per-pixel weight band
+noData: -9999        # optional: overrides the file's own no-data
+files:
+  - /path/tile_a.tif
+  - /path/stats_b.vrt
+glob: /path/stats_*.tif
+```
+
+- `band` selects which band carries the value. `weightBand`, if given, is read from the **same
+  file** and turns the block average into a weighted mean, `sum(v*w)/sum(w)` — this is where a
+  per-pixel sample count (`n`) goes. Only samples with `w > 0` contribute.
+- `noData` defaults to whatever the file declares. NaN is always treated as no-data whether
+  declared or not, as is infinity.
+- No date or pass direction is parsed: the filenames are arbitrary, so `-descending`/`-ascending`,
+  `-nearestDate` and the date filter do not apply.
+
+### Reading and resampling
+
+Identical to the GCOV path. Only the window covering the output tile is read; when the input is
+finer than the output the covering block is averaged, when it is coarser it is bilinearly
+interpolated; `-fl` feathers overlaps in output pixels. Each file's own CRS is honoured and
+reprojected to the output grid, so a set of rasters in different UTM zones mosaics correctly.
+
+### What changes for linear values
+
+Backscatter validity is `> 0` in six places in the mosaic path; a statistic's zero and negatives
+are real data, so `-geo` replaces that test with a no-data test throughout:
+
+| where | GCOV | `-geo` |
+|---|---|---|
+| block average (`reduceGCOV`) | `gv > 0` | not NaN/inf and not the no-data value |
+| `bilinearInterp` `minvalue` | `0.0` | `GEOLINEARMIN` (−1e9) |
+| per-sample weight (`gcovToOutputGrid`) | `value > 0` | `value > GEOLINEARMIN` |
+| feather threshold (`computeScaleFast`) | `0.0` | `GEOLINEARMIN` |
+| accumulation (`geoMosaicScaling`) | `imageTmp > 0` | `imageTmp > GEOLINEARMIN` |
+
+Absent samples are still marked with `-LARGEINT` exactly as before, so `GEOLINEARMIN = -1e9` sits
+between the sentinel and any plausible datum.
+
+### Output
+
+Float32 GeoTIFF, values averaged and written **as-is** — no dB conversion, no calibration, no
+`-S1Cal` needed. Pixels with no contributing sample are written as **NaN**, and the band's no-data
+is tagged NaN to match. `-noData <value>` replaces both the fill and the tag with that value (0 is
+accepted; the flag being *given* is what counts, not its value).
+
+Coverage is decided from the accumulated sample count (`outputImage.scale`), not from the pixel
+value — with linear data, 0 is a legal result and cannot double as "empty".
+
+### Verification (2026-09-29, synthetic raster)
+
+900 x 900 at 80 m, EPSG:3031, band 1 a coefficient-of-variation field spanning −0.5 to 0.6 with a
+deliberate negative band and a NaN disc, band 2 a sample count; mosaicked to 72 m with `-fl 20`:
+
+| check | result |
+|---|---|
+| value range | −0.500 .. 0.600, matching the source exactly |
+| median | 0.349 source / 0.349 output |
+| source NaN pixels that are NaN in output | 100% |
+| negative source pixels still negative | 98.5% (the rest are edge pixels of the step, resampled) |
+| max abs difference on flat source areas | 0.0 (bit-exact) |
+| pixels differing by > 0.01 | 176 of 553,161 (0.03%), **all** on a source step |
+| `-noData -9999` | tag and fill both −9999, no NaNs |
+
+The 0.03% that differ are the 80 m → 72 m bilinear interpolation across a synthetic discontinuity,
+which is the expected behaviour rather than a defect: away from the steps the output is bit-exact.
+
+GCOV output is unchanged — see the regression note in the GCOV section.
 
 ---
 
