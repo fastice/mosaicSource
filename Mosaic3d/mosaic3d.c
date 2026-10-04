@@ -211,6 +211,7 @@ extern double rhoPhase;
 extern double rhoOffsets;
 extern int32_t noMask; /* ignore any embedded VRT dataset mask band on offset inputs; defined once in common/getRegion.c since every program shares readOffsets.c */
 extern int32_t useAzIonosphere; /* apply the azimuth ionosphere correction the az fit recorded; defined in common/getRegion.c */
+extern int32_t useIonSigma;     /* add the ionosphere fill-error map to range sigma; defined in common/getRegion.c */
 
 int main(int argc, char *argv[])
 {
@@ -246,6 +247,7 @@ int main(int argc, char *argv[])
 	/*
 	   Read command line args and compute filenames
 	*/
+	useIonSigma = TRUE; /* fill-error map used when present; -noIonSigma (in readArgs) turns it off */
 	readArgs(argc, argv, &args, &refVel, &outputImage);
 	outputImage.sigmaAThresh = args.sigmaAThresh;
 	/* Added August 2021 to set projection parameters from DEM */
@@ -286,6 +288,25 @@ int main(int argc, char *argv[])
 	  Determine hemisphere
 	*/
 	get3DProj(ascImages, descImages, nAsc, nDesc, args.north, &outputImage);
+	/* Historical workflow: a DEM that declares NO projection of its own -- a legacy .geodat
+	   that stops at '&', which most pre-2021 DEMs do -- takes its grid from the HEMISPHERE
+	   OF THE DATA.  That is what get3DProj did before the Aug-2021 change to "use the dem to
+	   set the projection" (its Rotation=0.0/slat=71.0 lines are still there, commented out),
+	   and it only works if the DEM actually carries a projection block.  Without this, a
+	   southern run leaves the globals at their GREENLAND defaults, so the DEM is described
+	   as EPSG:3413 while the output grid is southern; readXYDEMcrop's window is then
+	   transformed clean out of the DEM and the read fails with a negative size.
+	   rot/slat are the historical knobs; grimpProjFromLegacy maps them to 3031/3413.
+	   A DEM that does declare a projection, and any -epsg/-wkt run, are untouched. */
+	if (args.epsg == 0 && args.wktFile == NULL &&
+		xyDEMHasProjection(args.demFile) == FALSE)
+	{
+		Rotation = (HemiSphere == SOUTH) ? 0.0 : 45.0;
+		SLat = (HemiSphere == SOUTH) ? 71.0 : 70.0;
+		dem.proj = grimpProjFromLegacy(Rotation, SLat, HemiSphere);
+		fprintf(stderr, "DEM declares no projection; using the hemisphere of the data: %s\n",
+				grimpProjDescribe(&(dem.proj)));
+	}
 	resolveOutputProj(&outputImage, &dem, args.epsg, args.wktFile, TRUE);
 	/* Process landsat images */
 	LSImages = NULL;
@@ -1165,6 +1186,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 	fprintf(outputImage->fpLog, "; useSquint Flag   : %i\n", useSquint);
 	fprintf(outputImage->fpLog, "; noMask Flag      : %i\n", noMask);
 	fprintf(outputImage->fpLog, "; useAzIonosphere  : %i\n", useAzIonosphere);
+	fprintf(outputImage->fpLog, "; useIonSigma      : %i\n", useIonSigma);
 	{
 		/* Which crossing-orbit solver ran, and its gates.  0 = joint (the default); when joint
 		   ran, the rhoPhase/rhoOffsets/pairOverCount factors below do not apply to that round,
@@ -1359,6 +1381,17 @@ static void write3DFlatVRTs(outputImageStructure outputImage, char *outFileBase,
 	computeGeoTransform(geoTransform, outputImage.originX, outputImage.originY,
 	                    outputImage.xSize, outputImage.ySize,
 	                    outputImage.deltaX, outputImage.deltaY);
+	/* computeGeoTransform describes a NORTH-UP raster, which is what the GeoTIFF path needs
+	   because saveAsGeotiff FLIPS the array as it writes. These VRTs instead wrap the flat
+	   binaries as they sit on disk, and GrIMP row 0 is the SOUTHERNMOST row -- so reusing the
+	   north-up transform claimed row 0 was the north edge and every georeferenced viewer drew
+	   the mosaic upside down (the raw file and the .geodat were right all along).
+	   Describe the raster the way it is actually stored: origin at the BOTTOM edge with a
+	   POSITIVE north-south step. The extent is identical and the pixel values GDAL returns are
+	   unchanged -- readers that only take the array see exactly what they saw before -- so this
+	   corrects the georeferencing without moving any data. */
+	geoTransform[3] = outputImage.originY - outputImage.deltaY * 0.5;
+	geoTransform[5] = outputImage.deltaY;
 	/* grimpSRSString returns "EPSG:nnnnn" when the grid has a code, and a proj string
 	   otherwise, so a custom polar stereographic (no EPSG code) can be written too.
 	   The old call could only name 3413/3031 and error()ed on anything else. */
@@ -2234,6 +2267,12 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		{
 			useAzIonosphere = TRUE;
 		}
+		/* Range-offset sigma includes the ionosphere fill-error map when one sits next to the
+		   applied correction; -noIonSigma turns that off (e.g. to compare). */
+		else if (strstr(argString, "noIonSigma") != NULL)
+		{
+			useIonSigma = FALSE;
+		}
 		/* longest-first: -noPairOverCount must be tested before -pairOverCount */
 		else if (strstr(argString, "noPairOverCount") != NULL)
 		{
@@ -2576,6 +2615,7 @@ static void usage()
 		  "\tjointMaxSigmaPhase/Range X =\t Legacy per-round overrides of -jointMaxSigma (crossing-phase / crossing-range rounds).  Only distinguishable under -legacyCode; defaults 35 / 100",
 		  "\tjointErrScale X =\t\t Scale the joint solvers reported sigma by X (caller-supplied 1-sigma calibration); default 1 = off",
 		  "\tnoAzimuthRows =\t\t Drop every azimuth row (range-only solve); the control for what the azimuth offsets contribute; default off",
+		  "\tnoIonSigma =\t\t Do not add the ionosphere fill-error map (<stem>.ionosphereCorrection.sigma.tif) to range-offset sigma; default: added when present",
 		  "\tspeckleTrackJoint, jointMaxSigmaSpeckle X =\t RETIRED, accepted and ignored (superseded by the hopper)",
 		  "\tnoASigmaResidual =\t\t Omit the azparams tie-point fit residual from the azimuth-offset budget; default is to include it",
 		  "\ttrue3D =\t\t Solve vx,vy,vz from range+azimuth offsets with NO surface-parallel constraint (offsets only); writes .vz3d/.ez; default off",

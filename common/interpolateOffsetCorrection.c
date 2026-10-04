@@ -63,3 +63,30 @@ double azIonCorrectionMeters(Offsets *offsets, inputImageStructure *myImg,
         return 0.0;
     return (double)c * azSLPixSize;
 }
+
+/*
+ * Variance (m^2 of slant range) of the applied range ionosphere correction from the
+ * fill-error map, bilinearly interpolated at an SLC coordinate; 0 when there is no map.
+ * Cell j averages offset samples j*n .. j*n+n-1 (n = sDeltaR / deltaR), so its centre sits
+ * (n-1)/2 samples past the cell's first sample; outside the map the nearest edge is used.
+ */
+double rangeIonSigmaVarMeters(offsetCorrection *corr, double rSLC, double aSLC, float rSLPixSize)
+{
+    double r, a;
+    float s;
+
+    if (corr->ionSigma == NULL)
+    {
+        return 0.0;
+    }
+    r = (rSLC - corr->sR0) / corr->sDeltaR - 0.5 * (1.0 - corr->deltaR / corr->sDeltaR);
+    a = (aSLC - corr->sA0) / corr->sDeltaA - 0.5 * (1.0 - corr->deltaA / corr->sDeltaA);
+    r = fmin(fmax(r, 0.0), corr->sNr - 1.001);
+    a = fmin(fmax(a, 0.0), corr->sNa - 1.001);
+    s = bilinearInterp(corr->ionSigma, r, a, corr->sNr, corr->sNa, -0.9 * LARGEINT, 0.0);
+    if (s <= 0.0)
+    {
+        return 0.0;
+    }
+    return ((double)s * rSLPixSize) * ((double)s * rSLPixSize);
+}

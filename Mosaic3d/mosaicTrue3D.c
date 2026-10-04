@@ -361,6 +361,8 @@ void mosaicTrue3D(inputImageStructure *images, vhParams *params, outputImageStru
 /* azimuth ionosphere: no-op unless the az fit recorded one and -useAzIonosphere is set */
 if (da > -0.98 * LARGEINT)
 	da += azIonCorrectionMeters(&(currentParams->offsets), myImg, range, azimuth, azSLPixSize);
+/* left-looking: azimuth offsets to the flight direction (see interpOffsets.c) */
+da = azOffsetToFlightDirection(da, myImg);
 					dr = interpRangeOffsetInMeters(range, azimuth, &(currentParams->offsets), myImg,
 												   Range, thetaD, rSLPixSize, theta, &demError);
 					if (currentParams->offsets.rOffCorrection.rangeOffsetCorrection != NULL)

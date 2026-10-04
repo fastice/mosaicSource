@@ -115,6 +115,12 @@ typedef struct offsetCorrectionType
 	float **rangeOffsetCorrection;
 	float **azimuthOffsetCorrection; /* azimuth ionosphere screen, SLC azimuth pixels */
 	char correctionFile[2048];  /* path read from ;* offsetCorrectionFile line; empty if none */
+	/* Ionosphere fill-error map (range slots only; NULL if absent or useIonSigma is FALSE):
+	   1-sigma error of the applied correction, SLC range pixels, one value per cell of
+	   sDeltaR x sDeltaA SLC pixels; sR0/sA0 = SLC coordinates of the first offset sample. */
+	float **ionSigma;
+	int32_t sNr, sNa;
+	double sR0, sA0, sDeltaR, sDeltaA;
 } offsetCorrection;
 
 
@@ -333,6 +339,7 @@ void getMVhInputFile(char *inputFile, char ***phaseFiles, char ***geodatFiles, c
 					 int32_t *nFiles, int32_t offsetFlag, int32_t rOffsetFlag, int threeDOffFlag);
 void computeSLCFromMLCoords(inputImageStructure *inputImage, double range, double azimuth, double *slcRange, double *slcAzimuth);
 float interpAzOffset(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double theta, float azSLPixSize);
+double azOffsetToFlightDirection(double da, inputImageStructure *inputImage);
 float interpAzSigma(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double theta, float azSLPixSize);
 float interpRangeOffsetInMeters(double range, double azimuth, Offsets *offsets, inputImageStructure *inputImage, double Range, double thetaD, float rSLPixSize,
 						double theta, double *demError);
@@ -358,6 +365,7 @@ void loadAzimuthIonosphereCorrection(Offsets *offsets);
 float interpolateOffsetIonCorrectionInPixels(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
 float interpolateAzOffsetIonCorrectionInPixels(offsetCorrection *corr, double range, double azimuth, float minValue, float noData);
 double azIonCorrectionMeters(Offsets *offsets, inputImageStructure *myImg, double range, double azimuth, double azSLPixSize);
+double rangeIonSigmaVarMeters(offsetCorrection *corr, double rSLC, double aSLC, float rSLPixSize);
 void readOffsetParams(char *datFile, Offsets *offsets, int32_t);
 //char *checkForVrt(char *filename, char *vrtBuff);
 void undoNormalization(outputImageStructure *outputImage, float **vXimage, float **vYimage, float **vZimage, float **errorX, float **errorY,

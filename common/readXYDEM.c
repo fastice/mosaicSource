@@ -360,6 +360,46 @@ static void getCropBounds(GDALDatasetH hDataset, double xMin, double xMax, doubl
 	setGeom(obj, type, x0, y0, deltaX, deltaY, xSize, ySize);
 }
 
+/*
+  Does this file declare a map projection of its own?
+
+  A GDAL raster always carries a CRS.  A legacy .geodat may or may not: the
+  hemisphere / rotation / standard-latitude block after the origin line is OPTIONAL and
+  most older DEMs stop at '&' without it (the whole PIG2018 set, for one).  Callers have
+  to tell the two apart, because readXYGeodatFile() silently substitutes the CURRENT
+  globals when the block is absent -- values that are only meaningful once the hemisphere
+  is known, which for mosaic3d is not until get3DProj() has read the image control points.
+*/
+int32_t xyDEMHasProjection(char *xyFile)
+{
+	int32_t lineCount = 0, eod;
+	char line[256];
+	char *geodatFile;
+	FILE *fp;
+	if (has_extension(xyFile, ".tif") == TRUE || has_extension(xyFile, ".vrt") == TRUE)
+	{
+		return TRUE;
+	}
+	geodatFile = appendSuffix(xyFile, ".geodat",
+							  (char *)malloc((size_t)strlen(xyFile) + 8));
+	fp = openInputFile(geodatFile);
+	if (fp == NULL)
+	{
+		free(geodatFile);
+		return FALSE;
+	}
+	/* Same walk as readXYGeodatFile: type line, size, pixel size, origin -- then the
+	   optional projection block, or end of data. */
+	lineCount = getDataString(fp, lineCount, line, &eod);
+	lineCount = getDataString(fp, lineCount, line, &eod);
+	lineCount = getDataString(fp, lineCount, line, &eod);
+	lineCount = getDataString(fp, lineCount, line, &eod);
+	lineCount = getDataString(fp, lineCount, line, &eod);
+	fclose(fp);
+	free(geodatFile);
+	return (eod != TRUE) ? TRUE : FALSE;
+}
+
 static void readXYGeoInfo(char *xyFile, void *xyImage, int32_t resetProjection, int type)
 { // Get the geometry info for and xyDEM or xyVel for binary, tiff, or vrt image.
 	extern int32_t HemiSphere;

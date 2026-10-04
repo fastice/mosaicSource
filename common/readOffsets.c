@@ -682,6 +682,7 @@ void initOffParams(Offsets *offsets){
 	offsets->geo1 = NULL;
 	offsets->geo2 = NULL;
 	offsets->rOffCorrection.rangeOffsetCorrection = NULL;
+	offsets->rOffCorrection.ionSigma = NULL;
 	offsets->rOffCorrection.correctionFile[0] = '\0';
 	offsets->aOffCorrection.azimuthOffsetCorrection = NULL;
 	offsets->aOffCorrection.correctionFile[0] = '\0';

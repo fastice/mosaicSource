@@ -1,5 +1,6 @@
 #include "math.h"
 #include "common.h"
+extern int32_t useIonSigma; /* defined in common/getRegion.c; set by mosaic3d */
 
 /*
 	   This file contains interpAzOffsets, interpAzSigma, interpRangeOffsetInMeters, interpRangeSigma, which are used to interpolate the offsets fields.
@@ -23,6 +24,25 @@ void computeSLCFromMLCoords(inputImageStructure *inputImage, double range, doubl
 }
 
 #define MAXSIG 0.2
+/*
+   Azimuth offsets come back from interpAzOffset as displacement along +azimuth (time).  Every
+   solver maps that onto the ground with the along-track vector (-sin(gamma), cos(gamma)), which
+   is the FLIGHT direction only for a right-looking SAR.  Until commit 9bb314c (Apr 2026)
+   interpAzOffset negated LEFT-looking offsets on read, which compensated; that negation was
+   moved into the azparams fit (dbc), so the solvers must now apply it themselves, or every
+   left-looking (NISAR) azimuth row points backwards (Taku rotation, GL obsDump d/(a.v) = -1).
+   Call AFTER the azimuth ionosphere term is added: the fitted zero offset and the ionosphere
+   screen are both in the raw sign.  No-data sentinels pass through unchanged.
+*/
+double azOffsetToFlightDirection(double da, inputImageStructure *inputImage)
+{
+	if (da > -0.98 * LARGEINT && inputImage->lookDir == LEFT)
+	{
+		return -da;
+	}
+	return da;
+}
+
 /*
    Interpolate azimuth offsets map for velocity generation and apply baseline/geometry corrections
 */
@@ -186,6 +206,17 @@ float interpRangeSigma(double range, double azimuth, Offsets *offsets, inputImag
 		result = MAXSIG;
 	result = max(offsets->sigmaRange, result);
 	result *= rSLPixSize; /* put in units of meters */
+	/*  Add the error of the applied ionosphere correction where it was gap-filled (the
+	    fill-error map, mosaic3d -noIonSigma to disable).  Only products whose correction was
+	    loaded -- i.e. whose range fit used it -- carry a map, so nothing else changes. */
+	if (useIonSigma == TRUE && offsets->rOffCorrection.rangeOffsetCorrection != NULL &&
+		offsets->rOffCorrection.ionSigma != NULL)
+	{
+		double rSLC, aSLC;
+		computeSLCFromMLCoords(inputImage, range, azimuth, &rSLC, &aSLC);
+		result = (float)sqrt((double)result * result +
+							 rangeIonSigmaVarMeters(&(offsets->rOffCorrection), rSLC, aSLC, rSLPixSize));
+	}
 	return result;
 }
 

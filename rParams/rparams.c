@@ -35,6 +35,13 @@
 #define ION_NONE    1   /* -noIonosphere: never apply correction */
 #define ION_FORCE   2   /* -forceIonosphere: always apply if file exists */
 
+/* ION_AUTO keeps the ionosphere correction unless it makes the tie-point fit worse by more than
+   this (metres, -ionTolerance). 0.05 m (Oct 2026): hold-out tests showed a gap-filled correction
+   beats no correction on average, so near-ties go to the correction; ~half of the earlier
+   rejections were within 0.05 m. -ionTolerance 0 restores the strict sigma_ion <= sigma_noion rule. */
+#define ION_TOLERANCE_DEFAULT 0.05
+static double ionTolerance = ION_TOLERANCE_DEFAULT;
+
 /* Ignore any embedded VRT dataset mask band on offset inputs; default off
    (mask honored when present). Defined once in common/getRegion.c since
    common/readOffsets.c is linked into every program in mosaicSource/. */
@@ -332,7 +339,7 @@ int main(int argc, char *argv[])
 			/* sigma<0 means that attempt found no solution (see fewPoints() in
 			   computeRParams.c) -- treat it as worse than any real fit rather than
 			   letting a negative number win a naive numeric comparison. */
-			int use_ion = (sigma_noion < 0) ? 1 : (sigma_ion >= 0 && sigma_ion <= sigma_noion);
+			int use_ion = (sigma_noion < 0) ? 1 : (sigma_ion >= 0 && sigma_ion <= sigma_noion + ionTolerance);
 			fprintf(stderr, "sigma with ion correction: %f  without: %f  -- using %s\n",
 			        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			FILE *winner = fopen(use_ion ? tmp1 : tmp2, "r");
@@ -342,8 +349,8 @@ int main(int argc, char *argv[])
 				fwrite(buf, 1, n, stdout);
 			fclose(winner);
 			if (yamlOutput)
-				fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\nusingIon: %s\n",
-				        sigma_ion, sigma_noion, use_ion ? "True" : "False");
+				fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\nionTolerance: %f\nusingIon: %s\n",
+				        sigma_ion, sigma_noion, ionTolerance, use_ion ? "True" : "False");
 			else
 				fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
 				        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
@@ -562,7 +569,7 @@ int main(int argc, char *argv[])
 			/* sigma<0 means that attempt found no solution (see fewPoints() in
 			   computeRParams.c) -- treat it as worse than any real fit rather than
 			   letting a negative number win a naive numeric comparison. */
-			int use_ion = (sigma_noion < 0) ? 1 : (sigma_ion >= 0 && sigma_ion <= sigma_noion);
+			int use_ion = (sigma_noion < 0) ? 1 : (sigma_ion >= 0 && sigma_ion <= sigma_noion + ionTolerance);
 			fprintf(stderr, "sigma with ion correction: %f  without: %f  -- using %s\n",
 			        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
 			FILE *winner = fopen(use_ion ? tmp1 : tmp2, "r");
@@ -572,8 +579,8 @@ int main(int argc, char *argv[])
 				fwrite(buf, 1, n, stdout);
 			fclose(winner);
 			if (yamlOutput)
-				fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\nusingIon: %s\n",
-				        sigma_ion, sigma_noion, use_ion ? "True" : "False");
+				fprintf(stdout, "sigmaWithIonCorrection: %f\nsigmaWithoutIonCorrection: %f\nionTolerance: %f\nusingIon: %s\n",
+				        sigma_ion, sigma_noion, ionTolerance, use_ion ? "True" : "False");
 			else
 				fprintf(stdout, "; sigma with ion correction: %f  without: %f  -- using %s\n",
 				        sigma_ion, sigma_noion, use_ion ? "with ion" : "without ion");
@@ -638,6 +645,8 @@ static void usage()
 		"  -bpdBpOnly         Estimate only bp and dBp\n"
 		"  -noIonosphere      Do not apply ionosphere correction if one exists\n"
 		"  -forceIonosphere   Always apply ionosphere correction if file exists\n"
+		"  -ionTolerance <m>  Keep the correction unless it worsens the fit sigma by more than m\n"
+		"                     metres (default 0.05; 0 = keep only if sigma does not increase)\n"
 		"  -quiet             Don't echo tiepoints to solution\n"
 		"  -yaml              Write baseline output in YAML format\n"
 		"  -noMask            Ignore any embedded VRT dataset mask band on offsetFile; default off (mask honored when present)\n"
@@ -741,6 +750,14 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 			*ionosphereMode = ION_NONE;
 		else if (strcmp(argv[i], "-forceIonosphere") == 0)
 			*ionosphereMode = ION_FORCE;
+		else if (strcmp(argv[i], "-ionTolerance") == 0)
+		{
+			if (++i >= argc - nPos)
+			{
+				usage();
+			}
+			ionTolerance = atof(argv[i]);
+		}
 		else if (strcmp(argv[i], "-quiet") == 0)
 			tiePoints->quiet = TRUE;
 		else if (strcmp(argv[i], "-yaml") == 0)

@@ -2,6 +2,7 @@
 #include "string.h"
 #include "math.h"
 #include "stdlib.h"
+#include "unistd.h"
 #include "mosaicSource/common/common.h"
 #include "gdalIO/gdalIO/grimpgdal.h"
 
@@ -36,6 +37,91 @@ void mallocCorrectionBuffer(int bufferMode)
         Correction3    = malloc(MAXOFFBUF);
         return;
     }
+}
+
+/*
+ * Load the ionosphere fill-error map that nisargrimpworkflow writes next to a range
+ * correction <stem>.ionosphereCorrection.globalFill.offset.vrt as
+ * <stem>.ionosphereCorrection.sigma.tif (ionoSigmaVersion sigma-1).  Optional: a missing file,
+ * an unrecognised version, or useIonSigma == FALSE leaves corr->ionSigma NULL (no change to
+ * the range sigma).  One small buffer per range slot, reused like the correction pool.
+ */
+static void readIonSigma(char *correctionFile, offsetCorrection *corr, int slot)
+{
+    extern int32_t useIonSigma;
+    static float **rows[2] = {NULL, NULL};
+    static float *buf[2] = {NULL, NULL};
+    static size_t capRows[2] = {0, 0}, capBuf[2] = {0, 0};
+    const char *key = ".ionosphereCorrection.globalFill.offset.vrt";
+    char sigmaFile[2048];
+    char *p;
+    const char *ver, *item;
+    GDALDatasetH hDS;
+    int32_t nr, na, i;
+
+    corr->ionSigma = NULL;
+    if (useIonSigma == FALSE)
+    {
+        return;
+    }
+    strncpy(sigmaFile, correctionFile, sizeof(sigmaFile) - 1);
+    sigmaFile[sizeof(sigmaFile) - 1] = '\0';
+    p = strstr(sigmaFile, key);
+    if (p == NULL || strlen(sigmaFile) - strlen(key) + 40 >= sizeof(sigmaFile))
+    {
+        return;
+    }
+    strcpy(p, ".ionosphereCorrection.sigma.tif");
+    if (access(sigmaFile, F_OK) != 0)
+    {
+        return;
+    }
+    hDS = GDALOpen(sigmaFile, GDAL_OF_READONLY);
+    if (hDS == NULL)
+    {
+        return;
+    }
+    ver = GDALGetMetadataItem(hDS, "ionoSigmaVersion", NULL);
+    if (ver == NULL || strcmp(ver, "sigma-1") != 0)
+    {
+        fprintf(stderr, "readIonSigma: %s has unrecognised ionoSigmaVersion %s -- ignored\n",
+                sigmaFile, ver == NULL ? "(none)" : ver);
+        GDALClose(hDS);
+        return;
+    }
+    nr = GDALGetRasterXSize(hDS);
+    na = GDALGetRasterYSize(hDS);
+    if ((size_t)nr * na > capBuf[slot])
+    {
+        free(buf[slot]);
+        buf[slot] = (float *)malloc(sizeof(float) * (size_t)nr * na);
+        capBuf[slot] = (size_t)nr * na;
+    }
+    if ((size_t)na > capRows[slot])
+    {
+        free(rows[slot]);
+        rows[slot] = (float **)malloc(sizeof(float *) * na);
+        capRows[slot] = na;
+    }
+    for (i = 0; i < na; i++)
+    {
+        rows[slot][i] = &buf[slot][(size_t)i * nr];
+    }
+    if (GDALRasterIO(GDALGetRasterBand(hDS, 1), GF_Read, 0, 0, nr, na, buf[slot], nr, na,
+                     GDT_Float32, 0, 0) != CE_None)
+    {
+        GDALClose(hDS);
+        return;
+    }
+    item = GDALGetMetadataItem(hDS, "r0", NULL);      corr->sR0 = (item != NULL) ? atof(item) : corr->rO;
+    item = GDALGetMetadataItem(hDS, "a0", NULL);      corr->sA0 = (item != NULL) ? atof(item) : corr->aO;
+    item = GDALGetMetadataItem(hDS, "deltaR", NULL);  corr->sDeltaR = (item != NULL) ? atof(item) : corr->deltaR;
+    item = GDALGetMetadataItem(hDS, "deltaA", NULL);  corr->sDeltaA = (item != NULL) ? atof(item) : corr->deltaA;
+    GDALClose(hDS);
+    corr->sNr = nr;
+    corr->sNa = na;
+    corr->ionSigma = rows[slot];
+    fprintf(stderr, "Ionosphere fill-error map (%s): %s\n", ver, sigmaFile);
 }
 
 /*
@@ -133,4 +219,8 @@ void readOffsetCorrection(char *correctionFile, Offsets *offsets, int bufferMode
         if (isnan(data[i])) data[i] = (float)-LARGEINT;
 
     GDALClose(hDS);
+    if (bufferMode != AZIMUTHIONBUFF)
+    {
+        readIonSigma(correctionFile, corr, bufferMode == RANGEBUFF ? 0 : 1);
+    }
 }

@@ -665,6 +665,8 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 /* azimuth ionosphere: no-op unless the az fit recorded one and -useAzIonosphere is set */
 if (da > -0.98 * LARGEINT)
 	da += azIonCorrectionMeters(&(params->offsets), myImg, range, azimuth, azSLPixSize);
+/* left-looking: azimuth offsets to the flight direction (see interpOffsets.c) */
+da = azOffsetToFlightDirection(da, myImg);
 						if (fabs(da) < 10.0e4)
 						{
 							sigmaA = interpAzSigma(range, azimuth, &(params->offsets), myImg, Range, theta, azSLPixSize);

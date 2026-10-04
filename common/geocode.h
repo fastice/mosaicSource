@@ -387,6 +387,7 @@ float interpolateFloatInputImage(inputImageStructure inputImage, double range, d
 */
 void readXYDEMGeoInfo(char *xyFile, xyDEM *xydem, int32_t resetProjection);
 void readXYDEMcrop(char *xyFile, xyDEM *xyDEM, double xmin, double xmax, double ymin, double ymax);
+int32_t xyDEMHasProjection(char *xyFile);
 void readXYDEM(char *xyFile, xyDEM *xydem);
 void readXYVel(xyVEL *xyvel, char *xyFile);
 void readXYCropVel(xyVEL *xyvel, char *velFile, double xmin, double xmax, double ymin, double ymax);

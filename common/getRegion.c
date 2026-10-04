@@ -13,6 +13,10 @@ int32_t indentRegionOutput = FALSE;
    via its own -noMask flag. */
 int32_t noMask = FALSE;
 int32_t useAzIonosphere = FALSE; /* -useAzIonosphere: apply the azimuth ionosphere correction the az fit recorded */
+/*  Add the ionosphere fill-error map (<stem>.ionosphereCorrection.sigma.tif, written next to the range
+    correction by nisargrimpworkflow) to the range-offset sigma.  mosaic3d sets this TRUE unless
+    -noIonSigma; every other binary leaves it FALSE, so their fits are unchanged. */
+int32_t useIonSigma = FALSE;
 /*  Skip the azimuth-offset raster read entirely.  Set by mosaic3d ONLY when -noAzimuthRows is
     given AND the hopper is running, i.e. when nothing downstream can consume offsets->da.  Lives
     here rather than in mosaic3d.c because readOffsets.c is linked into every binary, and an
