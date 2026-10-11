@@ -604,6 +604,54 @@ static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB
 }
 
 /*
+  Residual sigma and covariance from the leading comment block of a legacy az.est (see getAzParams).
+  Stops at the first non-comment line. Leaves the values untouched when the block has none.
+*/
+static void readLegacyAzHeader(char *paramFile, Offsets *offsets)
+{
+	FILE *fp;
+	char line[1024], *tmp, key[8];
+	double c[5];
+	int32_t k;
+	fp = fopen(paramFile, "r");
+	if (fp == NULL)
+	{
+		return;
+	}
+	while (fgets(line, sizeof(line), fp) != NULL)
+	{
+		tmp = line;
+		while (*tmp == ' ' || *tmp == '\t')
+		{
+			tmp++;
+		}
+		if (*tmp != ';' && *tmp != '\n' && *tmp != '\0')
+		{
+			break; /* first data line: end of the header block */
+		}
+		if ((tmp = strstr(line, "sigma*sqrt(X2/n)=")) != NULL)
+		{
+			sscanf(tmp + strlen("sigma*sqrt(X2/n)="), "%lf", &(offsets->sigmaAresidual));
+			continue;
+		}
+		for (k = 1; k <= 4; k++)
+		{
+			snprintf(key, sizeof(key), "C_%i", k);
+			if ((tmp = strstr(line, key)) != NULL &&
+				sscanf(tmp + 3, "%lf%lf%lf%lf", &c[1], &c[2], &c[3], &c[4]) == 4)
+			{
+				offsets->Ca[k][1] = c[1];
+				offsets->Ca[k][2] = c[2];
+				offsets->Ca[k][3] = c[3];
+				offsets->Ca[k][4] = c[4];
+				break;
+			}
+		}
+	}
+	fclose(fp);
+}
+
+/*
   Input azimuth parameter info. Modifed 3/1/16 to read in covariance matrix
 */
 void getAzParams(Offsets *offsets)
@@ -647,6 +695,7 @@ void getAzParams(Offsets *offsets)
 		/* Case 4: revert to DELTABNONE base file */
 		fp = openInputFile(offsets->azParamsFile);
 		offsets->deltaB = DELTABNONE;
+		snprintf(paramFile, sizeof(paramFile), "%s", offsets->azParamsFile); /* file actually read, for readLegacyAzHeader */
 		if (fp == NULL)
 			error("getAzParams: Error opening %s\n", offsets->azParamsFile);
 	}
@@ -660,7 +709,22 @@ void getAzParams(Offsets *offsets)
 	for (i = 1; i <= 4; i++)
 		for (j = 1; j <= 4; j++)
 			offsets->Ca[i][j] = 0.0;
+	/* readCov only sets the residual when it finds one, so clear it first (as readAzParamsYaml does);
+	   otherwise a stale/uninitialized value can bypass the legacy-header fallback below. */
+	offsets->sigmaAresidual = 0.0;
 	readCov(fp, 4, offsets->Ca, &(offsets->sigmaAresidual), line);
+	/*
+	   Legacy az.est files (azparams text output) put the ";* sigma*sqrt(X2/n)=" line and the
+	   ";;* C_1 .. C_4" covariance rows in the comment block BEFORE the parameter line, which is the
+	   last line of the file. getDataString() skips that block, so readCov() above starts after the
+	   parameter line, finds nothing, and the residual and covariance stayed 0 -- the azimuth sigma
+	   then fell back to the per-pixel sigma map alone (as small as the 0.001-pixel streak floor).
+	   When nothing was found, read them from the leading comment block instead.
+	*/
+	if (offsets->sigmaAresidual <= 0.0)
+	{
+		readLegacyAzHeader(paramFile, offsets);
+	}
 	fprintf(stderr, "azimuth sigma*sqrt(X2/n) = %lf (m)\n", offsets->sigmaAresidual);
 	/* read params from fit */
 	if (sscanf(line, "%lf%lf%lf%lf", &(offsets->c1), &(offsets->dbcds), &(offsets->dbhds), &(offsets->doffdx)) != 4)
