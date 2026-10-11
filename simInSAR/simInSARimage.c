@@ -290,6 +290,33 @@ void simInSARimage(sceneStructure *scene, void *dem, xyVEL *xyVel)
 					}
 					nIterTotal += nIter;
 					withHeight(myImg, &lat, &lon, iFloat, range, hWGS);
+					/* hWGS was sampled at the zero-height iterate and the loop above lifted it along the
+					   geocentric radius, but withHeight places the point along the ellipsoid normal, so
+					   the final lat/lon sits ~h*(geodetic-geocentric lat) (~0.002 h at 70N) along the
+					   meridian from where hWGS was taken. Re-sample the height at the final position
+					   and relocate until they agree; otherwise -toLL lat/lon are inconsistent with the
+					   DEM by slope*0.002h, which biases offsets.geom on steep terrain.
+					   Relocating at fixed range moves the point ~cot(inc)*dh toward the radar, so an
+					   undamped update diverges on steep slopes: damp by 0.5 and keep the most
+					   consistent point (never worse than the original; layover stays as before). */
+					{
+						double hTry = hWGS, latTry = lat, lonTry = lon;
+						double hDem = getXYHeight(lat, lon, xyDem, Re, ELLIPSOIDAL);
+						double errBest = fabs(hDem - hWGS);
+						for (int32_t kh = 0; kh < 12 && errBest > 0.01; kh++)
+						{
+							hTry += 0.5 * (hDem - hTry);
+							withHeight(myImg, &latTry, &lonTry, iFloat, range, hTry);
+							hDem = getXYHeight(latTry, lonTry, xyDem, Re, ELLIPSOIDAL);
+							if (fabs(hDem - hTry) < errBest)
+							{
+								errBest = fabs(hDem - hTry);
+								lat = latTry;
+								lon = lonTry;
+								hWGS = hTry;
+							}
+						}
+					}
 
 					if (scene->maskFlag == TRUE && scene->toLLFlag == FALSE)
 					{
