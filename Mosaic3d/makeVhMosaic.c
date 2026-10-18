@@ -354,6 +354,8 @@ da = azOffsetToFlightDirection(da, myImg);
 										vzTmp[i][j] = (float)delta;
 									else if (outputImage->vzFlag == VZVERTICAL)
 										vzTmp[i][j] = (float)delta * sin(psi) / cos(psi); /* undo h by * sin, then make vert /cos */
+									else if (outputImage->vzFlag == VZLOS)
+										vzTmp[i][j] = (float)(delta * sin(psi)); /* undo h by * sin -> LOS m/yr */
 								}
 								sxTmp[i][j] = scX;
 								syTmp[i][j] = scY;
