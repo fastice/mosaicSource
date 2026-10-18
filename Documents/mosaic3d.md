@@ -299,6 +299,19 @@ they contribute nothing to the vertical and why the 3D gate (below) does not cou
 All three types are used by default. `-noPhaseRows`, `-noRangeRows` and `-noAzimuthRows` drop a
 type; they are the reduction-test switches and always override a derived value.
 
+**Per sensor (azimuth only).** `-noAzimuthRowsSensors NISAR[,Sentinel1,TSX]` drops the azimuth
+rows of products of the listed sensors and keeps everyone else's (added 2026-10-14 for the
+combined S1+NISAR Amundsen mosaic, where NISAR track-135's azimuth rows made a bad band while
+S1's azimuth rows are good). The sensor comes from each product's geodat label
+(`productSensor`, `common/parseInputFile.c`): `NISAR_...` is NISAR, `s1[abcd]-...` or a label
+naming Sentinel-1 is Sentinel1, `TSX`/`TDX` is TSX; anything else is unknown and never matched.
+Honoured by both hoppers and `-true3D`; the global `-noAzimuthRows` still drops every azimuth row.
+The log records the list (`; noAzimuthRowsSensors :`) and how many products lost their azimuth
+rows (`; mosaicHopper[3D] azRowsOffBySensor :`). In the workflow it is set as
+`excludeRows: {azimuth: [NISAR]}` in project.yaml or the template
+(`mosaicworkflow.setupquarters.resolveExcludeRows`). Unlike the global switch it does not skip
+the azimuth raster read.
+
 Legacy round-selection flags are **translated** rather than ignored, so an existing pair template
 runs unchanged and measures what it always measured:
 

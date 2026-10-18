@@ -146,6 +146,11 @@ void speckleTrackMosaic(inputImageStructure *images, vhParams *params, outputIma
 /* -noAzimuthRows : suppress every azimuth row.  The A/B that measures what the azimuth offsets
    actually contribute.  Default FALSE. */
 extern int32_t noAzimuthRows;          /* defined in mosaic3d.c */
+/* -noAzimuthRowsSensors NISAR[,S1,...] : suppress the azimuth rows of products of the listed
+   sensors only (sensor from the geodat label, productSensor).  The hoppers (and true3D) honour
+   it; a global -noAzimuthRows still drops everything.  Default: none. */
+extern int32_t noAzimuthRowsSensor[NSENSORS]; /* defined in mosaic3d.c */
+int32_t azRowsOffForSensor(inputImageStructure *image);
 /* in speckleTrackMosaic.c; shared with mosaicTrue3D.c */
 int clipVel(float x, float y, float vx, float vy, referenceVelocity *refVel);
 /*  Return-checked variant used by the hopper solvers -- see speckleTrackMosaic.c.  Honours

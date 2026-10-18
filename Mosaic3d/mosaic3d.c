@@ -89,6 +89,7 @@ double jointMaxSigma = JOINTMAXSIGMAPHASEDEF;
 double jointMaxSigmaRange = JOINTMAXSIGMARANGEDEF;
 double jointErrScale = 1.0;
 int32_t noAzimuthRows = FALSE;
+int32_t noAzimuthRowsSensor[NSENSORS] = {FALSE, FALSE, FALSE, FALSE};
 /* True 3-component solver (mosaicTrue3D.c).  Offsets only, no surface-parallel constraint. */
 int32_t true3D = FALSE;
 int32_t true3DProject = FALSE;
@@ -1228,6 +1229,15 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 		{
 			extern int32_t noAzimuthRows, aSigmaResidual;
 			fprintf(outputImage->fpLog, "; noAzimuthRows    : %i\n", noAzimuthRows);
+			fprintf(outputImage->fpLog, "; noAzimuthRowsSensors :");
+			for (int32_t s = 0; s < NSENSORS; s++)
+			{
+				if (noAzimuthRowsSensor[s] == TRUE)
+				{
+					fprintf(outputImage->fpLog, " %s", sensorName(s));
+				}
+			}
+			fprintf(outputImage->fpLog, "\n");
 			fprintf(outputImage->fpLog, "; aSigmaResidual   : %i\n", aSigmaResidual);
 		}
 		{
@@ -2075,6 +2085,27 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			fprintf(stderr, "; note: -speckleTrackJoint is retired and ignored -- the hopper "
 							"supersedes it (use -noPhaseRows for a speckle-only solve)\n");
 		}
+		/* Longest first: "noAzimuthRowsSensors" contains "noAzimuthRows". */
+		else if (strstr(argString, "noAzimuthRowsSensors") != NULL)
+		{
+			char list[256], *tok;
+			if (i + 1 >= argc)
+			{
+				error("-noAzimuthRowsSensors needs a comma-separated sensor list (e.g. NISAR)");
+			}
+			strncpy(list, argv[i + 1], sizeof(list) - 1);
+			list[sizeof(list) - 1] = '\0';
+			for (tok = strtok(list, ","); tok != NULL; tok = strtok(NULL, ","))
+			{
+				int32_t sensor = sensorFromName(tok);
+				if (sensor < 0)
+				{
+					error("-noAzimuthRowsSensors: unknown sensor '%s' (NISAR, Sentinel1/S1, TSX)", tok);
+				}
+				noAzimuthRowsSensor[sensor] = TRUE;
+			}
+			i++;
+		}
 		else if (strstr(argString, "noAzimuthRows") != NULL)
 		{
 			noAzimuthRows = TRUE;
@@ -2571,7 +2602,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
@@ -2630,6 +2661,7 @@ static void usage()
 		  "\tjointMaxSigmaPhase/Range X =\t Legacy per-round overrides of -jointMaxSigma (crossing-phase / crossing-range rounds).  Only distinguishable under -legacyCode; defaults 35 / 100",
 		  "\tjointErrScale X =\t\t Scale the joint solvers reported sigma by X (caller-supplied 1-sigma calibration); default 1 = off",
 		  "\tnoAzimuthRows =\t\t Drop every azimuth row (range-only solve); the control for what the azimuth offsets contribute; default off",
+		  "\tnoAzimuthRowsSensors =\t\t Comma list (NISAR, Sentinel1/S1, TSX): drop the azimuth rows of those sensors' products only (sensor from the geodat label); default none",
 		  "\tnoIonSigma =\t\t Do not add the ionosphere fill-error map (<stem>.ionosphereCorrection.sigma.tif) to range-offset sigma; default: added when present",
 		  "\tspeckleTrackJoint, jointMaxSigmaSpeckle X =\t RETIRED, accepted and ignored (superseded by the hopper)",
 		  "\tnoASigmaResidual =\t\t Omit the azparams tie-point fit residual from the azimuth-offset budget; default is to include it",
@@ -3120,3 +3152,12 @@ void caldat(int32_t julian, int32_t *mm, int32_t *id, int32_t *iyyy)
 		--(*iyyy);
 }
 #undef IGREG
+
+/*
+   TRUE if -noAzimuthRowsSensors lists this product's sensor (from its geodat label), i.e. its
+   azimuth rows must be left out of the solve.  The global -noAzimuthRows is tested separately.
+*/
+int32_t azRowsOffForSensor(inputImageStructure *image)
+{
+	return noAzimuthRowsSensor[productSensor(&(image->par))];
+}

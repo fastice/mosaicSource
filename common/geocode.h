@@ -337,6 +337,18 @@ typedef struct demType
 */
 void parseInputFile(char *inputFile, inputImageStructure *inputImage);
 void parseGeojson(char *inputFile, inputImageStructure *inputImage);
+/*
+  Sensor of a product, from its geodat label (par.label); see productSensor in parseInputFile.c.
+  Names (sensorFromName/sensorName) match the project.yaml 'sensor:' values.
+*/
+#define SENSOR_UNKNOWN 0
+#define SENSOR_NISAR 1
+#define SENSOR_S1 2
+#define SENSOR_TSX 3
+#define NSENSORS 4
+int32_t productSensor(SARData *par);
+int32_t sensorFromName(char *name);
+const char *sensorName(int32_t sensor);
 // Debug routine
 void dumpParsedInput(inputImageStructure *inputImage, FILE *fp);
 /*

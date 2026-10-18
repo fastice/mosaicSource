@@ -1,6 +1,7 @@
 #include "stdio.h"
 #include "ctype.h"
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include "math.h"
 #include "mosaicSource/common/common.h"
@@ -683,4 +684,69 @@ void dumpParsedInput(inputImageStructure *inputImage, FILE *fp) {
 	for(i=1; i <=sv->nState; i++) {
 		fprintf(fp, "%i %lf %lf %lf   %lf %lf %lf\n", i, sv->x[i], sv->y[i], sv->z[i], sv->vx[i], sv->vy[i], sv->vz[i]);
 	}
+}
+
+/*
+   Sensor of a product from its geodat label: the legacy .in first line after "; Image name: "
+   or the geojson ImageName.  NISAR_L1_PR_RUNW_... -> NISAR; s1a-iw1-slc-... (S1A..S1D) or a
+   label naming Sentinel-1 -> S1; TSX/TDX -> TSX (the test writeMetaFile already uses).
+   Anything else is SENSOR_UNKNOWN, which no per-sensor switch ever matches.
+*/
+int32_t productSensor(SARData *par)
+{
+	char *label = par->label;
+	if (label == NULL)
+	{
+		return SENSOR_UNKNOWN;
+	}
+	while (*label == ' ' || *label == '\t')
+	{
+		label++;
+	}
+	if (strncmp(label, "NISAR", 5) == 0)
+	{
+		return SENSOR_NISAR;
+	}
+	if ((label[0] == 's' || label[0] == 'S') && label[1] == '1' && label[2] != '\0' &&
+		strchr("abcdABCD", label[2]) != NULL)
+	{
+		return SENSOR_S1;
+	}
+	if (strstr(label, "Sentinel-1") != NULL)
+	{
+		return SENSOR_S1;
+	}
+	if (strstr(label, "TSX") != NULL || strstr(label, "TDX") != NULL)
+	{
+		return SENSOR_TSX;
+	}
+	return SENSOR_UNKNOWN;
+}
+
+/* Sensor code for a project.yaml-style name; -1 if not recognised. */
+int32_t sensorFromName(char *name)
+{
+	if (strcasecmp(name, "NISAR") == 0)
+	{
+		return SENSOR_NISAR;
+	}
+	if (strcasecmp(name, "Sentinel1") == 0 || strcasecmp(name, "S1") == 0)
+	{
+		return SENSOR_S1;
+	}
+	if (strcasecmp(name, "TSX") == 0)
+	{
+		return SENSOR_TSX;
+	}
+	return -1;
+}
+
+const char *sensorName(int32_t sensor)
+{
+	static const char *names[NSENSORS] = {"unknown", "NISAR", "Sentinel1", "TSX"};
+	if (sensor < 0 || sensor >= NSENSORS)
+	{
+		return "unknown";
+	}
+	return names[sensor];
 }

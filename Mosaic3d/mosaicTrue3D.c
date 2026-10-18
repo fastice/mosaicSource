@@ -306,7 +306,7 @@ void mosaicTrue3D(inputImageStructure *images, vhParams *params, outputImageStru
 			fprintf(stderr, "\tazimuth row suppressed (sigmaAresidual %f)\n", currentParams->offsets.sigmaAresidual);
 			useAzRow = FALSE;
 		}
-		if (noAzimuthRows == TRUE)
+		if (noAzimuthRows == TRUE || azRowsOffForSensor(currentImage) == TRUE)
 		{
 			useAzRow = FALSE;
 		}

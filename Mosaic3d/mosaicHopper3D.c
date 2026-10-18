@@ -249,10 +249,12 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 	  ****************** PASS 1: accumulate normal equations, one image at a time **************
 	*/
 	ii = 0;
+	int32_t nAzOffSensor = 0; /* products whose azimuth rows -noAzimuthRowsSensors dropped */
 	params = ascParams;
 	for (phaseImage = allImages; phaseImage != NULL; phaseImage = phaseImage->next, params = params->next)
 	{
 		ii++;
+		int32_t azSensorOff = azRowsOffForSensor(phaseImage);
 		tOffCenter = phaseImage->julDay + params->nDays * 0.5;
 		/*  Partial-temporal-overlap weights are carried in the input file (setupquarters writes
 		    a fraction < 1 for frames only partly inside the mosaic window).  They are honoured
@@ -369,7 +371,11 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 						(sigmaAThreshVel < 0.0 ||
 						 params->offsets.sigmaAresidual * 365.25 / (double)params->nDays
 							 <= sigmaAThreshVel) &&
-						noAzimuthRows == FALSE);
+						noAzimuthRows == FALSE && azSensorOff == FALSE);
+			if (azSensorOff == TRUE && noAzimuthRows == FALSE)
+			{
+				nAzOffSensor++;
+			}
 		}
 		errorRecoveryJmp = NULL;
 		if (hasPhase == FALSE && useRangeRow == FALSE && useAzRow == FALSE)
@@ -1019,6 +1025,7 @@ da = azOffsetToFlightDirection(da, myImg);
 			(long)nSolved, (long)nSolved3D, (long)nSolved2D, (long)nRejCond, (long)nRejClip, (long)nRejNoData,
 			(nSolved > 0) ? nObsSum / (double)nSolved : 0.0, nObsMax);
 	fprintf(outputImage->fpLog, "; mosaicHopper3D nImagesUsed : %i of %i\n", nUsed, nTotal);
+	fprintf(outputImage->fpLog, "; mosaicHopper3D azRowsOffBySensor : %i\n", nAzOffSensor);
 	fprintf(outputImage->fpLog, "; mosaicHopper3D nSolved     : %ld\n", (long)nSolved);
 	fprintf(outputImage->fpLog, "; mosaicHopper3D nSolved3D   : %ld\n", (long)nSolved3D);
 	fprintf(outputImage->fpLog, "; mosaicHopper3D nSolved2D   : %ld\n", (long)nSolved2D);
