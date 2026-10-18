@@ -775,20 +775,51 @@ static GDALRasterBandH getBandAndMeta(GDALDatasetH hDS, Offsets *offsets, int32_
 	hBand = GDALGetRasterBand(hDS, band);
 	
 	readDataSetMetaData(hDS, &metaData);
+	/*  get_value() returns NULL for a key the VRT does not carry, and atof(NULL)/
+	    atoi(NULL) segfault inside strtod.  Every product written by the GrIMP chain
+	    has these keys -- the sigmas normally come from the baselines, not here -- so
+	    this is defensive only, for hand-built or third-party VRTs.
+	    The grid keys are REQUIRED: defaulting them to 0 would silently place the
+	    product at the wrong origin, so those fail loudly instead.  */
+	char *vR0 = get_value(metaData, "r0"), *vA0 = get_value(metaData, "a0");
+	char *vDR = get_value(metaData, "deltaR"), *vDA = get_value(metaData, "deltaA");
+	char *vSS = get_value(metaData, "sigmaStreaks"), *vSR = get_value(metaData, "sigmaRange");
+	if (vR0 == NULL || vA0 == NULL || vDR == NULL || vDA == NULL)
+	{
+		error("getBandAndMeta: offsets VRT is missing a required grid key "
+		      "(r0=%s a0=%s deltaR=%s deltaA=%s) for band %i of %s\n",
+		      vR0 ? vR0 : "MISSING", vA0 ? vA0 : "MISSING",
+		      vDR ? vDR : "MISSING", vDA ? vDA : "MISSING", band, path);
+	}
 	// Write to offsets
 	offsets->nr = GDALGetRasterBandXSize(hBand);
 	offsets->na = GDALGetRasterBandYSize(hBand);
-	offsets->rO = atoi(get_value(metaData, "r0"));
-	offsets->aO = atoi(get_value(metaData, "a0"));
+	offsets->rO = atoi(vR0);
+	offsets->aO = atoi(vA0);
 	// fprintf(stderr, "R0,A)\n");
-	offsets->deltaR = atof(get_value(metaData, "deltaR"));
-	offsets->deltaA = atof(get_value(metaData, "deltaA"));
+	offsets->deltaR = atof(vDR);
+	offsets->deltaA = atof(vDA);
 	// Check sigmas not already set
-	if( (tmp=atof(get_value(metaData, "sigmaStreaks"))) > 0.0) offsets->sigmaStreaks = tmp;
-	if( (tmp=atof(get_value(metaData, "sigmaRange"))) > 0.0) offsets->sigmaRange = tmp;
+	if (vSS != NULL && (tmp = atof(vSS)) > 0.0)
+	{
+		offsets->sigmaStreaks = tmp;
+	}
+	if (vSR != NULL && (tmp = atof(vSR)) > 0.0)
+	{
+		offsets->sigmaRange = tmp;
+	}
 	// fprintf(stderr,"PATH %s\n", path);
-	offsets->geo1 = mergePath(get_value(metaData, "geo1"), path);
-	offsets->geo2 = mergePath(get_value(metaData, "geo2"), path);
+	/*  mergePath() strcat()s its first argument, so a missing geo1/geo2 crashes
+	    there rather than here.  Both name the geodats and have no sane default.  */
+	char *vG1 = get_value(metaData, "geo1"), *vG2 = get_value(metaData, "geo2");
+	if (vG1 == NULL || vG2 == NULL)
+	{
+		error("getBandAndMeta: offsets VRT is missing a geodat key (geo1=%s geo2=%s) "
+		      "for band %i of %s\n", vG1 ? vG1 : "MISSING", vG2 ? vG2 : "MISSING",
+		      band, path);
+	}
+	offsets->geo1 = mergePath(vG1, path);
+	offsets->geo2 = mergePath(vG2, path);
 	fprintf(stderr, "%sGEO2 %s\n", indentRegionOutput ? "\t" : "", offsets->geo2);
 	// Get Band
 	return hBand;

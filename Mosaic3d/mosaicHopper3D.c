@@ -947,7 +947,9 @@ da = azOffsetToFlightDirection(da, myImg);
 				/*  -maxChi2: blunder screen, applied to whichever branch ran.  chi2 asks whether
 				    the rows agree with EACH OTHER -- the failure the formal sigma cannot see.
 				    Placed after both branches so the .chi2 band still records the value. */
-				if (maxChi2 > 0.0 && chi2Plane != NULL && (double)chi2Plane[i][jj] > maxChi2)
+				/*  sum(w) = trace(N3): every row (phase, range, azimuth, Landsat) is a unit vector. */
+				if (maxChi2 > 0.0 && chi2Plane != NULL &&
+					chi2ForGate((double)chi2Plane[i][jj], (double)nObs[i][jj], n11 + n22 + n33, vx, vy) > maxChi2)
 				{
 					nRejCond++;
 					/*  The branches above already counted this pixel as solved; undo that so

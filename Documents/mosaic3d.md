@@ -79,6 +79,7 @@ mosaic3d [options] inputFile demFile outFileBase
 | `-gateAbsolute`                        | Drop the $\sqrt{n}$ normalisation, making the cap a plain limit on the pixel's own formal sigma. Default off; hopper solvers only |
 | `-gateSpeedFrac <F>`                   | Speed-aware cap: effective cap becomes $\max(X,\ F\lVert v\rVert)$, so fast ice is not rejected for having proportionally small error. Default 0.0 = inert; hopper solvers only |
 | `-maxChi2 <X>`                         | Reject solved pixels with reduced $\chi^2 > X$. Default −1 = off. **Behaves as a fast-ice filter — keep off or very loose** |
+| `-chi2SpeedFrac <F>`                   | Speed-dependent `-maxChi2`: add a model error $F\lvert v\rvert$ for real change within the window before the cap. Needs `-maxChi2`. Default 0 = off |
 | `-hopper3DMaxSigma <S>`                | 2D/3D toggle for `mosaicHopper3D`; `S < 0` (default) forces the 2D surface-parallel projection everywhere. Not a rejection gate — no pixel is lost to it |
 | `-noErrorGate`                         | *(inert — parsed but never read; see "Gates that are not gates")* |
 | `-noMask`                              | Ignore any embedded VRT dataset mask band on offset inputs (e.g. `autocleanNISAR.py`'s `range/azimuth.offsets.good` masks); default off, so a mask is honored when present — masked pixels are read as no-data |
@@ -874,6 +875,30 @@ disagrees more between observations, so the screen removes the glaciers preferen
 fast pixels it keeps have *higher* formal error than the ones it discarded. Typical measured
 retention at $X = 100$: >99% below 100 m/yr, but 3–16% between 1 and 2 km/yr.
 
+**Speed-dependent form** (`-chi2SpeedFrac F`, default 0 = off; added 2026-10-18). The fast-ice
+disagreement is real change within the window, and it scales with speed. So `F` adds a model error
+$\sigma_{\text{eff}}^2 = \sigma^2 + (F\lvert v\rvert)^2$ before the cap. Per-row sigmas are not
+kept at the solve, so `chi2ForGate()` (`mosaicHopper.c`) uses their harmonic mean
+$\bar\sigma^2 = n_{\text{obs}}/\sum w$ ($\sum w = \mathrm{tr}\,\mathbf{N}_3$ in the 3D hopper, `gW` in
+the 2D one):
+
+$$
+\chi^2_{\text{gate}} = \chi^2_\nu\,\frac{\bar\sigma^2}{\bar\sigma^2 + (F\lvert v\rvert)^2},
+\qquad \text{reject if } \chi^2_{\text{gate}} > X
+$$
+
+It is a gate only: the solve and the `.chi2` band are unchanged, and $F > 0$ can only keep
+pixels that $F = 0$ rejects. Choose $F \approx$ (p99 fractional spread within the window)$/\sqrt{X}$.
+The spread was measured from monthly series with the formal error removed, at 500–6000 m/yr:
+
+| window | GL v05 2020–24 p90 / p99 | PIG 2015–20 p90 / p99 |
+|---|---|---|
+| monthly (month-to-month / $\sqrt{12}$) | 0.023–0.029 / 0.07–0.08 | 0.02–0.04 / 0.09–0.33 |
+| quarterly | 0.06–0.075 / 0.16–0.19 | 0.05–0.13 / 0.19–0.93 |
+| annual | 0.07–0.085 / 0.15–0.21 | 0.05–0.14 / 0.17–1.45 |
+
+The PIG tail above about 0.3 is the calving front and the Thwaites tongue/mélange; the trunk stays below 0.3.
+
 **7. The 3D/2D toggle** (`-hopper3DMaxSigma`, default −1). Not a rejection gate — **no pixel is
 lost to it.** It decides whether `mosaicHopper3D` solves all three components at a pixel or
 projects onto the surface-parallel plane:
@@ -945,6 +970,7 @@ screens its *output* on the solution's formal sigma.
 | `-gateAbsolute` | ✓ | — | — |
 | `-gateSpeedFrac` | ✓ | — | — |
 | `-maxChi2` | ✓ | — | — |
+| `-chi2SpeedFrac` | ✓ | — | — |
 | `-hopper3DMaxSigma` | ✓ (3D only) | — | — |
 | `-refVel`/`-clipThresh` clip | ✓ *(since 2026-09)* | — | ✓ (speckle round) |
 

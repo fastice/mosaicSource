@@ -765,7 +765,8 @@ da = azOffsetToFlightDirection(da, myImg);
 					    the one failure the formal sigma cannot see -- a single frame with an
 					    unwrapping error gives a small sigma and a wildly wrong velocity.  Applied
 					    after chi2Plane is stored so the diagnostic band still records why. */
-					if (maxChi2 > 0.0 && (double)chi2Plane[i][jj] > maxChi2)
+					if (maxChi2 > 0.0 &&
+						chi2ForGate((double)chi2Plane[i][jj], (double)nObs[i][jj], (double)gW[i][jj], vx, vy) > maxChi2)
 					{
 						nRejCond++;
 						vxTmp[i][jj] = (float)-LARGEINT;
@@ -874,6 +875,25 @@ da = azOffsetToFlightDirection(da, myImg);
 /*
   mallocImage() mallocs row by row and does NOT zero -- the accumulators must start at 0.
 */
+/*  The reduced chi2 the -maxChi2 screen compares against its cap, in both hoppers.
+    -chi2SpeedFrac F adds a model error proportional to speed, sigma_eff^2 = sigma^2 + (F|v|)^2, for
+    real velocity change within the window.  The rows' own sigmas are not kept per pixel, so this uses
+    their harmonic mean sigBar^2 = nObs / sum(w), giving chi2_eff = chi2 * sigBar^2 / (sigBar^2 + (F|v|)^2).
+    F|v| is applied in observation space, where a range row sees only ~sin(psi) of a horizontal change,
+    so the tolerance errs lenient -- the side to err on when the change is the signal.  F = 0 (default),
+    or no weight, returns chi2 unchanged. */
+double chi2ForGate(double chi2, double nObs, double sumW, double vx, double vy)
+{
+	double sig2, fv;
+	if (!(chi2SpeedFrac > 0.0) || !(sumW > 0.0))
+	{
+		return chi2;
+	}
+	sig2 = nObs / sumW;
+	fv = chi2SpeedFrac * sqrt(vx * vx + vy * vy);
+	return chi2 * sig2 / (sig2 + fv * fv);
+}
+
 static float **mallocZeroImageHop(int32_t nr, int32_t nc)
 {
 	float **tmp;

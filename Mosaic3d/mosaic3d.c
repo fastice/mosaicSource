@@ -162,6 +162,15 @@ double gateSpeedFrac = 0.03;
     carries real temporal variability, and 22 % of Greenland's valid pixels exceed 2.
     DEFAULT -1 = off.  Wired in BOTH hoppers. */
 double maxChi2 = -1.0;
+/*  -chi2SpeedFrac F : speed-dependent form of the -maxChi2 screen.  Real velocity change within
+    the mosaic window (seasonal speed-up, calving, mélange) makes the rows disagree in proportion to
+    speed, so a fixed chi2 cap either rejects fast ice or is useless on slow ice.  F adds a model
+    error sigma_eff^2 = sigma^2 + (F|v|)^2 before the cap is applied (chi2ForGate, mosaicHopper.c).
+    F is the fractional within-window spread to tolerate, divided by sqrt(maxChi2): measured from
+    the monthly series (GL v05 2020-24, PIG 2015-20), p99 spread on fast ice is ~7 % (monthly),
+    ~17 % (quarterly), ~20 % (annual) in Greenland.  Gate only -- the solve and .chi2 band are
+    unchanged.  DEFAULT 0 = off (the plain -maxChi2 cap). */
+double chi2SpeedFrac = 0.0;
 /* -obsDump <pointsFile>: per-observation dump at a short list of lat/lon points, for the
    GPS forward model (Documents/gpsForwardModelPlan.md).  NULL = inert. */
 char *obsDumpFile = NULL;
@@ -1213,6 +1222,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 			fprintf(outputImage->fpLog, "; gateNEff         : %i\n", gateNEff);
 			fprintf(outputImage->fpLog, "; gateAbsolute     : %i\n", gateAbsolute);
 			fprintf(outputImage->fpLog, "; maxChi2          : %f\n", maxChi2);
+			fprintf(outputImage->fpLog, "; chi2SpeedFrac    : %f\n", chi2SpeedFrac);
 			fprintf(outputImage->fpLog, "; gateSpeedFrac    : %f\n", gateSpeedFrac);
 		}
 		{
@@ -2096,6 +2106,11 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			sscanf(argv[i + 1], "%lf", &maxChi2);
 			i++;
 		}
+		else if (strstr(argString, "chi2SpeedFrac") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &chi2SpeedFrac);
+			i++;
+		}
 		else if (strstr(argString, "noGateAbsolute") != NULL)
 		{
 			gateAbsolute = FALSE;
@@ -2622,6 +2637,7 @@ static void usage()
 		  "\ttrue3DProject =\t\t Reduction test for -true3D: force the surface-parallel projection of the same 3x3 accumulator; not a production path",
 		  "\tgateSpeedFrac =\t\t Make the -jointMaxSigma cap speed-aware: effective cap = max(X, F*|v|), so fast ice is not rejected for having proportionally small error.  DEFAULT 0.03; 0 = off",
 		  "\tmaxChi2 =\t\t Reject solved pixels whose reduced chi-square exceeds X -- a blunder screen; keep it loose (100-1000).  Default -1 = off",
+		  "\tchi2SpeedFrac =\t\t Speed-dependent -maxChi2: tolerate a model error F*|v| (real change within the window) before applying the chi2 cap.  Needs -maxChi2.  Default 0 = off",
 		  "\tgateAbsolute =\t\t Gate on the formal sigma alone (no sqrt(n) factor), i.e. reject only pixels whose 1-sigma exceeds -jointMaxSigma; default off",
 		  "\tnoErrorGate =\t\t Keep pixels with a valid velocity but an invalid formal error; default is to remove them",
 		  "\tnoPhaseRows / noRangeRows / noAzimuthRows =\t\t Drop a row type from the hopper solve; default is all three",
