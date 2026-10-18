@@ -6,6 +6,9 @@
 #include "sys/time.h"
 #include "cRecipes/nrutil.h"
 #include "mosaicSource/common/common.h"
+#include "landsatSource64/Lstrack/lstrack.h"
+#include "landsatSource64/Lsfit/lsfit.h"
+#include "mosaicSource/landsatMosaic/landSatMosaic.h"
 #include "mosaic3d.h"
 
 /*
@@ -725,6 +728,86 @@ da = azOffsetToFlightDirection(da, myImg);
 			}	  /* i loop */
 		}		  /* End omp parallel */
 	}			  /* End image loop */
+	/*
+	  ---- LANDSAT ROWS (default with -hopper3D; -legacyLandsat for the separate round) -------
+	  Each Landsat pair adds two rows per pixel, vx and vy directly: u = (1,0,0) and (0,1,0).  The
+	  values and variances come from landSatVelocityAt(), the same code the separate Landsat round
+	  uses (offsets, polynomial correction, map scale; variance = tie residual + local matching +
+	  fit covariance + quantization).  The pair's overlap weight scales w exactly as for the SAR
+	  rows, and pairs overlapping the window by < 0.5 are skipped as in the round.  Being purely
+	  horizontal they constrain vx/vy directly, which in 3D anchors the horizontal so the vertical
+	  absorbs only what the SAR rows disagree on.  The separate round is skipped by mosaic3d when
+	  rows are used (no double counting).  Runs after the SAR loop: the Landsat reads reuse the common
+	  offsets buffers the SAR offsets were read into.
+	*/
+	if (landsatRows == TRUE && landsatRowsImages != NULL)
+	{
+		landSatImage *lsImage;
+		lsPixelSetup lsc;
+		int32_t nLSUsed = 0, nLSTotal = 0;
+		for (lsImage = (landSatImage *)landsatRowsImages; lsImage != NULL; lsImage = lsImage->next)
+		{
+			nLSTotal++;
+			if (landSatPrepareImage(lsImage, outputImage, &lsc, &iMin, &iMax, &jMin, &jMax) == FALSE)
+			{
+				continue;
+			}
+			nLSUsed++;
+			iMinAll = min(iMinAll, iMin);
+			jMinAll = min(jMinAll, jMin);
+			iMaxAll = max(iMaxAll, iMax);
+			jMaxAll = max(jMaxAll, jMax);
+#pragma omp parallel for schedule(dynamic, 8)
+			for (i = iMin; i < iMax; i++)
+			{
+				double x, y, lvx, lvy, varX, varY, wx, wy, wScale;
+				unsigned char sMask;
+				int32_t jj;
+				y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+				wScale = (sumW != NULL) ? lsImage->weight : 1.0;
+				for (jj = jMin; jj < jMax; jj++)
+				{
+					x = (outputImage->originX + jj * outputImage->deltaX) * MTOKM;
+					sMask = GROUNDED;
+					if (shelfMask != NULL)
+					{
+						sMask = getShelfMask(shelfMask, x, y);
+					}
+					if (sMask == NOSOLUTION)
+					{
+						continue;
+					}
+					if (landSatVelocityAt(lsImage, &lsc, x, y, &lvx, &lvy, &varX, &varY) == FALSE ||
+						!(varX > 0.0) || !(varY > 0.0))
+					{
+						continue;
+					}
+					wx = wScale / varX;
+					wy = wScale / varY;
+					Nxx[i][jj] += wx;
+					Nyy[i][jj] += wy;
+					bxAcc[i][jj] += wx * lvx;
+					byAcc[i][jj] += wy * lvy;
+					SddAcc[i][jj] += wx * lvx * lvx + wy * lvy * lvy;
+					nObs[i][jj] += 2.0f;
+					gW[i][jj] += (float)(wx + wy);
+					gW2[i][jj] += (float)(wx * wx + wy * wy);
+					obsDumpRecord(i, jj, "landsat", lsImage->fitResult.matchFile, lsImage->matches.jdEarly,
+								  lsImage->matches.jdLate - lsImage->matches.jdEarly, 1.0, 0.0, 0.0, lvx, sqrt(varX), wx);
+					obsDumpRecord(i, jj, "landsat", lsImage->fitResult.matchFile, lsImage->matches.jdEarly,
+								  lsImage->matches.jdLate - lsImage->matches.jdEarly, 0.0, 1.0, 0.0, lvy, sqrt(varY), wy);
+					if (sumW != NULL)
+					{
+						sumW[i][jj] += (float)(wx + wy);
+						sumWT[i][jj] += (float)((wx + wy) * (lsc.tOffCenter - tCenter));
+					}
+				}
+			}
+		}
+		nUsed += nLSUsed;
+		fprintf(stderr, "mosaicHopper3D: Landsat rows: %i of %i Landsat pairs contributed\n", nLSUsed, nLSTotal);
+		fprintf(outputImage->fpLog, "; landsatRows: %i of %i Landsat pairs contributed rows\n", nLSUsed, nLSTotal);
+	}
 	fprintf(stderr, "mosaicHopper: %i of %i images contributed\n", nUsed, nTotal);
 	/*
 	  ****************** PASS 2: solve once per pixel *****************************************

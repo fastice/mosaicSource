@@ -18,6 +18,8 @@ static float **LSreadFloatImageforMosaic(char *file, int32_t nx, int32_t ny, flo
 static uint8_t **LSreadByteImageforMosaic(char *file, int32_t nx, int32_t ny, uint8_t *maskB, uint8_t **m);
 static void getLSRegion(landSatImage *image, int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax, outputImageStructure *outputImage);
 static int32_t interpLSdata(double x, double y, matchResult *matches, double *dx, double *dy, double *sx, double *sy);
+static void lsInitBuffers(void);
+double xyscale(double latctr, int32_t proj);
 
 #define MAXSIG 0.2 /* Maximum ls error */
 /*
@@ -29,62 +31,171 @@ static int32_t interpLSdata(double x, double y, matchResult *matches, double *dx
 #define MAXLINEBUF 2000
 float *fBuf1, *fBuf2, *fBuf3, *fBuf4;
 float **fBuf1L, **fBuf2L, **fBuf3L, **fBuf4L;
-uint8_t **mask, *maskBuf;
-char *lineBuf;
+uint8_t **mask = NULL, *maskBuf = NULL;
+char *lineBuf = NULL;
+
+/*
+  Point the Landsat read buffers at mosaic3d's common pool and allocate the line and mask buffers
+  once.  Called by the round and by the hopper's -landsatRows, whichever runs first.
+*/
+static void lsInitBuffers(void)
+{
+	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
+	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
+	fBuf1 = (float *)offBufSpace1;
+	fBuf2 = (float *)offBufSpace2;
+	fBuf3 = (float *)offBufSpace3;
+	fBuf4 = (float *)offBufSpace4;
+	fBuf1L = (float **)lBuf1;
+	fBuf2L = (float **)lBuf2;
+	fBuf3L = (float **)lBuf3;
+	fBuf4L = (float **)lBuf4;
+	if (lineBuf == NULL)
+	{
+		lineBuf = (char *)malloc(sizeof(char) * MAXLINEBUF);
+	}
+	/* Added for masks Summer 2017 */
+	if (mask == NULL)
+	{
+		mask = (uint8_t **)malloc(MAXMASKBUFLINES * sizeof(uint8_t *));
+		maskBuf = (uint8_t *)malloc(MAXMASKBUFLINES * MAXMASKBUFLINES * sizeof(uint8_t));
+	}
+}
+
+/*
+  Per-pair setup shared by the Landsat round and the hopper's -landsatRows: output-grid region,
+  read the offsets, and the pair constants (pixel->m/yr scale, global variance, polynomial).
+  Returns FALSE when the pair does not intersect the grid or overlaps the window by < 0.5.
+*/
+int32_t landSatPrepareImage(landSatImage *currentImage, outputImageStructure *outputImage, lsPixelSetup *c,
+							int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax)
+{
+	double deltaT, sigmaXTieRes, sigmaXImageAvg, sigmaYTieRes, sigmaYImageAvg, sigmaQx, sigmaQy;
+	int32_t k;
+	lsInitBuffers();
+	deltaT = currentImage->matches.jdLate - currentImage->matches.jdEarly; /* time seperation */
+	fprintf(stderr, "current ls image weight %f %f %f %f\n", currentImage->weight, currentImage->matches.jdEarly, currentImage->matches.jdLate, deltaT);
+	/*  Get bounding box of image*/
+	getLSRegion(currentImage, iMin, iMax, jMin, jMax, outputImage);
+	/* Keeps dT from moving outside of interval - see notes - added 10/9/2019 */
+	if (currentImage->weight < 0.5)
+	{
+		*iMax = -1;
+		*jMax = -1;
+	}
+	if (!(*iMax > 0 && *jMax > 0))
+	{
+		return FALSE;
+	}
+	c->tOffCenter = (currentImage->matches.jdEarly + currentImage->matches.jdLate) * 0.5;
+	/*
+	  Input offsets
+	*/
+	readLSOffsetsForMosaic(currentImage);
+	c->x0poly = currentImage->matches.x0 + 0.5 * currentImage->matches.nx * currentImage->matches.stepX * currentImage->matches.dx;
+	c->y0poly = currentImage->matches.y0 + 0.5 * currentImage->matches.ny * currentImage->matches.stepY * currentImage->matches.dy;
+	c->vscalex = currentImage->matches.dx; /* space */
+	c->vscalex *= 365.25 / deltaT;		   /* time */
+	c->vscaley = currentImage->matches.dy; /* space */
+	c->vscaley *= 365.25 / deltaT;		   /* time */
+	/*
+	  Sigma tie residual scale to pixels
+	*/
+	if (currentImage->fitResult.sigmaXRes > 0)
+		sigmaXTieRes = (currentImage->fitResult.sigmaXRes / currentImage->matches.dx);
+	else
+		sigmaXTieRes = 0.0;
+	if (currentImage->fitResult.sigmaYRes > 0)
+		sigmaYTieRes = (currentImage->fitResult.sigmaYRes / currentImage->matches.dy);
+	else
+		sigmaYTieRes = 0.0;
+	if (currentImage->matches.meanSigmaX > 0)
+		sigmaXImageAvg = currentImage->matches.meanSigmaX;
+	else
+		sigmaXImageAvg = 0;
+	if (currentImage->matches.meanSigmaY > 0)
+		sigmaYImageAvg = currentImage->matches.meanSigmaY;
+	else
+		sigmaYImageAvg = 0;
+	fprintf(stderr, "sigmaX/Y Image Avg %lf %lf SigmaX/Y fit %lf %lf - %lf\n",
+			sigmaXImageAvg, sigmaYImageAvg, sigmaXTieRes, sigmaYTieRes, currentImage->weight);
+	fprintf(stderr, "sig %f %f  svg %f %f\n", sigmaXImageAvg * c->vscalex, sigmaYImageAvg * c->vscaley, sigmaXTieRes * c->vscalex, sigmaYTieRes * c->vscaley);
+	/*
+	  This calcuates the tie residual (represent overall error) - the error due to average image stats (will add back on local image stats below)
+	  Avoid going negative and assume at least 100th of a pixel of other error. Modified 3/23/20 to change from 0.01 to 0.0001.
+	*/
+	sigmaQx = 0.05; /* added 3/24/2020 - empirical fix perhaps for quantization/estimation errror */
+	sigmaQy = 0.05;
+	c->varXGlobal = max(sigmaXTieRes * sigmaXTieRes - sigmaXImageAvg * sigmaXImageAvg, 0.000) + sigmaQx * sigmaQx;
+	c->varYGlobal = max(sigmaYTieRes * sigmaYTieRes - sigmaYImageAvg * sigmaYImageAvg, 0.000) + sigmaQy * sigmaQy;
+	fprintf(stderr, "var %f %f \n", sqrt(c->varXGlobal) * c->vscalex, sqrt(c->varYGlobal) * c->vscaley);
+	for (k = 0; k < 3; k++)
+	{
+		c->pX[k] = currentImage->fitResult.pX[k];
+		c->pY[k] = currentImage->fitResult.pY[k];
+	}
+	return TRUE;
+}
+
+/*
+  One Landsat pair's velocity (m/yr, output map frame) and its variances at map point x, y (km).
+  Returns FALSE where the pair has no valid data.  Thread safe (reads only).
+*/
+int32_t landSatVelocityAt(landSatImage *currentImage, lsPixelSetup *c, double x, double y,
+						  double *vx, double *vy, double *varX, double *varY)
+{
+	extern int HemiSphere;
+	extern double Rotation;
+	double offx, offy, sx, sy, sigx2, sigy2, sx2, sy2, lat, lon, latscale;
+	if (interpLSdata(x * KMTOM, y * KMTOM, &(currentImage->matches), &offx, &offy, &sx, &sy) == FALSE)
+	{
+		return FALSE;
+	}
+	/*
+	   add global and local noise (see above)Updated to use squared value 3/23/20 since value is squared again below
+	*/
+	computeFitError((x * KMTOM - c->x0poly), (y * KMTOM - c->y0poly), currentImage, &sigx2, &sigy2);
+	sx2 = c->varXGlobal + sx * sx + sigx2;
+	sy2 = c->varYGlobal + sy * sy + sigy2;
+	sx2 = min(sx2, MAXSIG * MAXSIG);
+	sy2 = min(sy2, MAXSIG * MAXSIG);
+	/*
+	  Add polynomial corrections, in pixels
+	*/
+	offx -= c->pX[0] + c->pX[1] * (x * KMTOM - c->x0poly) + c->pX[2] * (y * KMTOM - c->y0poly);
+	offy -= c->pY[0] + c->pY[1] * (x * KMTOM - c->x0poly) + c->pY[2] * (y * KMTOM - c->y0poly);
+	/*
+	  Compute lat lon, then the map scale
+	*/
+	xytoll(x, y, HemiSphere, &lat, &lon, Rotation);
+	latscale = xyscale(lat, currentImage->fitResult.proj);
+	*vx = offx * c->vscalex * latscale;
+	*vy = offy * c->vscaley * latscale;
+	/* Variances */
+	*varX = (c->vscalex * c->vscalex) * sx2;
+	*varY = (c->vscaley * c->vscaley) * sy2;
+	return TRUE;
+}
 
 void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage, float fl)
 {
 	extern int HemiSphere;
-	extern double Rotation;
-	extern float *fBuf1, *fBuf2, *fBuf3, *fBuf4;
-	extern float **fBuf1L, **fBuf2L, **fBuf3L, **fBuf4L;
-	extern char *lineBuf;
-	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
-	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
-	double sigx2, sigy2; /* sigma^2 from plane fit */
-	double x0poly, y0poly;
 	float **vXimage, **vYimage, **vZimage;
 	float **scaleX, **scaleY, **scaleZ;
 	float **vxTmp, **vyTmp, **vzTmp, **fScale, **sxTmp, **syTmp;
 	float **errorX, **errorY;
 	double x, y;
-	double sigmaQx, sigmaQy;
 	double scX, scY;
-	double vx, vy, ex, ey; /* velocity and error */
-	double tmp;
-	double lat, lon;
-	double pX[MAXFITPARAM], pY[MAXFITPARAM];
+	double vx, vy, ex, ey; /* velocity and error (variance) */
 	unsigned char sMask;
 	ShelfMask *shelfMask; /* Mask with shelf and grounding zone */
-	double offx, offy, sx, sy, sx2, sy2;
-	double vscalex, vscaley, latscale;
-	double sigmaXTieRes, sigmaXImageAvg, sigmaYTieRes, sigmaYImageAvg;
-	double tCenter, tOffCenter, deltaOffCenter, tHalfWidth;
-	double deltaT;
-	double varXGlobal, varYGlobal;
+	double tCenter, deltaOffCenter;
+	lsPixelSetup c;
 	landSatImage *currentImage;
-	int32_t i, j, k, iMin, iMax, jMin, jMax; /* LCV */
+	int32_t i, j, iMin, iMax, jMin, jMax; /* LCV */
 	int32_t count;
-	int keep;
-	size_t lsize;
-	/*
-	  Malloc tmp space used later
-	*/
-	lineBuf = (char *)malloc(sizeof(char) * MAXLINEBUF);
+	lsInitBuffers();
 	fprintf(stderr, "**** LANDSAT TRACKING SOLUTION ****\n");
-	/* This taps into the common memory pool allocated up front in mosaic 3d */
-	fBuf1 = (float *)offBufSpace1;
-	fBuf2 = (float *)offBufSpace2;
-	fBuf3 = (float *)offBufSpace3;
-	fBuf4 = (float *)offBufSpace4;
-	lsize = MAXOFFBUFLINESLS * sizeof(float *);
-	fBuf1L = (float **)lBuf1;
-	fBuf2L = (float **)lBuf2;
-	fBuf3L = (float **)lBuf3;
-	fBuf4L = (float **)lBuf4;
-	/* Added for masks Summer 2017 */
-	mask = (uint8_t **)malloc(MAXMASKBUFLINES * sizeof(uint8_t *));
-	maskBuf = (uint8_t *)malloc(MAXMASKBUFLINES * MAXMASKBUFLINES * sizeof(uint8_t));
 	/*
 	  Added shelf mask August 2017 - not to be confused with individual masks above
 	*/
@@ -115,73 +226,13 @@ void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage
 	count = 1;
 	fprintf(stderr, "Outside image loop %i\n", HemiSphere);
 	tCenter = (outputImage->jd1 + outputImage->jd2 + 1.) * 0.5; /* Added 1 on Dec 1 to avoid .5 day bias */
-	tHalfWidth = (outputImage->jd2 - outputImage->jd1) * 0.5;
 	for (currentImage = LSImages; currentImage != NULL; currentImage = currentImage->next)
 	{
-		deltaT = currentImage->matches.jdLate - currentImage->matches.jdEarly; /* time seperation */
-		fprintf(stderr, "current ls image weight %f %f %f %f\n", currentImage->weight, currentImage->matches.jdEarly, currentImage->matches.jdLate, deltaT);
-		/*  Get bounding box of image*/
-		getLSRegion(currentImage, &iMin, &iMax, &jMin, &jMax, outputImage);
-		/* Keeps dT from moving outside of interval - see notes - added 10/9/2019 */
-		if (currentImage->weight < 0.5)
-		{
-			iMax = -1;
-			jMax = -1;
-		}
 		/*  **************** Now loop over output grid*****************  */
-		if (iMax > 0 && jMax > 0)
+		if (landSatPrepareImage(currentImage, outputImage, &c, &iMin, &iMax, &jMin, &jMax) == TRUE)
 		{
-			tOffCenter = (currentImage->matches.jdEarly + currentImage->matches.jdLate) * 0.5;
-			deltaOffCenter = tOffCenter - tCenter;
-			/*
-			  Input offsets
-			*/
-			readLSOffsetsForMosaic(currentImage);
-			x0poly = currentImage->matches.x0 + 0.5 * currentImage->matches.nx * currentImage->matches.stepX * currentImage->matches.dx;
-			y0poly = currentImage->matches.y0 + 0.5 * currentImage->matches.ny * currentImage->matches.stepY * currentImage->matches.dy;
-			vscalex = currentImage->matches.dx; /* space */
-			vscalex *= 365.25 / deltaT;			/* time */
-			vscaley = currentImage->matches.dy; /* space */
-			vscaley *= 365.25 / deltaT;			/* time */
-			/*
-			  Sigma tie residual scale to pixels
-			*/
-			if (currentImage->fitResult.sigmaXRes > 0)
-				sigmaXTieRes = (currentImage->fitResult.sigmaXRes / currentImage->matches.dx);
-			else
-				sigmaXTieRes = 0.0;
-			if (currentImage->fitResult.sigmaYRes > 0)
-				sigmaYTieRes = (currentImage->fitResult.sigmaYRes / currentImage->matches.dy);
-			else
-				sigmaYTieRes = 0.0;
-			if (currentImage->matches.meanSigmaX > 0)
-				sigmaXImageAvg = currentImage->matches.meanSigmaX;
-			else
-				sigmaXImageAvg = 0;
-			if (currentImage->matches.meanSigmaY > 0)
-				sigmaYImageAvg = currentImage->matches.meanSigmaY;
-			else
-				sigmaYImageAvg = 0;
-			fprintf(stderr, "sigmaX/Y Image Avg %lf %lf SigmaX/Y fit %lf %lf - dT %lf %lf\n",
-					sigmaXImageAvg, sigmaYImageAvg, sigmaXTieRes, sigmaYTieRes, deltaOffCenter, currentImage->weight);
-			fprintf(stderr, "sig %f %f  svg %f %f\n", sigmaXImageAvg * vscalex, sigmaYImageAvg * vscaley, sigmaXTieRes * vscalex, sigmaYTieRes * vscaley);
-			/*
-			  This calcuates the tie residual (represent overall error) - the error due to average image stats (will add back on local image stats below)
-			  Avoid going negative and assume at least 100th of a pixel of other error. Modified 3/23/20 to change from 0.01 to 0.0001.
-			*/
-			sigmaQx = 0.05; /* added 3/24/2020 - empirical fix perhaps for quantization/estimation errror */
-			sigmaQy = 0.05;
-			varXGlobal = max(sigmaXTieRes * sigmaXTieRes - sigmaXImageAvg * sigmaXImageAvg, 0.000) + sigmaQx * sigmaQx;
-			varYGlobal = max(sigmaYTieRes * sigmaYTieRes - sigmaYImageAvg * sigmaYImageAvg, 0.000) + sigmaQy * sigmaQy;
-			fprintf(stderr, "var %f %f \n", sqrt(varXGlobal) * vscalex, sqrt(varYGlobal) * vscaley);
-			for (k = 0; k < 3; k++)
-			{
-				pX[k] = currentImage->fitResult.pX[k];
-				pY[k] = currentImage->fitResult.pY[k];
-			}
-#pragma omp parallel private(j, x, y, lat, lon, offx, offy, sx, sy, \
-			sigx2, sigy2, sx2, sy2, vx, vy, ex, ey, scX, scY, \
-			latscale, sMask)
+			deltaOffCenter = c.tOffCenter - tCenter;
+#pragma omp parallel private(j, x, y, vx, vy, ex, ey, scX, scY, sMask)
 			{
 #pragma omp for schedule(dynamic, 8)
 			for (i = iMin; i < iMax; i++)
@@ -192,42 +243,15 @@ void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage
 				for (j = jMin; j < jMax; j++)
 				{
 					x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
-					vx = NODATA;
-					vy = NODATA;
 					/* Adding skip via continue if no shelf mask indicates no data */
+					sMask = GROUNDED;
 					if (shelfMask != NULL)
 						sMask = getShelfMask(shelfMask, x, y);
 					if (sMask == NOSOLUTION)
 						continue; /* skip rest of loop */
 					/* Ok, shelf mask indicates continue */
-					if (interpLSdata(x * KMTOM, y * KMTOM, &(currentImage->matches), &offx, &offy, &sx, &sy) == TRUE)
+					if (landSatVelocityAt(currentImage, &c, x, y, &vx, &vy, &ex, &ey) == TRUE)
 					{
-						/*
-						   add global and local noise (see above)Updated to use squared value 3/23/20 since value is squared again below
-						*/
-						computeFitError((x * KMTOM - x0poly), (y * KMTOM - y0poly), currentImage, &sigx2, &sigy2);
-						sx2 = varXGlobal + sx * sx + sigx2;
-						sy2 = varYGlobal + sy * sy + sigy2;
-						sx2 = min(sx2, MAXSIG * MAXSIG);
-						sy2 = min(sy2, MAXSIG * MAXSIG);
-						/*
-						  Add polynomial corrections, in pixels
-						*/
-						offx -= pX[0] + pX[1] * (x * KMTOM - x0poly) + pX[2] * (y * KMTOM - y0poly);
-						offy -= pY[0] + pY[1] * (x * KMTOM - x0poly) + pY[2] * (y * KMTOM - y0poly);
-						/*
-						  Compute lat lon
-						*/
-						xytoll(x, y, HemiSphere, &lat, &lon, Rotation);
-						/*
-						  computeLatScale
-						*/
-						latscale = xyscale(lat, currentImage->fitResult.proj);
-						vx = offx * vscalex * latscale;
-						vy = offy * vscaley * latscale;
-						/* Variances */
-						ex = (vscalex * vscalex) * sx2;
-						ey = (vscaley * vscaley) * sy2;
 						scX = 1.0 / (ex);
 						scY = 1.0 / (ey);
 						/* Increment buffers */
@@ -273,7 +297,6 @@ void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage
 	  Adjust scale
 	*/
 	endScale(outputImage, vXimage, vYimage, vZimage, errorX, errorY, scaleX, scaleY, scaleZ, FALSE);
-	free(lineBuf);
 	fprintf(outputImage->fpLog, ";\n; Returning from landsat  Mosaic(.c)\n;\n");
 }
 

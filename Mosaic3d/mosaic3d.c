@@ -90,6 +90,15 @@ double jointMaxSigmaRange = JOINTMAXSIGMARANGEDEF;
 double jointErrScale = 1.0;
 int32_t noAzimuthRows = FALSE;
 int32_t noAzimuthRowsSensor[NSENSORS] = {FALSE, FALSE, FALSE, FALSE};
+/*  Landsat as rows (DEFAULT since 2026-10-16): with -hopper3D and SAR inputs, every Landsat pair
+    enters the hopper3D solve as vx/vy rows instead of the separate Landsat round that used to be
+    averaged with it afterwards.  -legacyLandsat restores the separate round.  Runs that cannot take
+    rows (no -hopper3D: -hopper, -legacyCode; or no SAR inputs) fall back to the round automatically.
+    landsatRows is the RESOLVED state (set where the Landsat round would run); landsatRowsImages is
+    the parsed list handed to the hopper.  -landsatRows is accepted as a no-op for old commands. */
+int32_t legacyLandsat = FALSE;
+int32_t landsatRows = FALSE;
+void *landsatRowsImages = NULL;
 /* True 3-component solver (mosaicTrue3D.c).  Offsets only, no surface-parallel constraint. */
 int32_t true3D = FALSE;
 int32_t true3DProject = FALSE;
@@ -541,7 +550,23 @@ int main(int argc, char *argv[])
 	{
 		if (args.statsFlag == TRUE)
 			error("Landsat  incompatible with stats flag, which is for speckle tracked offsets only\n");
-		makeLandSatMosaic(LSImages, &outputImage, args.fl);
+		/*  Landsat as rows inside the hopper3D solve is the default; the separate round runs for
+		    -legacyLandsat and for runs that cannot take rows.  Never both -- that would count every
+		    Landsat pair twice. */
+		if (legacyLandsat == FALSE && hopper3D == TRUE && (nAsc + nDesc) > 0)
+		{
+			landsatRows = TRUE;
+			landsatRowsImages = (void *)LSImages;
+			fprintf(stderr, "Landsat: pairs enter the hopper3D solve as rows (default; -legacyLandsat for the separate round)\n");
+			fprintf(outputImage.fpLog, "; Landsat          : rows in the hopper3D solve\n");
+		}
+		else
+		{
+			landsatRows = FALSE;
+			fprintf(outputImage.fpLog, "; Landsat          : separate round%s\n",
+					legacyLandsat == TRUE ? " (-legacyLandsat)" : " (rows need -hopper3D with SAR inputs)");
+			makeLandSatMosaic(LSImages, &outputImage, args.fl);
+		}
 	}
 	/*
 	  Step 0: Mosaic using ascending and descending data where possible.
@@ -1229,6 +1254,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 		{
 			extern int32_t noAzimuthRows, aSigmaResidual;
 			fprintf(outputImage->fpLog, "; noAzimuthRows    : %i\n", noAzimuthRows);
+			fprintf(outputImage->fpLog, "; legacyLandsat    : %i\n", legacyLandsat);
 			fprintf(outputImage->fpLog, "; noAzimuthRowsSensors :");
 			for (int32_t s = 0; s < NSENSORS; s++)
 			{
@@ -1964,7 +1990,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
 	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom.  Raised 86 -> 92 for
 	   -epsg and -wkt (two argv slots each), plus headroom. */
-	if (argc < 4 || argc > 92)
+	if (argc < 4 || argc > 94)
 	{
 		fprintf(stderr, "Arg count out of range (max 92): %i\n", argc);
 		usage(); /* Check number of args */
@@ -2188,6 +2214,14 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		    -hopper3D (silently running the 2D module) and would leave -hopper3DMaxSigma's value
 		    token to fall through to usage().  Same trap the root CLAUDE.md records for
 		    -rhoOffsets vs offsets. */
+		else if (strstr(argString, "legacyLandsat") != NULL)
+		{
+			legacyLandsat = TRUE;
+		}
+		else if (strstr(argString, "landsatRows") != NULL)
+		{
+			fprintf(stderr, "note: -landsatRows is now the default (with -hopper3D); flag ignored\n");
+		}
 		else if (strstr(argString, "hopper3DMaxSigma") != NULL)
 		{
 			sscanf(argv[i + 1], "%lf", &hopper3DMaxSigma);
@@ -2602,7 +2636,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 
 static void usage()
 {
-	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
+	error("\033[1m\n\n%s\n\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\033[0m\n\n\n",
 		  "mosaic3d: mosaic phase and speckle data to create a velocity mosaic",
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
@@ -2673,6 +2707,7 @@ static void usage()
 		  "\tgateAbsolute =\t\t Gate on the formal sigma alone (no sqrt(n) factor), i.e. reject only pixels whose 1-sigma exceeds -jointMaxSigma; default off",
 		  "\tnoErrorGate =\t\t Keep pixels with a valid velocity but an invalid formal error; default is to remove them",
 		  "\tnoPhaseRows / noRangeRows / noAzimuthRows =\t\t Drop a row type from the hopper solve; default is all three",
+		  "\tlegacyLandsat =\t\t Run Landsat as a separate round averaged with the SAR solution (pre-2026-10-16).  DEFAULT with -hopper3D: Landsat pairs are vx/vy rows in the solve",
 		  "\tsigmaAThreshVel =\t\t Drop azimuth rows whose azparams sigma exceeds X m/yr (sigmaAresidual scaled by 365.25/nDays).  DEFAULT 150; <0 disables",
 		  "\tnoGateNEff =\t\t Use the RAW row count in the output rejection gate instead of the weighted effective count.  The weighted count is the DEFAULT",
 		  "\tlegacyCode =\t\t Use the pre-2026-09 four-round pipeline instead of the hopper (the hopper is now the DEFAULT).  Implied by -stats and -legacyPair*",

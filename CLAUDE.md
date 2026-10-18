@@ -1642,3 +1642,27 @@ the intended binary by absolute path.
 - `simoffsets.computeSmoothRadiusMapC()` writes the four input rasters to `TMPDIR` (local disk,
   not the NFS frame directory), runs the binary, and moves the result into place. If the binary
   is missing or fails it warns and falls back to the Python, so the product still completes.
+
+## Landsat as hopper rows (DEFAULT since 2026-10-16; `-legacyLandsat` for the separate round)
+
+With `-hopper3D` and SAR inputs, every Landsat pair now enters the hopper3D solve as two rows per
+pixel -- vx and vy directly, u = (1,0,0) and (0,1,0) -- instead of the separate Landsat round that was
+error-weighted with the SAR solution afterwards. `-legacyLandsat` restores the separate round. Runs
+that cannot take rows fall back to the round automatically and say so in the `.log` (`; Landsat :`):
+the plain 2D `-hopper` (not extended), `-legacyCode`, and runs with no SAR inputs. `-landsatRows`
+(the opt-in name during testing) is accepted as a no-op.
+
+- **One implementation.** Per-pair setup and per-pixel value/variance live in
+  `landsatMosaic/makeLandSatMosaic.c` (`landSatPrepareImage`, `landSatVelocityAt`); the separate
+  round now calls the same functions, so both paths use identical values, variances, weights and the
+  `weight < 0.5` overlap skip. Verified: the refactored round reproduces the installed binary to
+  run-to-run noise (4e-4 m/yr).
+- Landsat rows are added after the SAR loop (they reuse the common offsets buffers); they appear in
+  `-obsDump` as type `landsat`; pixels with only Landsat rows solve in 2D (`nRange` = 0).
+- Rows are NOT feathered at Landsat footprint edges (the round was). Not seen as seams in the three
+  glacier test boxes, but check full-sheet products where Landsat dominates.
+- Tested on Jakobshavn / Kangerlussuaq / Helheim 100 m boxes (Release/experimentalAnnual/glacierTests):
+  identical coverage, closer to a Landsat-only reference than the separate round (best in 3D), weight
+  share ~5 % (Jak) to ~50 % (Hel). All row types' scatter exceeds their stated sigma at the termini
+  (normalized RMS 2-10, range up to 63 at Jak) -- intra-annual variability; Landsat can only act as a
+  strong anchor once per-sensor sigma scales exist (see perSensorRowSwitches.md).
