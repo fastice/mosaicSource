@@ -40,13 +40,61 @@ static char *AzOffsetsParamName(char *aParamsFile, char *newFile, int32_t deltaB
 static int is_not_final_range(const char *vrtFile);
 static int get_se_correction_path(const char *vrtFile, char *outPath, size_t outSize);
 
+/*
+   True for a per-component offsets product: xxx.yyy.da, .dr, .sa or .sr.
+   Each of these is ONE band of the combined xxx.yyy.vrt, and only that
+   combined file carries the band Descriptions (AzimuthOffsets, RangeOffsets,
+   AzimuthSigma, RangeSigma) that mapBandDescriptionsToBandNumbers() matches on.
+*/
+static int32_t isPerComponentOffsets(char *filename)
+{
+	size_t len = strlen(filename);
+	char *tail;
+	if(len < 4)
+	{
+		return 0;
+	}
+	tail = filename + len - 3;
+	if(strcmp(tail, ".da") == 0 || strcmp(tail, ".dr") == 0 ||
+	   strcmp(tail, ".sa") == 0 || strcmp(tail, ".sr") == 0)
+	{
+		return 1;
+	}
+	return 0;
+}
+
 static char *checkForOffsetsVrt(char *filename, char *vrtBuff) 
 {
 	char noExtensionName[2048], *vrtFile; 
 	int32_t noExtensionNameLength; 
+	/*
+	   For a per-component name the combined vrt is looked for FIRST.  The cull
+	   step writes a single-band xxx.yyy.da.vrt beside the combined one
+	   (intfloat -tiff <offFile>.vrt, see sarfunc/makeCullFile.py), and that file
+	   has no band Description, so taking <filename>.vrt first returned the
+	   unlabelled one-band file and the product was skipped with "No description
+	   found for this band" -- leaving velocity_nocull blank.  The stripped name
+	   was always the intent for these four suffixes; it was only ever reached as
+	   a fallback.
+	*/
+	noExtensionNameLength = strlen(filename) - 3;
+	if(isPerComponentOffsets(filename) && noExtensionNameLength > 0)
+	{
+		noExtensionName[0] = '\0';
+		strncpy(noExtensionName, filename, noExtensionNameLength);
+		noExtensionName[noExtensionNameLength] = '\0';
+		vrtFile = checkForVrt(noExtensionName, vrtBuff);
+		if(vrtFile != NULL)
+		{
+			return vrtFile;
+		}
+	}
 	vrtFile = checkForVrt(filename, vrtBuff);
 	// This will return the vrt if found (e.g., range.offsets.vrt)
-	if(vrtFile != NULL) return vrtFile;
+	if(vrtFile != NULL)
+	{
+		return vrtFile;
+	}
 	// Else see if for xxx.yyy.da (.dr, .sa, .sx) there is an xxx.yyy.vrt
 	noExtensionName[0] = '\0';
 	noExtensionNameLength = strlen(filename)-3;
