@@ -74,6 +74,8 @@ double computeAzParams(tiePointsStructure *tiePoints, inputImageStructure *input
 	int32_t debugFlag = (debugFile != NULL);
 	int32_t *origIndex = NULL;
 
+	/* -slowTies: offsets are sampled by now, so only points with valid data are counted */
+	cullFastTiePoints(tiePoints, "azparams");
 	if (tiePoints->constOnlyFlag == TRUE)
 	{
 		if (tiePoints->linFlag == FALSE)

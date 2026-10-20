@@ -548,6 +548,9 @@ void computeBaseline(tiePointsStructure *tiePoints,
 	double *phaseIon = NULL;
 	int32_t i;
 
+	/* -slowTies: phases (and phaseSquint) are sampled by now, so only points with valid data are
+	   counted; done before the ionosphere array below is derived from phase */
+	cullFastTiePoints(tiePoints, "tiepoints");
 	noSquintFit = fitBaseline(tiePoints, tiePoints->phase, inputImage, verbose, debugFlag);
 	/*
 	  Ionosphere: fit a second time against the ionosphere-corrected phase and keep whichever

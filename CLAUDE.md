@@ -1614,6 +1614,26 @@ precede the positional filenames (`readArgs` indexes them from `argv[argc-5]`, s
 segfaults), and `csh` re-reads `.cshrc` and will silently resolve the PRODUCTION binary — reference
 the intended binary by absolute path.
 
+## `-slowTies s n` (tiepoints, rparams, azparams) — opt-in fast-tie-point cull
+
+If at least `n` tie points **with valid data in this frame** move slower than `s` m/yr (model speed
+`hypot(vx, vy)` from the tie file), the faster ones are dropped from the fit; otherwise every point is
+kept. Default off; no flag = byte-identical sigmas to before (checked on all three).
+
+- **Why:** the Antarctic tie set (`irvineTies.dat`) keeps ice-shelf points because some tracks
+  (Ross, especially 80 MHz) see nothing else. A frame that merely clips a small shelf then has its
+  fit dominated by velocity-model error there — at 24 days 1 m/yr of model error is ~3.4 rad. On
+  track-47/5163_0000 the 60 shelf points (2%) carried ~40% of the phase mean square.
+- **Where:** `cullFastTiePoints()` (`common/readTiePoints.c`) runs at the TOP of `computeBaseline`,
+  `computeRParams` and `computeAzParams`, i.e. after the phase/offsets have been sampled, so the slow
+  count uses the same `fabs(value) < 1e6` validity test as the fits (no-data and out-of-frame points
+  never count). It marks dropped points with the `-LARGEINT` sentinel (`phase` and `phaseSquint`)
+  instead of compacting the arrays. rparams/azparams re-sample before every fit (`-runFile` modes,
+  ION_AUTO's two attempts), so it runs per fit. The decision is logged to stderr (yellow).
+- **Measured** (track-47/5163_0000, `-slowTies 50 100`): tiepoints sigma 4.162 -> 3.225 rad (60 of
+  3149 dropped); rparams deltabp 0.1826 -> 0.1193 m and azparams 8.783 -> 2.257 m (108 dropped each).
+- Not yet wired into the Python callers (`tieScript`/`refreshties`) or any `project.yaml`.
+
 ## Other contents
 
 - **`Documents/`** — per-program design notes; check here before `Documents/` in the GIT64 root.

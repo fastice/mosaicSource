@@ -92,6 +92,8 @@ double computeRParams(tiePointsStructure *tiePoints, inputImageStructure inputIm
 	int32_t *origIndex = NULL;
 	double *residual = NULL;
 	void (*coeffsFn)(void *, int32_t, double *, int32_t) = NULL;
+	/* -slowTies: offsets are sampled by now, so only points with valid data are counted */
+	cullFastTiePoints(tiePoints, "rparams");
 	nParams = 4.;
 	/* Determine number of parameters in the fit */
 	if (tiePoints->bnbpdBpFlag == TRUE)

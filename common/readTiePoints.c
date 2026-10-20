@@ -3,6 +3,7 @@
 #include "mosaicSource/common/common.h"
 /*#include "tiePoints.h"*/
 #include <stdlib.h>
+#include <math.h>
 
 /*
   Read tiepoint file for tiepoints.
@@ -101,4 +102,57 @@ void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int noDEM)
 				error("readTiePoints -- MAXTIEPOINTS=%i exceeded", MAXTIEPOINTS);
 		} /* End else */
 	}	  /* End while */
+}
+
+/*
+  -slowTies (tiepoints, rparams, azparams): drop fast tie points when the frame has enough slow ones.
+  Must be called after the phase/offsets have been sampled at the tie points (i.e. at the top of the fit),
+  so that only points with valid data in this frame (fabs(phase) < 1e6, the test every fit uses) are counted.
+  If at least slowTieMinPoints valid points have a model speed hypot(vx, vy) below slowTieSpeed (m/yr), the
+  faster valid points are marked invalid (-LARGEINT, in phase and, when present, phaseSquint); otherwise all
+  points are kept. Typical case: a frame that clips a small ice shelf, whose fast points would otherwise
+  dominate the fit through velocity-model error, while all-shelf frames (e.g. Ross) keep their only points.
+  Off when slowTieSpeed <= 0. Returns the number of points dropped.
+*/
+int32_t cullFastTiePoints(tiePointsStructure *tiePoints, const char *caller)
+{
+	int32_t i, nValid = 0, nSlow = 0, nDropped = 0;
+	int32_t hasSq = (tiePoints->hasSquintSolution == TRUE && tiePoints->phaseSquint != NULL);
+
+	if (tiePoints->slowTieSpeed <= 0.0)
+	{
+		return 0;
+	}
+	for (i = 0; i < tiePoints->npts; i++)
+	{
+		if (fabs(tiePoints->phase[i]) < 1.0E6)
+		{
+			nValid++;
+			if (hypot(tiePoints->vx[i], tiePoints->vy[i]) < tiePoints->slowTieSpeed)
+			{
+				nSlow++;
+			}
+		}
+	}
+	if (nSlow < tiePoints->slowTieMinPoints)
+	{
+		fprintf(stderr, "\033[1;33m%s -slowTies: only %i of %i valid tie points slower than %.1f m/yr (< %i), keeping all\033[0m\n",
+				caller, nSlow, nValid, tiePoints->slowTieSpeed, tiePoints->slowTieMinPoints);
+		return 0;
+	}
+	for (i = 0; i < tiePoints->npts; i++)
+	{
+		if (fabs(tiePoints->phase[i]) < 1.0E6 && hypot(tiePoints->vx[i], tiePoints->vy[i]) >= tiePoints->slowTieSpeed)
+		{
+			tiePoints->phase[i] = (double)(-LARGEINT);
+			if (hasSq)
+			{
+				tiePoints->phaseSquint[i] = (double)(-LARGEINT);
+			}
+			nDropped++;
+		}
+	}
+	fprintf(stderr, "\033[1;33m%s -slowTies: dropped %i of %i valid tie points faster than %.1f m/yr (%i slow >= %i)\033[0m\n",
+			caller, nDropped, nValid, tiePoints->slowTieSpeed, nSlow, tiePoints->slowTieMinPoints);
+	return nDropped;
 }

@@ -13,7 +13,7 @@
 #include <gdal.h>
 #include <stddef.h> // For size_t
 
-#define MAXOFFBUF 1100000000
+#define MAXOFFBUF 1600000000 /* bytes per offsets band; long Antarctic merged frames reach ~3574 x 83700 floats (1.2e9) */
 #define MAXOFFLENGTH 100000
 
 #define MINELEVATION -1000
@@ -255,6 +255,10 @@ typedef struct tiePointsType
 	double cnstA; /* const dead reckoned az offset */
 	double cnstR; /* const dead reckoned rg offset */
 	int initWithSV;
+	/* -slowTies: drop tie points faster than slowTieSpeed (m/yr) when at least slowTieMinPoints
+	   slower ones have valid data; slowTieSpeed <= 0 = off (see cullFastTiePoints) */
+	double slowTieSpeed;
+	int32_t slowTieMinPoints;
 	/*
 	  Parameters below are used exclusively for azParams.
 	*/
@@ -448,6 +452,7 @@ void smlocateZD(double rxs, double rys, double rzs, double rvsx, double rvsy, do
 void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePoints,
 					  demStructure dem, int32_t noDEM, char *geodatFile, ShelfMask *shelfMask, int32_t supressOutput);
 void readTiePoints(FILE *fp, tiePointsStructure *tiePoints, int32_t noDEM);
+int32_t cullFastTiePoints(tiePointsStructure *tiePoints, const char *caller);
 double dot(double x1, double y1, double z1, double x2, double y2, double z2);
 void cross(double a1, double a2, double a3, double b1, double b2, double b3, double *c1, double *c2, double *c3);
 double norm(double x1, double y1, double z1);

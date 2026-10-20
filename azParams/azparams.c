@@ -460,6 +460,8 @@ static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointF
 		usage(); /* Check number of args */
 	n = argc - nPos - 1;
 	tiePoints->quiet = FALSE;
+	tiePoints->slowTieSpeed = 0.0;
+	tiePoints->slowTieMinPoints = 0;
 	*yamlOutput = FALSE;
 	*debugFlag = FALSE;
 	*outputFile = NULL;
@@ -528,6 +530,12 @@ static void readArgs(int argc, char *argv[], char **geodatFile, char **tiePointF
 			ompThreads = atoi(argv[i + 1]);
 			i++;
 		}
+		else if (strstr(argString, "slowTies") != NULL)
+		{
+			tiePoints->slowTieSpeed = atof(argv[i + 1]);
+			tiePoints->slowTieMinPoints = atoi(argv[i + 2]);
+			i += 2;
+		}
 		else if (i != n)
 			usage();
 	}
@@ -580,6 +588,8 @@ static void usage()
 		"  ionSigmaMargin = fractional sigma improvement the correction must give to be\n"
 		"                 accepted in the default (auto) mode (default 0.05)\n"
 		"  ompThreads   = OpenMP thread count for the tiepoint geolocation loop (default=1)\n"
+		"  slowTies s n = if at least n tie points with valid offsets move slower than s m/yr,\n"
+		"                 drop the faster ones from the fit; otherwise keep all (default off)\n"
 		"  debug        = write every tiepoint used in the fit, plus its residual, to a\n"
 		"                 GeoPackage (<outputFile>.residuals.gpkg, or azparams.<mode>.gpkg\n"
 		"                 if -outputFile not given)\n"

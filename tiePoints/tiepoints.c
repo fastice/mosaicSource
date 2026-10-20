@@ -41,6 +41,8 @@ int32_t BufferLines = 512;					/* # of lines of nonoverlap in buffer */
 char *shelfMaskFile;
 int32_t HemiSphere = NORTH;
 static int32_t ompThreads = 1; /* OpenMP threads for the computeTiePoints loop; default 1 (-ompThreads) */
+static double slowTieSpeed = 0.0;	  /* -slowTies maxSpeed minPoints; 0 = off (see cullFastTiePoints) */
+static int32_t slowTieMinPoints = 0;
 double Rotation = 45.;
 double SLat = -91.0;
 
@@ -95,6 +97,8 @@ int main(int argc, char *argv[])
 	tiePoints.bpdBpFlag = bpdBpFlag;
 	tiePoints.stdLat = stdLat;
 	tiePoints.vrFlag = vrFlag;
+	tiePoints.slowTieSpeed = slowTieSpeed;
+	tiePoints.slowTieMinPoints = slowTieMinPoints;
 
 	/*
 	  Input tiepoints
@@ -430,6 +434,12 @@ static void readArgs(int argc, char *argv[], int32_t *imageFlag, int32_t *passTy
 			ompThreads = atoi(argv[i + 1]);
 			i++;
 		}
+		else if (strstr(argString, "slowTies") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &slowTieSpeed);
+			slowTieMinPoints = atoi(argv[i + 2]);
+			i += 2;
+		}
 		else if (strstr(argString, "debug") != NULL)
 			*debugFlag = TRUE;
 		else if (i != n)
@@ -493,6 +503,9 @@ static void usage()
 		"  timeReverse  = flag to reverse time when order of orbits switched\n"
 		"  nDays        = temporals basline in days (default=3)\n"
 		"  ompThreads   = OpenMP thread count for the tiepoint geolocation loop (default=1)\n"
+		"  slowTies s n = if at least n tie points with valid phase move slower than s m/yr,\n"
+		"                 drop the faster ones from the fit (e.g. a frame clipping an ice shelf);\n"
+		"                 otherwise keep all. Default off\n"
 		"  quadB        = flag for quadratic fit\n"
 		"  dem          = (OMIT if dem not used) dem file for tiepoint elevations\n"
 		"  motion       = moving tiepoints, tiepoint file lat,lon,z,vx,vy,vz (m/yr)\n"

@@ -651,6 +651,8 @@ static void usage()
 		"  -yaml              Write baseline output in YAML format\n"
 		"  -noMask            Ignore any embedded VRT dataset mask band on offsetFile; default off (mask honored when present)\n"
 		"  -ompThreads <n>    OpenMP thread count for the tiepoint geolocation loop (default: 1)\n"
+		"  -slowTies <s> <n>  If at least n tie points with valid offsets move slower than s m/yr,\n"
+		"                     drop the faster ones from the fit; otherwise keep all (default off)\n"
 		"  -debug             Write every tiepoint used in the fit, plus its residual, to a\n"
 		"                     GeoPackage (<outputFile>.residuals.gpkg, or rparams.<mode>.gpkg\n"
 		"                     if -outputFile not given; in -runFile mode, always <outfile>.residuals.gpkg)\n"
@@ -687,6 +689,8 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 	*debugFlag = FALSE;
 	*outputFile = NULL;
 	tiePoints->quiet = FALSE;
+	tiePoints->slowTieSpeed = 0.0;
+	tiePoints->slowTieMinPoints = 0;
 
 	/* First pass: detect -runFile so we know how many positional args to expect */
 	for (i = 1; i < argc - 1; i++)
@@ -777,6 +781,15 @@ static void readArgs(int32_t argc, char *argv[], char **geodatFile, char **tiePo
 		{
 			if (++i >= argc - nPos) usage();
 			ompThreads = atoi(argv[i]);
+		}
+		else if (strcmp(argv[i], "-slowTies") == 0)
+		{
+			if (i + 2 >= argc - nPos)
+			{
+				usage();
+			}
+			tiePoints->slowTieSpeed = atof(argv[++i]);
+			tiePoints->slowTieMinPoints = atoi(argv[++i]);
 		}
 		else
 		{

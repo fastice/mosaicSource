@@ -146,8 +146,13 @@ static void initOffsetBuffers(Offsets *offsets, int32_t mode)
 	int32_t i, nr, na;
 	nr = offsets->nr;
 	na = offsets->na;
-	if (nr * na * 4 > MAXOFFBUF)
-		error("Offsets Buffer Size exceeds MAXOFFBUF of %i; nr %i na %i mode %i\n %s\n", MAXOFFBUF, nr, na, offsets->file);
+	/* int64: nr * na * 4 overflows int32 for long merged frames; the format previously had one argument
+	   too few (no mode), so this error() itself segfaulted in printf (track-10 rparams/azparams, 2026-10) */
+	if ((int64_t)nr * na * (int64_t)sizeof(float) > MAXOFFBUF)
+	{
+		error("Offsets Buffer Size exceeds MAXOFFBUF of %i; nr %i na %i mode %i\n %s\n", MAXOFFBUF, nr, na, mode,
+			  offsets->file);
+	}
 
 	switch(mode) {
 		// If RANGANDAZ Fall through to both
