@@ -267,6 +267,22 @@ grimpProj grimpProjFromSRS(const char *userInput)
         p.rot = (p.hemisphere == NORTH) ? -cm : cm;
         p.utmZone = 0;
     }
+    else if (method != NULL && strstr(method, "Wagner_VII") != NULL)
+    {
+        /* Equal-area and PROJ cannot invert it, so it gets its own kind rather than
+           GP_GENERIC, whose inverse goes through proj_trans and would fail at the first
+           output pixel.  The central meridian is the only parameter it takes. */
+        double fe = OSRGetProjParm(srs, SRS_PP_FALSE_EASTING, 0.0, NULL);
+        double fn = OSRGetProjParm(srs, SRS_PP_FALSE_NORTHING, 0.0, NULL);
+        if (fe != 0.0 || fn != 0.0)
+            error("grimpProjFromSRS: \"%s\" has a false easting/northing (%.1f, %.1f);\n"
+                  "  the Wagner VII routines here assume both are zero.", userInput, fe, fn);
+        p.kind = GP_WAGNER7;
+        p.rot = OSRGetProjParm(srs, SRS_PP_CENTRAL_MERIDIAN, 0.0, NULL);
+        p.stdLat = 0.0;
+        p.hemisphere = NORTH;
+        p.utmZone = 0;
+    }
     else
     {
         /* Any other projected CRS: positions work through PROJ, but the grid angle and
@@ -284,8 +300,12 @@ grimpProj grimpProjFromSRS(const char *userInput)
     }
 
     {
+        /* Only a code from the EPSG authority may be stored as one: Wagner VII is
+           ESRI:54076, and writing that out as "EPSG:54076" would name a different CRS
+           (or none).  Anything else keeps epsg 0 and is described by its SRS string. */
         const char *code = OSRGetAuthorityCode(srs, NULL);
-        p.epsg = (code != NULL) ? atoi(code) : 0;
+        const char *auth = OSRGetAuthorityName(srs, NULL);
+        p.epsg = (code != NULL && auth != NULL && strcmp(auth, "EPSG") == 0) ? atoi(code) : 0;
     }
     p.gridScale = MTOKM;   /* every projected kind: metres stored, km through the API */
     OSRDestroySpatialReference(srs);
@@ -425,6 +445,98 @@ const grimpProj *grimpDefaultProj(void)
 
 /* ----------------------------------------------------------------- conversions */
 
+/* ------------------------------------------------------------------- Wagner VII
+   Pseudoazimuthal, equal-area, the whole Earth in one lens-shaped map (ESRI:54076,
+   PROJ's +proj=wag7).  PROJ HAS NO INVERSE for it -- proj_trans(PJ_INV) fails -- so the
+   GP_GENERIC path cannot carry it and both directions are evaluated here.
+
+   Forward, exactly PROJ's wag7, so a grid GDAL wrote and this code reads agree:
+       sin(theta) = 0.90630778703664996 sin(lat)        [0.90631 = sin 65 degrees]
+       D          = sqrt(2 / (1 + cos(theta) cos(lam/3)))
+       x          = R 2.66723 D cos(theta) sin(lam/3)
+       y          = R 1.24104 D sin(theta)
+   lam is measured from the central meridian.  PROJ forces a sphere here and takes R as the
+   SEMI-MAJOR AXIS, not the authalic radius, using geodetic latitude as if it were spherical.
+   Matching that bit for bit is what keeps this code and the Python tiler (pyproj, same CRS)
+   placing a granule in the same pixel; it does mean the map is equal-area for the sphere
+   rather than for the WGS84 ellipsoid.
+
+   Inverse, closed form, no iteration: (x/2.66723R, y/1.24104R) are exactly the coordinates
+   of an EQUATORIAL Lambert azimuthal equal-area projection of (theta, lam/3) on the unit
+   sphere, which Snyder 24-16 inverts directly:
+       rho = hypot(u, v),   c = 2 asin(rho/2)
+       sin(theta) = v sin(c) / rho
+       lam/3      = atan2(u sin(c), rho cos(c))
+   Checked against GDAL's forward on a 5-degree global grid: forward agrees to 6e-9 m, and
+   the round trip returns every point to under 1e-7 degrees (grimpProjSelfTest case 7). */
+#define W7_SIN65 0.90630778703664996
+#define W7_KX 2.66723
+#define W7_KY 1.24104
+#define W7_R 6378137.0      /* PROJ uses the semi-major axis as the sphere radius */
+
+static void wagner7Forward(double lat, double lon, double lon0, double *x, double *y)
+{
+    double st = W7_SIN65 * sin(lat * DTOR);
+    double ct = sqrt(1. - st * st);
+    double dl = lon - lon0;
+    double l3, d;
+    /* xytoll1 hands longitudes back in 0..360, so bring the difference into -180..180
+       BEFORE the division by three -- 350 degrees and -10 are the same meridian but a
+       third of them is not. */
+    while (dl > 180.)
+        dl -= 360.;
+    while (dl < -180.)
+        dl += 360.;
+    l3 = dl * DTOR / 3.;
+    d = sqrt(2. / (1. + ct * cos(l3)));
+    *x = W7_R * W7_KX * d * ct * sin(l3);
+    *y = W7_R * W7_KY * d * st;
+}
+
+static void wagner7Inverse(double x, double y, double lon0, double *lat, double *lon)
+{
+    double u = x / (W7_R * W7_KX), v = y / (W7_R * W7_KY);
+    double rho = sqrt(u * u + v * v);
+    double c, st, l3, h;
+    if (rho < 1.e-12)
+    {
+        *lat = 0.;
+        *lon = lon0;
+        return;
+    }
+    if (rho > 2.)
+    {
+        /* Outside the lens. The bounding box of a Wagner VII map has empty corners, and
+           clamping them to the limb would make every corner pixel sample the +/-180 meridian
+           and smear real data into them. An impossible latitude instead leaves them no data. */
+        *lat = 91.;
+        *lon = 0.;
+        return;
+    }
+    c = 2. * asin(rho / 2.);
+    st = v * sin(c) / rho / W7_SIN65;
+    if (st > 1.)
+        st = 1.;
+    if (st < -1.)
+        st = -1.;
+    l3 = atan2(u * sin(c), rho * cos(c));
+    *lat = asin(st) * RTOD;
+    *lon = lon0 + 3. * l3 * RTOD;
+}
+
+int32_t grimpNeedsOwnInverse(const grimpProj *p)
+{
+    return (p != NULL && p->kind == GP_WAGNER7) ? TRUE : FALSE;
+}
+
+void grimpInverseLL(const grimpProj *p, double x, double y, double *lon, double *lat)
+{
+    if (p == NULL || p->kind != GP_WAGNER7)
+        error("grimpInverseLL: only for a CRS PROJ cannot invert; got %s",
+              grimpProjDescribe(p));
+    wagner7Inverse(x, y, p->rot, lat, lon);
+}
+
 void llToXYProj(double lat, double lon, double *x, double *y, const grimpProj *p)
 {
     if (p->kind == GP_LATLON)
@@ -439,6 +551,14 @@ void llToXYProj(double lat, double lon, double *x, double *y, const grimpProj *p
     {
         /* Untouched legacy path: identical instructions, identical arguments. */
         lltoxy1(lat, lon, x, y, p->rot, p->stdLat);
+        return;
+    }
+    if (p->kind == GP_WAGNER7)
+    {
+        double xm, ym;
+        wagner7Forward(lat, lon, p->rot, &xm, &ym);
+        *x = xm * MTOKM;
+        *y = ym * MTOKM;
         return;
     }
     {
@@ -466,6 +586,15 @@ void xyToLLProj(double x, double y, double *lat, double *lon, const grimpProj *p
         xytoll1(x, y, p->hemisphere, lat, lon, p->rot, p->stdLat);
         return;
     }
+    if (p->kind == GP_WAGNER7)
+    {
+        wagner7Inverse(x * KMTOM, y * KMTOM, p->rot, lat, lon);
+        while (*lon < 0.)
+            *lon += 360.;
+        while (*lon >= 360.)
+            *lon -= 360.;
+        return;
+    }
     {
         PJ_COORD c = proj_coord(x * KMTOM, y * KMTOM, 0., 0.);
         c = proj_trans(gpTrans(p), PJ_INV, c);
@@ -481,7 +610,7 @@ void xyToLLProj(double x, double y, double *lat, double *lon, const grimpProj *p
 
 double grimpXYAngle(double lat, double lon, double x, double y, const grimpProj *p)
 {
-    if (p->kind == GP_GENERIC || p->kind == GP_LATLON)
+    if (p->kind == GP_GENERIC || p->kind == GP_LATLON || p->kind == GP_WAGNER7)
         error("grimpXYAngle: the grid angle is only defined for a conformal projection.\n"
               "  %s cannot be used to decompose velocity into vx/vy.", grimpProjDescribe(p));
     if (p->kind == GP_PS || p->kind == GP_UNSET)
@@ -512,7 +641,7 @@ double grimpXYAngle(double lat, double lon, double x, double y, const grimpProj 
 
 double grimpXYScale(double lat, const grimpProj *p)
 {
-    if (p->kind == GP_GENERIC || p->kind == GP_LATLON)
+    if (p->kind == GP_GENERIC || p->kind == GP_LATLON || p->kind == GP_WAGNER7)
         error("grimpXYScale: an isotropic grid scale is only defined for a conformal\n"
               "  projection; %s stretches x and y differently.", grimpProjDescribe(p));
     if (p->kind == GP_PS || p->kind == GP_UNSET)
@@ -534,6 +663,10 @@ int32_t grimpProjSame(const grimpProj *a, const grimpProj *b)
         return TRUE;
     if (a->kind != b->kind)
         return FALSE;
+    if (a->kind == GP_GENERIC || a->kind == GP_WAGNER7)
+        /* No EPSG code to compare and rot/stdLat say nothing about these, so compare the
+           definition itself; gpRegister hands out one handle per distinct SRS string. */
+        return (a->handle >= 0 && a->handle == b->handle);
     if (a->kind == GP_UTM)
         return (a->utmZone == b->utmZone && a->hemisphere == b->hemisphere);
     /* Polar stereographic, possibly with no EPSG code: compare the parameters. */
@@ -630,7 +763,8 @@ const char *grimpSRSString(const grimpProj *p)
                  (int)p->utmZone, (p->hemisphere == SOUTH) ? " +south" : "");
         return b;
     }
-    if (p->kind == GP_GENERIC && p->handle >= 0 && p->handle < gpNRegistered)
+    if ((p->kind == GP_GENERIC || p->kind == GP_WAGNER7) && p->handle >= 0 &&
+        p->handle < gpNRegistered)
     {
         /* A generic projected CRS with no EPSG code -- e.g. Equal Earth, given to geomosaic
            with -wkt.  Return the definition it was built from; falling through to the polar
@@ -657,7 +791,7 @@ void grimpRequireConformal(const grimpProj *p, const char *what)
               "  output is supported for BACKSCATTER mosaics (geomosaic), which only resample\n"
               "  a scalar, never for velocity.",
               what);
-    if (p->kind == GP_GENERIC)
+    if (p->kind == GP_GENERIC || p->kind == GP_WAGNER7)
         error("%s must be a conformal projection (polar stereographic or UTM).\n"
               "  Got %s.\n"
               "  Velocity is decomposed into vx/vy with a single grid angle and one\n"
@@ -681,6 +815,9 @@ const char *grimpProjDescribe(const grimpProj *p)
                  (p->hemisphere == SOUTH) ? 'S' : 'N');
     else if (p->kind == GP_GENERIC)
         snprintf(b, 256, "EPSG:%d (projected, non-conformal or unclassified)", (int)p->epsg);
+    else if (p->kind == GP_WAGNER7)
+        snprintf(b, 256, "Wagner VII (equal-area, central meridian %g; inverted here, "
+                         "PROJ has none)", p->rot);
     else if (p->epsg != 0)
         snprintf(b, 256, "EPSG:%d (polar stereographic, rot %g, stdLat %g)",
                  (int)p->epsg, p->rot, p->stdLat);
@@ -844,7 +981,46 @@ void grimpProjSelfTest(void)
         if (maxRel > 1e-4) { fprintf(stderr, "  FAIL: scale approximation\n"); nBad++; }
     }
 
-    /* 7. Non-conformal and geographic systems must be refused, not silently accepted. */
+    /* 7. Wagner VII: our forward must equal PROJ's (PROJ can do that direction), and the
+          closed-form inverse must return every point it came from (PROJ cannot do that
+          direction at all, which is the whole reason the equations are in this file). */
+    {
+        grimpProj gp = grimpProjFromSRS("ESRI:54076");
+        PJ_CONTEXT *ctx = proj_context_create();
+        PJ *only = proj_create_crs_to_crs(ctx, "EPSG:4326", "ESRI:54076", NULL);
+        double maxFwd = 0., maxRound = 0.;
+        if (gp.kind != GP_WAGNER7)
+            error("grimpProjSelfTest: ESRI:54076 did not come back as Wagner VII");
+        grimpProjPrepareThreads();
+        for (lat = -85.; lat <= 85.; lat += 5.0)
+        {
+            for (lon = -175.; lon <= 175.; lon += 5.0)
+            {
+                double x, y, la, lo, dLon;
+                llToXYProj(lat, lon, &x, &y, &gp);
+                if (only != NULL)
+                {
+                    /* proj_create_crs_to_crs from EPSG:4326 takes lat,lon in that order. */
+                    PJ_COORD pc = proj_trans(only, PJ_FWD, proj_coord(lat, lon, 0., 0.));
+                    if (fabs(pc.xy.x - x * KMTOM) > maxFwd) maxFwd = fabs(pc.xy.x - x * KMTOM);
+                    if (fabs(pc.xy.y - y * KMTOM) > maxFwd) maxFwd = fabs(pc.xy.y - y * KMTOM);
+                }
+                xyToLLProj(x, y, &la, &lo, &gp);
+                dLon = fabs(remainder(lo - lon, 360.));
+                if (fabs(la - lat) > maxRound) maxRound = fabs(la - lat);
+                if (dLon > maxRound) maxRound = dLon;
+            }
+        }
+        if (only != NULL)
+            proj_destroy(only);
+        proj_context_destroy(ctx);
+        fprintf(stderr, "  Wagner VII: forward vs PROJ %.3g m, round trip %.3g deg\n",
+                maxFwd, maxRound);
+        if (maxFwd > 1e-3) { fprintf(stderr, "  FAIL: Wagner VII forward\n"); nBad++; }
+        if (maxRound > 1e-9) { fprintf(stderr, "  FAIL: Wagner VII round trip\n"); nBad++; }
+    }
+
+    /* 8. Non-conformal and geographic systems must be refused, not silently accepted. */
     fprintf(stderr, "  (EPSG:3338 / EPSG:4326 rejection is checked by inspection: "
                     "grimpProjFromSRS error()s, which would abort this test)\n");
 

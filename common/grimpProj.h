@@ -68,7 +68,8 @@ typedef enum
     GP_PS = 1,     /* polar stereographic, incl. custom (possibly no EPSG code) */
     GP_UTM = 2,    /* universal transverse Mercator, one zone */
     GP_GENERIC = 3, /* any other projected CRS: positions only, see below */
-    GP_LATLON = 4  /* geographic (EPSG:4326): the grid IS lat/lon, see the units note */
+    GP_LATLON = 4, /* geographic (EPSG:4326): the grid IS lat/lon, see the units note */
+    GP_WAGNER7 = 5 /* Wagner VII: equal-area, and PROJ has no inverse, so computed here */
 } grimpProjKind;
 
 typedef struct
@@ -112,6 +113,17 @@ typedef struct
    write its input file in 0..360 or settle this convention first. */
 
 /* ---- constructors (SERIAL only) ------------------------------------------------- */
+
+/* TRUE when PROJ cannot invert this CRS, so a caller that needs grid -> lon/lat must use
+   grimpInverseLL below instead of building an OGRCoordinateTransformation from it.  Only
+   Wagner VII is in this position today: PROJ has its forward and no inverse at all. */
+int32_t grimpNeedsOwnInverse(const grimpProj *p);
+
+/* Grid METRES (not km -- this is for callers working in GDAL's units) -> degrees.
+   Longitude comes back in -180..180.  A point outside the projection's lens, which the
+   corners of a Wagner VII bounding box are, returns latitude 91: an impossible value that
+   makes the downstream lookup miss rather than fabricating a position on the limb. */
+void grimpInverseLL(const grimpProj *p, double x, double y, double *lon, double *lat);
 
 /* From the legacy triple.  Always GP_PS, never needs PROJ.  A stdLat of -91 (the
    "unset" sentinel carried by the SLat global) is replaced by the historical

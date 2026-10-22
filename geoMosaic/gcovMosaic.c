@@ -71,7 +71,12 @@ static const char *epsgSRS(int32_t epsg);
 static int32_t outputEPSG();
 static const char *outputSRS();
 static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double xb, double ya, double yb,
-							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap);
+							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap,
+							int32_t fromOutput);
+static OGRCoordinateTransformationH makeOutTransform(int32_t epsg);
+static void gcovScaleSample(outputImageStructure *outputImage, int32_t jMin, int32_t jMax,
+							int32_t iMin, int32_t iMax, double *xc, double *yc);
+static void outToGranule(OGRCoordinateTransformationH ct, int32_t n, double *x, double *y, double *z);
 static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int32_t nbr, int32_t kx, int32_t ky,
 						  int32_t useMask, float ***sigma, int32_t maskOnly);
 static float **allocFloat2D(int32_t nr, int32_t nc);
@@ -842,7 +847,8 @@ void gcovBounds(gcovInputs *gcov, double *minX, double *maxX, double *minY, doub
 		ct = makeTransform(epsgSRS(g.epsg), outputSRS());
 		if (transformBox(ct, g.x0 - 0.5 * g.dx, g.x0 + (g.nx - 0.5) * g.dx,
 						 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2,
-						 (grimpDefaultProj() != NULL && grimpDefaultProj()->kind == GP_LATLON) ? TRUE : FALSE) == TRUE)
+						 (grimpDefaultProj() != NULL && grimpDefaultProj()->kind == GP_LATLON) ? TRUE : FALSE,
+						 FALSE) == TRUE)
 		{
 			*minX = min(*minX, x1 * MTOKM);
 			*maxX = max(*maxX, x2 * MTOKM);
@@ -990,7 +996,8 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	lonWrap = (outputImage->proj.kind == GP_LATLON) ? TRUE : FALSE;
 	ct = makeTransform(epsgSRS(g.epsg), outputSRS());
 	if (transformBox(ct, g.x0 - 0.5 * g.dx, g.x0 + (g.nx - 0.5) * g.dx,
-					 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2, lonWrap) == FALSE)
+					 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2, lonWrap,
+					 FALSE) == FALSE)
 	{
 		error("gcovToOutputGrid: could not transform bounds for %s", file);
 	}
@@ -1032,14 +1039,13 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	/*
 	  Source window and averaging factors
 	*/
-	ct = makeTransform(outputSRS(), epsgSRS(g.epsg));
+	ct = makeOutTransform(g.epsg);
 	transformBox(ct, outputImage->originX + *jMin * outputImage->deltaX, outputImage->originX + (*jMax - 1) * outputImage->deltaX,
 				 outputImage->originY + *iMin * outputImage->deltaY, outputImage->originY + (*iMax - 1) * outputImage->deltaY,
-				 &x1, &x2, &y1, &y2, FALSE); /* target is the granule CRS: projected */
-	/* GCOV pixels spanned by one output pixel, at the centre of the region */
-	/* an output pixel centre near the middle of the region (also the block-alignment anchor) */
-	xc = outputImage->originX + ((*jMin + *jMax) / 2) * outputImage->deltaX;
-	yc = outputImage->originY + ((*iMin + *iMax) / 2) * outputImage->deltaY;
+				 &x1, &x2, &y1, &y2, FALSE, TRUE); /* target is the granule CRS: projected */
+	/* GCOV pixels spanned by one output pixel, at a pixel inside the region that is really
+	   on the map (see scaleSample; for every CRS but Wagner VII that is its centre) */
+	gcovScaleSample(outputImage, *jMin, *jMax, *iMin, *iMax, &xc, &yc);
 	X[0] = xc;
 	Y[0] = yc;
 	X[1] = xc + outputImage->deltaX;
@@ -1047,7 +1053,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	X[2] = xc;
 	Y[2] = yc + outputImage->deltaY;
 	Z[0] = Z[1] = Z[2] = 0.0;
-	OCTTransform(ct, 3, X, Y, Z);
+	outToGranule(ct, 3, X, Y, Z);
 	OCTDestroyCoordinateTransformation(ct);
 	spanC = sqrt(pow((X[1] - X[0]) / g.dx, 2) + pow((X[2] - X[0]) / g.dx, 2));
 	spanR = sqrt(pow((Y[1] - Y[0]) / g.dy, 2) + pow((Y[2] - Y[0]) / g.dy, 2));
@@ -1119,7 +1125,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	ctThread = (OGRCoordinateTransformationH *)malloc(sizeof(OGRCoordinateTransformationH) * nThreads);
 	for (t = 0; t < nThreads; t++)
 	{
-		ctThread[t] = makeTransform(outputSRS(), epsgSRS(g.epsg));
+		ctThread[t] = makeOutTransform(g.epsg);
 	}
 	if (pass == 1)
 	{
@@ -1130,7 +1136,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 		ctThread = (OGRCoordinateTransformationH *)malloc(sizeof(OGRCoordinateTransformationH) * nThreads);
 		for (t = 0; t < nThreads; t++)
 		{
-			ctThread[t] = makeTransform(outputSRS(), epsgSRS(g.epsg));
+			ctThread[t] = makeOutTransform(g.epsg);
 		}
 #pragma omp parallel
 		{
@@ -1148,7 +1154,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 					xw = outputImage->originX + j1 * outputImage->deltaX;
 					yw = outputImage->originY + i1 * outputImage->deltaY;
 					zw = 0.0;
-					OCTTransform(myCt, 1, &xw, &yw, &zw);
+					outToGranule(myCt, 1, &xw, &yw, &zw);
 					col = ((xw - g.x0) / g.dx - c0 - 0.5 * (kx - 1)) / kx;
 					row = ((yw - g.y0) / g.dy - r0 - 0.5 * (ky - 1)) / ky;
 					if (gcov->isGeo
@@ -1217,7 +1223,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 				yr[j1 - *jMin] = outputImage->originY + i1 * outputImage->deltaY;
 				zr[j1 - *jMin] = 0.0;
 			}
-			OCTTransform(myCt, n, xr, yr, zr);
+			outToGranule(myCt, n, xr, yr, zr);
 			for (j1 = *jMin; j1 < *jMax; j1++)
 			{
 				/* fractional index in reduced buffer: block b is centred on source pixel c0 + b*kx + (kx-1)/2 */
@@ -1801,7 +1807,8 @@ static const char *outputSRS()
 	extern int32_t HemiSphere;
 	static char buf[32];
 	const grimpProj *p = grimpDefaultProj();
-	if (p != NULL && (p->epsg != 0 || p->kind == GP_GENERIC || p->kind == GP_LATLON))
+	if (p != NULL && (p->epsg != 0 || p->kind == GP_GENERIC || p->kind == GP_LATLON ||
+					  p->kind == GP_WAGNER7))
 	{
 		return grimpSRSString(p);
 	}
@@ -1838,6 +1845,75 @@ static const char *epsgSRS(int32_t epsg)
 	return b;
 }
 
+/* OUTPUT GRID -> granule.  Its own function because one output CRS cannot be inverted by
+   PROJ: Wagner VII has a forward in PROJ and no inverse, so OCTNewCoordinateTransformation
+   from it builds an object that fails at the first point (GDAL error 4098).  For such a CRS
+   the grid is taken to lon/lat here, by grimpProj's closed-form inverse, and PROJ is handed
+   a geographic source, which it can always carry on to the granule.  Every other output CRS
+   is unaffected and takes the direct transform exactly as before.  The granule -> output
+   direction never needs this: that is the forward, which PROJ does have. */
+static OGRCoordinateTransformationH makeOutTransform(int32_t epsg)
+{
+	const grimpProj *p = grimpDefaultProj();
+	if (grimpNeedsOwnInverse(p))
+	{
+		return makeTransform("EPSG:4326", epsgSRS(epsg));
+	}
+	return makeTransform(outputSRS(), epsgSRS(epsg));
+}
+
+/* An output pixel to measure the local scale at.  The centre of the region is the natural
+   choice and is what every ordinary CRS uses.  A Wagner VII grid is the exception: the map
+   is a lens inside a rectangular grid, so a tile can have its CENTRE in an empty corner
+   where there is no latitude or longitude at all.  The scale measured there is meaningless,
+   kx/ky collapse to 1, and the granule is then read at full resolution -- 25465 x 34488
+   pixels in the case that found this.  Walk a lattice over the region and take the first
+   pixel that is really on the map. */
+static void gcovScaleSample(outputImageStructure *outputImage, int32_t jMin, int32_t jMax,
+						int32_t iMin, int32_t iMax, double *xc, double *yc)
+{
+	const grimpProj *p = grimpDefaultProj();
+	int32_t a, b;
+	*xc = outputImage->originX + ((jMin + jMax) / 2) * outputImage->deltaX;
+	*yc = outputImage->originY + ((iMin + iMax) / 2) * outputImage->deltaY;
+	if (!grimpNeedsOwnInverse(p))
+	{
+		return;
+	}
+	for (a = 1; a <= 7; a++)
+	{
+		for (b = 1; b <= 7; b++)
+		{
+			double x = outputImage->originX + (jMin + (jMax - jMin) * a / 8) * outputImage->deltaX;
+			double y = outputImage->originY + (iMin + (iMax - iMin) * b / 8) * outputImage->deltaY;
+			double lon, lat;
+			grimpInverseLL(p, x, y, &lon, &lat);
+			if (fabs(lat) <= 90.)
+			{
+				*xc = x;
+				*yc = y;
+				return;
+			}
+		}
+	}
+}
+
+/* Apply a transform built by makeOutTransform, inverting the output CRS first when PROJ
+   cannot.  In place, in metres, as GDAL wants them. */
+static void outToGranule(OGRCoordinateTransformationH ct, int32_t n, double *x, double *y, double *z)
+{
+	const grimpProj *p = grimpDefaultProj();
+	if (grimpNeedsOwnInverse(p))
+	{
+		int32_t k;
+		for (k = 0; k < n; k++)
+		{
+			grimpInverseLL(p, x[k], y[k], &x[k], &y[k]); /* -> lon, lat in degrees */
+		}
+	}
+	OCTTransform(ct, n, x, y, z);
+}
+
 static OGRCoordinateTransformationH makeTransform(const char *fromSRS, const char *toSRS)
 {
 	OGRSpatialReferenceH from, to;
@@ -1868,7 +1944,8 @@ static OGRCoordinateTransformationH makeTransform(const char *fromSRS, const cha
   Transform the edges of the box [xa,xb] x [ya,yb] and return the bounding box of the result.
 */
 static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double xb, double ya, double yb,
-							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap)
+							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap,
+							int32_t fromOutput)
 {
 	double lo, hi, w;
 	int32_t k;
@@ -1890,6 +1967,15 @@ static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double x
 	for (i = 0; i < n; i++)
 	{
 		z[i] = 0.0;
+	}
+	if (fromOutput == TRUE && grimpNeedsOwnInverse(grimpDefaultProj()))
+	{
+		/* as outToGranule, but this routine needs OCTTransformEx's per-point ok flags */
+		const grimpProj *op = grimpDefaultProj();
+		for (i = 0; i < n; i++)
+		{
+			grimpInverseLL(op, x[i], y[i], &x[i], &y[i]);
+		}
 	}
 	OCTTransformEx(ct, n, x, y, z, ok);
 	*minX = *minY = 1.e30;
@@ -1959,9 +2045,9 @@ static void gcovAnchor(gcovFile *g, outputImageStructure *outputImage, double *a
 	OCTDestroyCoordinateTransformation(ct);
 	x = outputImage->originX + round((x - outputImage->originX) / outputImage->deltaX) * outputImage->deltaX;
 	y = outputImage->originY + round((y - outputImage->originY) / outputImage->deltaY) * outputImage->deltaY;
-	ct = makeTransform(outputSRS(), epsgSRS(g->epsg));
+	ct = makeOutTransform(g->epsg);
 	z = 0.0;
-	OCTTransform(ct, 1, &x, &y, &z);
+	outToGranule(ct, 1, &x, &y, &z);
 	OCTDestroyCoordinateTransformation(ct);
 	*ax = x;
 	*ay = y;
