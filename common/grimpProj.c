@@ -630,6 +630,13 @@ const char *grimpSRSString(const grimpProj *p)
                  (int)p->utmZone, (p->hemisphere == SOUTH) ? " +south" : "");
         return b;
     }
+    if (p->kind == GP_GENERIC && p->handle >= 0 && p->handle < gpNRegistered)
+    {
+        /* A generic projected CRS with no EPSG code -- e.g. Equal Earth, given to geomosaic
+           with -wkt.  Return the definition it was built from; falling through to the polar
+           stereographic branch below would silently describe it as a stereographic. */
+        return gpRegistry[p->handle].srs;
+    }
     /* Custom polar stereographic with no EPSG code, e.g. the Taku lat_ts=58 grid.
        Writing this as a proj string is what lets those products carry a real CRS. */
     {

@@ -66,8 +66,10 @@ static int32_t parseGCOVName(char *file, int32_t *year, int32_t *month, int32_t 
 static int32_t canonicalBandwidth(int32_t mhz);
 static int32_t gcovNameBandwidth(char *file, char freq);
 static void dropGCOVByBandwidth(gcovInputs *gcov);
-static OGRCoordinateTransformationH makeTransform(int32_t fromEPSG, int32_t toEPSG);
+static OGRCoordinateTransformationH makeTransform(const char *fromSRS, const char *toSRS);
+static const char *epsgSRS(int32_t epsg);
 static int32_t outputEPSG();
+static const char *outputSRS();
 static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double xb, double ya, double yb,
 							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap);
 static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int32_t nbr, int32_t kx, int32_t ky,
@@ -837,7 +839,7 @@ void gcovBounds(gcovInputs *gcov, double *minX, double *maxX, double *minY, doub
 		{
 			continue;
 		}
-		ct = makeTransform(g.epsg, outputEPSG());
+		ct = makeTransform(epsgSRS(g.epsg), outputSRS());
 		if (transformBox(ct, g.x0 - 0.5 * g.dx, g.x0 + (g.nx - 0.5) * g.dx,
 						 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2,
 						 (grimpDefaultProj() != NULL && grimpDefaultProj()->kind == GP_LATLON) ? TRUE : FALSE) == TRUE)
@@ -986,7 +988,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	  Output region covered by the GCOV raster
 	*/
 	lonWrap = (outputImage->proj.kind == GP_LATLON) ? TRUE : FALSE;
-	ct = makeTransform(g.epsg, outputEPSG());
+	ct = makeTransform(epsgSRS(g.epsg), outputSRS());
 	if (transformBox(ct, g.x0 - 0.5 * g.dx, g.x0 + (g.nx - 0.5) * g.dx,
 					 g.y0 - 0.5 * g.dy, g.y0 + (g.ny - 0.5) * g.dy, &x1, &x2, &y1, &y2, lonWrap) == FALSE)
 	{
@@ -1030,7 +1032,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	/*
 	  Source window and averaging factors
 	*/
-	ct = makeTransform(outputEPSG(), g.epsg);
+	ct = makeTransform(outputSRS(), epsgSRS(g.epsg));
 	transformBox(ct, outputImage->originX + *jMin * outputImage->deltaX, outputImage->originX + (*jMax - 1) * outputImage->deltaX,
 				 outputImage->originY + *iMin * outputImage->deltaY, outputImage->originY + (*iMax - 1) * outputImage->deltaY,
 				 &x1, &x2, &y1, &y2, FALSE); /* target is the granule CRS: projected */
@@ -1117,7 +1119,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 	ctThread = (OGRCoordinateTransformationH *)malloc(sizeof(OGRCoordinateTransformationH) * nThreads);
 	for (t = 0; t < nThreads; t++)
 	{
-		ctThread[t] = makeTransform(outputEPSG(), g.epsg);
+		ctThread[t] = makeTransform(outputSRS(), epsgSRS(g.epsg));
 	}
 	if (pass == 1)
 	{
@@ -1128,7 +1130,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
 		ctThread = (OGRCoordinateTransformationH *)malloc(sizeof(OGRCoordinateTransformationH) * nThreads);
 		for (t = 0; t < nThreads; t++)
 		{
-			ctThread[t] = makeTransform(outputEPSG(), g.epsg);
+			ctThread[t] = makeTransform(outputSRS(), epsgSRS(g.epsg));
 		}
 #pragma omp parallel
 		{
@@ -1788,6 +1790,25 @@ static int32_t parseGCOVName(char *file, int32_t *year, int32_t *month, int32_t 
 	return TRUE;
 }
 
+/* The output grid's CRS as a string. Prefer the resolved projection's own definition --
+   grimpSRSString gives "EPSG:n" when it has a code and the full definition when it does not,
+   so a CRS with no EPSG code (Equal Earth) works. Only fall back to deriving a polar
+   stereographic code from Rotation/SLat when there is no resolved projection at all. */
+static const char *outputSRS()
+{
+	extern double Rotation;
+	extern double SLat;
+	extern int32_t HemiSphere;
+	static char buf[32];
+	const grimpProj *p = grimpDefaultProj();
+	if (p != NULL && (p->epsg != 0 || p->kind == GP_GENERIC || p->kind == GP_LATLON))
+	{
+		return grimpSRSString(p);
+	}
+	snprintf(buf, sizeof(buf), "EPSG:%s", getEPSGFromProjectionParams(Rotation, SLat, HemiSphere));
+	return buf;
+}
+
 static int32_t outputEPSG()
 {
 	extern double Rotation;
@@ -1805,15 +1826,30 @@ static int32_t outputEPSG()
 	return atoi(getEPSGFromProjectionParams(Rotation, SLat, HemiSphere));
 }
 
-static OGRCoordinateTransformationH makeTransform(int32_t fromEPSG, int32_t toEPSG)
+/* "EPSG:n" for a granule's code. Two rotating buffers so both arguments of one
+   makeTransform call can come from here. */
+static const char *epsgSRS(int32_t epsg)
+{
+	static char buf[2][24];
+	static int next = 0;
+	char *b = buf[next];
+	next = (next + 1) % 2;
+	snprintf(b, sizeof(buf[0]), "EPSG:%i", (int)epsg);
+	return b;
+}
+
+static OGRCoordinateTransformationH makeTransform(const char *fromSRS, const char *toSRS)
 {
 	OGRSpatialReferenceH from, to;
 	OGRCoordinateTransformationH ct;
 	from = OSRNewSpatialReference(NULL);
 	to = OSRNewSpatialReference(NULL);
-	if (OSRImportFromEPSG(from, fromEPSG) != OGRERR_NONE || OSRImportFromEPSG(to, toEPSG) != OGRERR_NONE)
+	/* Strings, not EPSG codes: the output grid may be a CRS with no code at all (Equal Earth
+	   via -wkt), in which case grimpSRSString hands back its full definition. */
+	if (OSRSetFromUserInput(from, fromSRS) != OGRERR_NONE ||
+		OSRSetFromUserInput(to, toSRS) != OGRERR_NONE)
 	{
-		error("makeTransform: invalid EPSG %i or %i", fromEPSG, toEPSG);
+		error("makeTransform: cannot interpret \"%s\" or \"%s\"", fromSRS, toSRS);
 	}
 	/* x=lon, y=lat for geographic CRSs */
 	OSRSetAxisMappingStrategy(from, OAMS_TRADITIONAL_GIS_ORDER);
@@ -1821,7 +1857,7 @@ static OGRCoordinateTransformationH makeTransform(int32_t fromEPSG, int32_t toEP
 	ct = OCTNewCoordinateTransformation(from, to);
 	if (ct == NULL)
 	{
-		error("makeTransform: could not create transform %i -> %i", fromEPSG, toEPSG);
+		error("makeTransform: could not create transform %s -> %s", fromSRS, toSRS);
 	}
 	OSRDestroySpatialReference(from);
 	OSRDestroySpatialReference(to);
@@ -1918,12 +1954,12 @@ static void gcovAnchor(gcovFile *g, outputImageStructure *outputImage, double *a
 	double x, y, z = 0.0;
 	x = g->x0;
 	y = g->y0;
-	ct = makeTransform(g->epsg, outputEPSG());
+	ct = makeTransform(epsgSRS(g->epsg), outputSRS());
 	OCTTransform(ct, 1, &x, &y, &z);
 	OCTDestroyCoordinateTransformation(ct);
 	x = outputImage->originX + round((x - outputImage->originX) / outputImage->deltaX) * outputImage->deltaX;
 	y = outputImage->originY + round((y - outputImage->originY) / outputImage->deltaY) * outputImage->deltaY;
-	ct = makeTransform(outputEPSG(), g->epsg);
+	ct = makeTransform(outputSRS(), epsgSRS(g->epsg));
 	z = 0.0;
 	OCTTransform(ct, 1, &x, &y, &z);
 	OCTDestroyCoordinateTransformation(ct);
