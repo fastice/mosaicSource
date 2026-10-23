@@ -520,6 +520,16 @@ static void wagner7Inverse(double x, double y, double lon0, double *lat, double 
     if (st < -1.)
         st = -1.;
     l3 = atan2(u * sin(c), rho * cos(c));
+    if (fabs(3. * l3) > PI + 1.e-9)
+    {
+        /* Inside the Lambert azimuthal disc but OUTSIDE the map: the lens is the image of
+           lon = +/-180, and a bounding-box pixel beyond it inverts to |lon| > 180, which
+           wraps onto the opposite side of the world. Left unchecked, the corners of the grid
+           sample real granules and paint a mirrored sliver past the edge of the map. */
+        *lat = 91.;
+        *lon = 0.;
+        return;
+    }
     *lat = asin(st) * RTOD;
     *lon = lon0 + 3. * l3 * RTOD;
 }
