@@ -189,6 +189,13 @@ double chi2SpeedFrac = 0.0;
     were worse than none.  The slope keeps its direction, only its magnitude is capped; the reported
     vz still uses the uncapped slope.  DEFAULT -1 = off. */
 double maxSurfaceSlope = -1.0;
+/*  -zeroRock : set the output velocity to zero on rock outcrop -- shelf-mask pixels carrying
+    ROCKBIT (makeIceMask.py --rock, ADD rock outcrop).  vx = vy = 0, vz = 0 (or dT = 0 where it had
+    no data), ex = ey = ZEROROCKSIGMA so the pixel reads as measured, not gap-filled.  Applied
+    after the dT filter, at write time, so it overrides whatever the solvers produced.  Needs a
+    -shelfMask built with --rock.  DEFAULT off. */
+int32_t zeroRock = FALSE;
+#define ZEROROCKSIGMA 1.0
 /* -obsDump <pointsFile>: per-observation dump at a short list of lat/lon points, for the
    GPS forward model (Documents/gpsForwardModelPlan.md).  NULL = inert. */
 char *obsDumpFile = NULL;
@@ -1258,6 +1265,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 			fprintf(outputImage->fpLog, "; maxChi2          : %f\n", maxChi2);
 			fprintf(outputImage->fpLog, "; chi2SpeedFrac    : %f\n", chi2SpeedFrac);
 			fprintf(outputImage->fpLog, "; maxSurfaceSlope  : %f\n", maxSurfaceSlope);
+			fprintf(outputImage->fpLog, "; zeroRock         : %i\n", zeroRock);
 			fprintf(outputImage->fpLog, "; gateSpeedFrac    : %f\n", gateSpeedFrac);
 		}
 		{
@@ -1341,6 +1349,48 @@ static void toSigma(outputImageStructure outputImage)
 				outputImage.errorZ[i][j] = (float)sqrt((double)outputImage.errorZ[i][j]);
 			}
 		}
+	}
+}
+
+/*
+  -zeroRock: zero velocity on rock-outcrop pixels (shelf mask ROCKBIT).  See the global's comment.
+*/
+static void zeroRockPixels(outputImageStructure outputImage)
+{
+	float **vx = (float **)outputImage.image;
+	float **vy = (float **)outputImage.image2;
+	float **vz = (float **)outputImage.image3;
+	long nRock = 0;
+	if (outputImage.shelfMask == NULL)
+	{
+		fprintf(stderr, "zeroRock: no -shelfMask, nothing zeroed\n");
+		return;
+	}
+	for (int i = 0; i < outputImage.ySize; i++)
+	{
+		double y = (outputImage.originY + i * outputImage.deltaY) * MTOKM;
+		for (int j = 0; j < outputImage.xSize; j++)
+		{
+			double x = (outputImage.originX + j * outputImage.deltaX) * MTOKM;
+			if (getRockMask(outputImage.shelfMask, x, y) == FALSE)
+			{
+				continue;
+			}
+			vx[i][j] = 0.0f;
+			vy[i][j] = 0.0f;
+			if (outputImage.timeOverlapFlag == FALSE || vz[i][j] < -1.0e9)
+			{
+				vz[i][j] = 0.0f;
+			}
+			outputImage.errorX[i][j] = (float)ZEROROCKSIGMA;
+			outputImage.errorY[i][j] = (float)ZEROROCKSIGMA;
+			nRock++;
+		}
+	}
+	fprintf(stderr, "zeroRock: %ld rock pixels set to zero velocity\n", nRock);
+	if (outputImage.fpLog != NULL)
+	{
+		fprintf(outputImage.fpLog, "; zeroRock pixels : %ld\n", nRock);
 	}
 }
 
@@ -1578,6 +1628,10 @@ static void write3Doutput(outputImageStructure outputImage, char *outFileBase)
 	{
 		filterDT(outputImage);
 	}
+	if (zeroRock == TRUE)
+	{
+		zeroRockPixels(outputImage);
+	}
 	outputGeocodedImage(outputImage, outFileVx);
 	free(outputImage.image[0]);
 	free(outputImage.image);
@@ -1749,6 +1803,10 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 	if (outputImage.timeOverlapFlag == TRUE)
 	{
 		filterDT(outputImage);
+	}
+	if (zeroRock == TRUE)
+	{
+		zeroRockPixels(outputImage);
 	}
     // Compute Geotransform
 	computeGeoTransform(geoTransform, outputImage.originX, outputImage.originY, outputImage.xSize,
@@ -1999,7 +2057,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
 	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom.  Raised 86 -> 92 for
 	   -epsg and -wkt (two argv slots each), plus headroom. */
-	if (argc < 4 || argc > 96)
+	if (argc < 4 || argc > 97)
 	{
 		fprintf(stderr, "Arg count out of range (max 92): %i\n", argc);
 		usage(); /* Check number of args */
@@ -2171,6 +2229,10 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		{
 			sscanf(argv[i + 1], "%lf", &maxChi2);
 			i++;
+		}
+		else if (strstr(argString, "zeroRock") != NULL)
+		{
+			zeroRock = TRUE;
 		}
 		else if (strstr(argString, "maxSurfaceSlope") != NULL)
 		{
@@ -2717,6 +2779,7 @@ static void usage()
 		  "\ttrue3DProject =\t\t Reduction test for -true3D: force the surface-parallel projection of the same 3x3 accumulator; not a production path",
 		  "\tgateSpeedFrac =\t\t Make the -jointMaxSigma cap speed-aware: effective cap = max(X, F*|v|), so fast ice is not rejected for having proportionally small error.  DEFAULT 0.03; 0 = off",
 		  "\tmaxChi2 =\t\t Reject solved pixels whose reduced chi-square exceeds X -- a blunder screen; keep it loose (100-1000).  Default -1 = off",
+		  "\tzeroRock =\t\t Set velocity to zero on rock outcrop (shelf-mask pixels with the rock bit; makeIceMask.py --rock).  Default off",
 		  "\tmaxSurfaceSlope =\t\t Cap |grad z| used by the hopper3D surface-parallel coupling (steep terrain); 0.05 tested for Antarctica.  Default -1 = off",
 		  "\tchi2SpeedFrac =\t\t Speed-dependent -maxChi2: tolerate a model error F*|v| (real change within the window) before applying the chi2 cap.  Needs -maxChi2.  Default 0 = off",
 		  "\tgateAbsolute =\t\t Gate on the formal sigma alone (no sqrt(n) factor), i.e. reject only pixels whose 1-sigma exceeds -jointMaxSigma; default off",

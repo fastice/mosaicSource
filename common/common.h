@@ -29,6 +29,10 @@
 #define IRM_OUTSIDE 255
 #define GROUNDINGZONE 2
 #define NOSOLUTION 5
+/*  Rock bit OR'ed onto the shelf-mask value (makeIceMask.py --rock, from the ADD rock outcrop).
+    getShelfMask() strips it, so every GROUNDED/SHELF/NOSOLUTION comparison is unchanged;
+    getRockMask() reads it (mosaic3d -zeroRock). */
+#define ROCKBIT 0x10
 /* elipsoid */
 #define F (double)1.0 / 298.257222563
 #define EMINOR 6356.7523142
@@ -327,6 +331,7 @@ void getRowBounds(inputImageStructure *image, outputImageStructure *outputImage,
                    int32_t *jRowMin, int32_t *jRowMax);
 int clipByHalfPlane(double *xIn, double *yIn, int nIn, double *xOut, double *yOut, double nx, double ny, double d);
 unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y);
+int32_t getRockMask(ShelfMask *shelfMask, double x, double y);
 extern int32_t flipSquintSign; /* -flipSquint: negate evaluateSquint() (common/initRoutines.c) */
 unsigned char *sampleIceRockMask(char *maskFile, double *lat, double *lon, int32_t n);
 int32_t keepIceTiePoints(tiePointsStructure *tiePoints, char *maskFile);

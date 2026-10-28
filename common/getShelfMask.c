@@ -20,7 +20,27 @@ unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y)
     if (xi < 0 || yi < 0 || xi >= shelfMask->xSize || yi >= shelfMask->ySize)
         return (GROUNDED);
     else
-        return (shelfMask->mask[yi][xi]);
+        return (shelfMask->mask[yi][xi] & (unsigned char)~ROCKBIT);
+}
+
+/*
+   TRUE where the mask carries the ROCKBIT (rock outcrop), whatever its other value.
+*/
+int32_t getRockMask(ShelfMask *shelfMask, double x, double y)
+{
+    int32_t xi, yi;
+
+    if (shelfMask == NULL)
+    {
+        return (FALSE);
+    }
+    xi = (x - shelfMask->x0) / shelfMask->deltaX + 0.5;
+    yi = (y - shelfMask->y0) / shelfMask->deltaY + 0.5;
+    if (xi < 0 || yi < 0 || xi >= shelfMask->xSize || yi >= shelfMask->ySize)
+    {
+        return (FALSE);
+    }
+    return ((shelfMask->mask[yi][xi] & ROCKBIT) != 0);
 }
 
 /*
