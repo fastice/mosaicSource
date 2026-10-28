@@ -181,6 +181,14 @@ double maxChi2 = -1.0;
     ~17 % (quarterly), ~20 % (annual) in Greenland.  Gate only -- the solve and .chi2 band are
     unchanged.  DEFAULT 0 = off (the plain -maxChi2 cap). */
 double chi2SpeedFrac = 0.0;
+/*  -maxSurfaceSlope S : cap |grad z| used by the hopper3D surface-parallel coupling vz = s.vh.  On
+    steep terrain (volcanoes, Peninsula mountains) the DEM slope ties any LOS residual common to all
+    tracks to a large horizontal speed along the slope: Mount Takahe flank (slope 0.17-0.27) 71 m/yr
+    without the coupling vs 1229 with.  Tested 2026-10-28 on two 100 km Peninsula boxes against
+    MEaSUREs: S = 0.05 cut the >1000 m/yr area 56 % / 96 % with coverage unchanged; loose caps (0.2)
+    were worse than none.  The slope keeps its direction, only its magnitude is capped; the reported
+    vz still uses the uncapped slope.  DEFAULT -1 = off. */
+double maxSurfaceSlope = -1.0;
 /* -obsDump <pointsFile>: per-observation dump at a short list of lat/lon points, for the
    GPS forward model (Documents/gpsForwardModelPlan.md).  NULL = inert. */
 char *obsDumpFile = NULL;
@@ -1249,6 +1257,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 			fprintf(outputImage->fpLog, "; gateAbsolute     : %i\n", gateAbsolute);
 			fprintf(outputImage->fpLog, "; maxChi2          : %f\n", maxChi2);
 			fprintf(outputImage->fpLog, "; chi2SpeedFrac    : %f\n", chi2SpeedFrac);
+			fprintf(outputImage->fpLog, "; maxSurfaceSlope  : %f\n", maxSurfaceSlope);
 			fprintf(outputImage->fpLog, "; gateSpeedFrac    : %f\n", gateSpeedFrac);
 		}
 		{
@@ -1990,7 +1999,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
 	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom.  Raised 86 -> 92 for
 	   -epsg and -wkt (two argv slots each), plus headroom. */
-	if (argc < 4 || argc > 94)
+	if (argc < 4 || argc > 96)
 	{
 		fprintf(stderr, "Arg count out of range (max 92): %i\n", argc);
 		usage(); /* Check number of args */
@@ -2161,6 +2170,11 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		else if (strstr(argString, "maxChi2") != NULL)
 		{
 			sscanf(argv[i + 1], "%lf", &maxChi2);
+			i++;
+		}
+		else if (strstr(argString, "maxSurfaceSlope") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &maxSurfaceSlope);
 			i++;
 		}
 		else if (strstr(argString, "chi2SpeedFrac") != NULL)
@@ -2703,6 +2717,7 @@ static void usage()
 		  "\ttrue3DProject =\t\t Reduction test for -true3D: force the surface-parallel projection of the same 3x3 accumulator; not a production path",
 		  "\tgateSpeedFrac =\t\t Make the -jointMaxSigma cap speed-aware: effective cap = max(X, F*|v|), so fast ice is not rejected for having proportionally small error.  DEFAULT 0.03; 0 = off",
 		  "\tmaxChi2 =\t\t Reject solved pixels whose reduced chi-square exceeds X -- a blunder screen; keep it loose (100-1000).  Default -1 = off",
+		  "\tmaxSurfaceSlope =\t\t Cap |grad z| used by the hopper3D surface-parallel coupling (steep terrain); 0.05 tested for Antarctica.  Default -1 = off",
 		  "\tchi2SpeedFrac =\t\t Speed-dependent -maxChi2: tolerate a model error F*|v| (real change within the window) before applying the chi2 cap.  Needs -maxChi2.  Default 0 = off",
 		  "\tgateAbsolute =\t\t Gate on the formal sigma alone (no sqrt(n) factor), i.e. reject only pixels whose 1-sigma exceeds -jointMaxSigma; default off",
 		  "\tnoErrorGate =\t\t Keep pixels with a valid velocity but an invalid formal error; default is to remove them",

@@ -870,6 +870,16 @@ da = azOffsetToFlightDirection(da, myImg);
 				sx = dzdx;
 				sy = dzdy;
 				if (sMask2 == SHELF) { sx = 0.0; sy = 0.0; }
+				/*  -maxSurfaceSlope: cap the slope magnitude, keeping its direction (see mosaic3d.c). */
+				if (maxSurfaceSlope >= 0.0)
+				{
+					double sMag = sqrt(sx * sx + sy * sy);
+					if (sMag > maxSurfaceSlope)
+					{
+						sx *= maxSurfaceSlope / sMag;
+						sy *= maxSurfaceSlope / sMag;
+					}
+				}
 				/*  Dumped AFTER the shelf carve-out, so it is the sx/sy the projection
 				    actually uses -- not the raw DEM slope. */
 				obsDumpPixel(i, jj, sx, sy);

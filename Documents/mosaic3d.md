@@ -79,6 +79,7 @@ mosaic3d [options] inputFile demFile outFileBase
 | `-gateAbsolute`                        | Drop the $\sqrt{n}$ normalisation, making the cap a plain limit on the pixel's own formal sigma. Default off; hopper solvers only |
 | `-gateSpeedFrac <F>`                   | Speed-aware cap: effective cap becomes $\max(X,\ F\lVert v\rVert)$, so fast ice is not rejected for having proportionally small error. Default 0.0 = inert; hopper solvers only |
 | `-maxChi2 <X>`                         | Reject solved pixels with reduced $\chi^2 > X$. Default −1 = off. **Behaves as a fast-ice filter — keep off or very loose** |
+| `-maxSurfaceSlope <S>`                 | Cap the DEM slope magnitude used by the hopper3D surface-parallel coupling (steep terrain blows up a common LOS residual into along-slope speed). 0.05 tested for Antarctica. Default −1 = off |
 | `-chi2SpeedFrac <F>`                   | Speed-dependent `-maxChi2`: add a model error $F\lvert v\rvert$ for real change within the window before the cap. Needs `-maxChi2`. Default 0 = off |
 | `-hopper3DMaxSigma <S>`                | 2D/3D toggle for `mosaicHopper3D`; `S < 0` (default) forces the 2D surface-parallel projection everywhere. Not a rejection gate — no pixel is lost to it |
 | `-noErrorGate`                         | *(inert — parsed but never read; see "Gates that are not gates")* |

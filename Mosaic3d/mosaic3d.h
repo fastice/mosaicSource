@@ -271,6 +271,8 @@ extern double maxChi2;
 /*  -chi2SpeedFrac: speed-dependent model error for the -maxChi2 screen, 0 = off.  chi2ForGate()
     (mosaicHopper.c) returns the chi2 the screen compares against maxChi2, in both hoppers. */
 extern double chi2SpeedFrac;
+/*  -maxSurfaceSlope: cap on |grad z| in the hopper3D surface-parallel coupling, -1 = off (mosaic3d.c). */
+extern double maxSurfaceSlope;
 double chi2ForGate(double chi2, double nObs, double sumW, double vx, double vy);
 
 /*  Per-observation dump at a short list of lat/lon points (-obsDump pointsFile).
