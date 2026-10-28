@@ -13,6 +13,13 @@
   Program to simulate InSAR image including both terrain and motion effects.
 */
 static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask);
+static void sampleSecondMask(sceneStructure *scene, ShelfMask *mask2, xyDEM *xyDem);
+/*  -mask2 maskFile outRoot (with -toLL -mask): also sample a second mask at the same final lat/lon and
+    write the full -toLL output set for <outRoot> (.ll.vrt + lat/lon, .mask) exactly as for the main root.  Lets simoffsets build the
+    geometry and velocity simulations from one -toLL run when their masks differ (Greenland geom uses
+    the ice/rock/water mask, velocity the tracking mask).  NULL = off. */
+static char *mask2File = NULL;
+static char *mask2Root = NULL;
 
 static void readArgs(int argc, char *argv[], sceneStructure *scene,
 					 char **demFile, char **displacementFile, char **sceneFile, char **outputFile);
@@ -133,7 +140,46 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "Writing results....\n");
 	
 	outputSimulatedImage(scene, outputFile, demFile, displacementFile);
+	if (mask2File != NULL)
+	{
+		ShelfMask *imageMask2;
+		if (scene.toLLFlag == FALSE || scene.maskFlag == FALSE || scene.velThresh > 0)
+		{
+			error("siminsar: -mask2 needs -toLL and -mask (and no -velThresh)\n");
+		}
+		imageMask2 = malloc(sizeof(ShelfMask));
+		readMaskFile(mask2File, imageMask2);
+		sampleSecondMask(&scene, imageMask2, &xyDem);
+		fprintf(stderr, "Writing second mask %s -> %s.mask\n", mask2File, mask2Root);
+		outputSimulatedImage(scene, mask2Root, demFile, mask2File);
+	}
 	fprintf(stderr, "Done\n");
+}
+
+/*
+   -mask2: replace scene->image (the main -toLL mask, already written) with the second mask sampled at the
+   saved lat/lon.  Same expressions as the in-loop -toLL branch of simInSARimage: lltoxy1 of the final
+   lat/lon then getShelfMask for a valid point, 0 where the point was invalid (lat = -LARGEINT).
+*/
+static void sampleSecondMask(sceneStructure *scene, ShelfMask *mask2, xyDEM *xyDem)
+{
+	int32_t i, j;
+	double x1, y1;
+	for (i = 0; i < scene->aSize; i++)
+	{
+		for (j = 0; j < scene->rSize; j++)
+		{
+			if (scene->latImage[i][j] > -LARGEINT)
+			{
+				lltoxy1(scene->latImage[i][j], scene->lonImage[i][j], &x1, &y1, xyDem->rot, xyDem->stdLat);
+				scene->image[i][j] = getShelfMask(mask2, x1, y1);
+			}
+			else
+			{
+				scene->image[i][j] = 0.0;
+			}
+		}
+	}
 }
 
 int parseBnBpParamsFile(const char *bpParamsFile,
@@ -312,6 +358,13 @@ static void readArgs(int argc, char *argv[], sceneStructure *scene, char **demFi
 		{
 			i--;
 			heightFlag = TRUE;
+		}
+		else if (strstr(argString, "mask2") != NULL)
+		{
+			/* two values: mask file and output root */
+			mask2File = argv[i + 1];
+			mask2Root = argv[i + 2];
+			i++;
 		}
 		else if (strstr(argString, "mask") != NULL)
 		{
@@ -496,6 +549,7 @@ static void usage()
 			"   LSB             Output results as LSB [MSB]",
 			"   mask            = output a mask using displacement file as mask",
 			"   toLL file.dat   = save LL on offset defined grid write outputimage.lat,.lon (can output mask or height with this option)",
+			"   mask2 maskFile outRoot = with -toLL -mask: also sample maskFile at the same lat/lon; write outRoot.ll.vrt/lat/lon/mask",
 			"   saveLL          = save LL on the geodat defined grid and write outputimage.lat and .lon",
 			"   bn              = normal component of baseline",
 			"   dBn             = change in bn over scene (use instead of bnStart/bnEnd)",
