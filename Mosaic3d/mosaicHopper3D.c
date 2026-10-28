@@ -113,6 +113,16 @@ static float **mallocZeroImageHop3(int32_t nr, int32_t nc);
 static HOPPER3DACC **mallocZeroDoubleHop3(int32_t nr, int32_t nc);
 static void freeImageHop3(float **image, int32_t nr);
 static void freeDoubleHop3(HOPPER3DACC **image, int32_t nr);
+static void hop3FoldTapered(outputImageStructure *outputImage, float fl,
+							int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax, float **taper, float **tMax,
+							HOPPER3DACC **tNxx, HOPPER3DACC **tNxy, HOPPER3DACC **tNxz, HOPPER3DACC **tNyy,
+							HOPPER3DACC **tNyz, HOPPER3DACC **tNzz, HOPPER3DACC **tbx, HOPPER3DACC **tby,
+							HOPPER3DACC **tbz, HOPPER3DACC **tSdd, float **tgW, float **tgW2, float **tSumW, float **tSumWT, float **tCnt,
+							HOPPER3DACC **Nxx, HOPPER3DACC **Nxy, HOPPER3DACC **Nxz, HOPPER3DACC **Nyy,
+							HOPPER3DACC **Nyz, HOPPER3DACC **Nzz, HOPPER3DACC **bx, HOPPER3DACC **by,
+							HOPPER3DACC **bz, HOPPER3DACC **Sdd, float **gW, float **gW2, float **sumW, float **sumWT, float **nEff,
+							HOPPER3DACC **Qxx, HOPPER3DACC **Qxy, HOPPER3DACC **Qxz, HOPPER3DACC **Qyy,
+							HOPPER3DACC **Qyz, HOPPER3DACC **Qzz);
 /*  Shared with mosaicTrue3D.c -- closed-form symmetric-3x3 smallest eigenvalue and inverse.
     Declared non-static there precisely so the 3D solvers do not each carry a copy. */
 double lambdaMin3(double a11, double a12, double a13, double a22, double a23, double a33);
@@ -162,6 +172,28 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 	float **chi2Plane;
 	float **vZ3D, **errZ, **modeBand;			 /* solved vertical, its VARIANCE, and 3-vs-2 per pixel */
 	float **sumW, **sumWT;		 /* timeOverlapFlag only; NULL otherwise */
+	/*  Per-product edge taper (fl > 0).  Each product accumulates into the t* scratch planes,
+	    which are then folded into the totals scaled by a computeScaleLS() ramp from that
+	    product's own data edge -- see hop3FoldTapered().  The a* pointers are what the pixel
+	    loop writes to: the scratch planes when tapering, the totals otherwise. */
+	int32_t taperOn = (fl > 0);
+	HOPPER3DACC **tNxx = NULL, **tNxy = NULL, **tNxz = NULL, **tNyy = NULL, **tNyz = NULL, **tNzz = NULL;
+	HOPPER3DACC **tbx = NULL, **tby = NULL, **tbz = NULL, **tSdd = NULL;
+	float **tgW = NULL, **tgW2 = NULL, **tSumW = NULL, **tSumWT = NULL;
+	float **taper = NULL, **tMax = NULL; /* this product's ramp; per-pixel max over products */
+	/*  Taper-weighted row count: tCnt is this product's rows per pixel, nEff the sum over products of
+	    t * rows.  Used by the chi2 gate in place of nObs, whose sig2 = nObs/sum(w) would otherwise
+	    pair an untapered count with tapered weights.  nObs itself stays a raw count (.nobs, n tests). */
+	float **tCnt = NULL, **nEff = NULL;
+	/*  Q = sum over products of t^2 N_k.  With it the covariance of the tapered estimator is EXACT,
+	    Cov = N_t^-1 Q N_t^-1, instead of the conservative N_t^-1.  That matters most where one product
+	    supplies the only look from some direction: tapering it changes nothing about how well that
+	    direction is known (the estimate there still comes from it alone), but N_t^-1 would inflate the
+	    error by 1/sqrt(t) and the sigma gate would reject the pixel.  Measured on a 600 km coastal
+	    box before this was added: 8,641 pixels (median 204 m/yr, 4 rows) lost that way. */
+	HOPPER3DACC **Qxx = NULL, **Qxy = NULL, **Qxz = NULL, **Qyy = NULL, **Qyz = NULL, **Qzz = NULL;
+	HOPPER3DACC **aNxx, **aNxy, **aNxz, **aNyy, **aNyz, **aNzz, **abx, **aby, **abz, **aSdd;
+	float **aGW, **aGW2, **aSumW, **aSumWT;
 	float dum1, dum2;
 	float azimuthMin, azimuthMax;
 	int32_t iMin, iMax, jMin, jMax;					 /* current image's region */
@@ -227,6 +259,51 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 		sumW = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
 		sumWT = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
 	}
+	if (taperOn == TRUE)
+	{
+		tNxx = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tNxy = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tNxz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tNyy = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tNyz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tNzz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tbx = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tby = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tbz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tSdd = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		tgW = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		tgW2 = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		taper = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		tMax = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		tCnt = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		nEff = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		Qxx = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		Qxy = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		Qxz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		Qyy = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		Qyz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		Qzz = mallocZeroDoubleHop3(outputImage->ySize, outputImage->xSize);
+		if (sumW != NULL)
+		{
+			tSumW = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+			tSumWT = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+		}
+	}
+	aNxx = taperOn ? tNxx : Nxx;
+	aNxy = taperOn ? tNxy : Nxy;
+	aNxz = taperOn ? tNxz : Nxz;
+	aNyy = taperOn ? tNyy : Nyy;
+	aNyz = taperOn ? tNyz : Nyz;
+	aNzz = taperOn ? tNzz : Nzz;
+	abx = taperOn ? tbx : bxAcc;
+	aby = taperOn ? tby : byAcc;
+	abz = taperOn ? tbz : bzAcc;
+	aSdd = taperOn ? tSdd : SddAcc;
+	aGW = taperOn ? tgW : gW;
+	aGW2 = taperOn ? tgW2 : gW2;
+	aSumW = taperOn ? tSumW : sumW;
+	aSumWT = taperOn ? tSumWT : sumWT;
+	fprintf(outputImage->fpLog, "; mosaicHopper3D productTaper : %i (fl %.1f px)\n", taperOn, fl);
 	allImages = ascImages; /* consolodateLists() has already appended desc to asc */
 	params = ascParams;
 	nTotal = 0;
@@ -252,6 +329,9 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 	  ****************** PASS 1: accumulate normal equations, one image at a time **************
 	*/
 	ii = 0;
+	/*  With the taper, a row's weight is not final until its product is folded, so -obsDump
+	    holds each product's rows and writes them with the taper applied (obsDumpFlushTaper). */
+	obsDumpDefer(taperOn);
 	int32_t nAzOffSensor = 0; /* products whose azimuth rows -noAzimuthRowsSensors dropped */
 	params = ascParams;
 	for (phaseImage = allImages; phaseImage != NULL; phaseImage = phaseImage->next, params = params->next)
@@ -574,20 +654,21 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 							w = (sumW != NULL) ? phaseImage->weight / (sigma * sigma) : 1.0 / (sigma * sigma);
 							if (w > 0.0)
 							{
-								Nxx[iRow][jj] += w * uphx * uphx;
-								Nxy[iRow][jj] += w * uphx * uphy;
-								Nxz[iRow][jj] += w * uphx * urz;
-								Nyy[iRow][jj] += w * uphy * uphy;
-								Nyz[iRow][jj] += w * uphy * urz;
-								Nzz[iRow][jj] += w * urz * urz;
-								bxAcc[iRow][jj] += w * uphx * P;
-								byAcc[iRow][jj] += w * uphy * P;
-								bzAcc[iRow][jj] += w * urz * P;
-								SddAcc[iRow][jj] += w * P * P;
+								aNxx[iRow][jj] += w * uphx * uphx;
+								aNxy[iRow][jj] += w * uphx * uphy;
+								aNxz[iRow][jj] += w * uphx * urz;
+								aNyy[iRow][jj] += w * uphy * uphy;
+								aNyz[iRow][jj] += w * uphy * urz;
+								aNzz[iRow][jj] += w * urz * urz;
+								abx[iRow][jj] += w * uphx * P;
+								aby[iRow][jj] += w * uphy * P;
+								abz[iRow][jj] += w * urz * P;
+								aSdd[iRow][jj] += w * P * P;
 								nObs[iRow][jj] += 1.0f;
+								if (tCnt != NULL) { tCnt[iRow][jj] += 1.0f; }
 								nObsPh[iRow][jj] += 1.0f;
-								gW[iRow][jj] += (float)w;
-								gW2[iRow][jj] += (float)(w * w);
+								aGW[iRow][jj] += (float)w;
+								aGW2[iRow][jj] += (float)(w * w);
 								obsDumpRecord(iRow, jj, "phase", phaseImage->file,
 											  phaseImage->julDay, (double)params->nDays,
 											  uphx, uphy, urz, P, sigma, w);
@@ -597,8 +678,8 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 								    pixel's rows were all rejected.  Follow mosaicTrue3D.c. */
 								if (sumW != NULL)
 								{
-									sumW[iRow][jj] += (float)w;
-									sumWT[iRow][jj] += (float)(w * (tOffCenter - tCenter));
+									aSumW[iRow][jj] += (float)w;
+									aSumWT[iRow][jj] += (float)(w * (tOffCenter - tCenter));
 								}
 							}
 						}
@@ -640,27 +721,28 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 								w = (sumW != NULL) ? phaseImage->weight / (sigma * sigma) : 1.0 / (sigma * sigma);
 								if (w > 0.0)
 								{
-									Nxx[iRow][jj] += w * urx * urx;
-									Nxy[iRow][jj] += w * urx * ury;
-									Nxz[iRow][jj] += w * urx * urz;
-									Nyy[iRow][jj] += w * ury * ury;
-									Nyz[iRow][jj] += w * ury * urz;
-									Nzz[iRow][jj] += w * urz * urz;
-									bxAcc[iRow][jj] += w * urx * P;
-									byAcc[iRow][jj] += w * ury * P;
-									bzAcc[iRow][jj] += w * urz * P;
-									SddAcc[iRow][jj] += w * P * P;
+									aNxx[iRow][jj] += w * urx * urx;
+									aNxy[iRow][jj] += w * urx * ury;
+									aNxz[iRow][jj] += w * urx * urz;
+									aNyy[iRow][jj] += w * ury * ury;
+									aNyz[iRow][jj] += w * ury * urz;
+									aNzz[iRow][jj] += w * urz * urz;
+									abx[iRow][jj] += w * urx * P;
+									aby[iRow][jj] += w * ury * P;
+									abz[iRow][jj] += w * urz * P;
+									aSdd[iRow][jj] += w * P * P;
 									nObs[iRow][jj] += 1.0f;
+									if (tCnt != NULL) { tCnt[iRow][jj] += 1.0f; }
 									nObsRg[iRow][jj] += 1.0f;
-									gW[iRow][jj] += (float)w;
-									gW2[iRow][jj] += (float)(w * w);
+									aGW[iRow][jj] += (float)w;
+									aGW2[iRow][jj] += (float)(w * w);
 									obsDumpRecord(iRow, jj, "range", phaseImage->file,
 												  phaseImage->julDay, (double)params->nDays,
 												  urx, ury, urz, P, sigma, w);
 									if (sumW != NULL)
 									{
-										sumW[iRow][jj] += (float)w;
-										sumWT[iRow][jj] += (float)(w * (tOffCenter - tCenter));
+										aSumW[iRow][jj] += (float)w;
+										aSumWT[iRow][jj] += (float)(w * (tOffCenter - tCenter));
 									}
 								}
 							}
@@ -697,16 +779,17 @@ da = azOffsetToFlightDirection(da, myImg);
 								w = (sumW != NULL) ? phaseImage->weight / (sigma * sigma) : 1.0 / (sigma * sigma);
 								if (w > 0.0)
 								{
-									Nxx[iRow][jj] += w * aax * aax;
-									Nxy[iRow][jj] += w * aax * aay;
-									Nyy[iRow][jj] += w * aay * aay;
-									bxAcc[iRow][jj] += w * aax * P;
-									byAcc[iRow][jj] += w * aay * P;
-									SddAcc[iRow][jj] += w * P * P;
+									aNxx[iRow][jj] += w * aax * aax;
+									aNxy[iRow][jj] += w * aax * aay;
+									aNyy[iRow][jj] += w * aay * aay;
+									abx[iRow][jj] += w * aax * P;
+									aby[iRow][jj] += w * aay * P;
+									aSdd[iRow][jj] += w * P * P;
 									nObs[iRow][jj] += 1.0f;
+									if (tCnt != NULL) { tCnt[iRow][jj] += 1.0f; }
 									nObsAz[iRow][jj] += 1.0f;
-									gW[iRow][jj] += (float)w;
-									gW2[iRow][jj] += (float)(w * w);
+									aGW[iRow][jj] += (float)w;
+									aGW2[iRow][jj] += (float)(w * w);
 									/*  az component is identically 0 for azimuth rows -- see the
 									    row comment above; it is dumped as 0 so the Python side can
 									    form the same 3x3 without special-casing. */
@@ -715,8 +798,8 @@ da = azOffsetToFlightDirection(da, myImg);
 												  aax, aay, 0.0, P, sigma, w);
 									if (sumW != NULL)
 									{
-										sumW[iRow][jj] += (float)w;
-										sumWT[iRow][jj] += (float)(w * (tOffCenter - tCenter));
+										aSumW[iRow][jj] += (float)w;
+										aSumWT[iRow][jj] += (float)(w * (tOffCenter - tCenter));
 									}
 								}
 							}
@@ -727,7 +810,16 @@ da = azOffsetToFlightDirection(da, myImg);
 				} /* j loop */
 			}	  /* i loop */
 		}		  /* End omp parallel */
+		if (taperOn == TRUE)
+		{
+			hop3FoldTapered(outputImage, fl, iMin, iMax, jMin, jMax, taper, tMax,
+							tNxx, tNxy, tNxz, tNyy, tNyz, tNzz, tbx, tby, tbz, tSdd, tgW, tgW2, tSumW, tSumWT, tCnt,
+							Nxx, Nxy, Nxz, Nyy, Nyz, Nzz, bxAcc, byAcc, bzAcc, SddAcc, gW, gW2, sumW, sumWT, nEff,
+							Qxx, Qxy, Qxz, Qyy, Qyz, Qzz);
+			obsDumpFlushTaper(taper);
+		}
 	}			  /* End image loop */
+	obsDumpDefer(FALSE);
 	/*
 	  ---- LANDSAT ROWS (default with -hopper3D; -legacyLandsat for the separate round) -------
 	  Each Landsat pair adds two rows per pixel, vx and vy directly: u = (1,0,0) and (0,1,0).  The
@@ -790,8 +882,20 @@ da = azOffsetToFlightDirection(da, myImg);
 					byAcc[i][jj] += wy * lvy;
 					SddAcc[i][jj] += wx * lvx * lvx + wy * lvy * lvy;
 					nObs[i][jj] += 2.0f;
+					if (nEff != NULL)
+					{
+						nEff[i][jj] += 2.0f;
+						Qxx[i][jj] += wx;
+						Qyy[i][jj] += wy;
+					}
 					gW[i][jj] += (float)(wx + wy);
 					gW2[i][jj] += (float)(wx * wx + wy * wy);
+					/*  Landsat rows are not tapered, so they count as full weight in the
+					    per-pixel normalisation before the solve. */
+					if (tMax != NULL)
+					{
+						tMax[i][jj] = 1.0f;
+					}
 					obsDumpRecord(i, jj, "landsat", lsImage->fitResult.matchFile, lsImage->matches.jdEarly,
 								  lsImage->matches.jdLate - lsImage->matches.jdEarly, 1.0, 0.0, 0.0, lvx, sqrt(varX), wx);
 					obsDumpRecord(i, jj, "landsat", lsImage->fitResult.matchFile, lsImage->matches.jdEarly,
@@ -809,6 +913,46 @@ da = azOffsetToFlightDirection(da, myImg);
 		fprintf(outputImage->fpLog, "; landsatRows: %i of %i Landsat pairs contributed rows\n", nLSUsed, nLSTotal);
 	}
 	fprintf(stderr, "mosaicHopper: %i of %i images contributed\n", nUsed, nTotal);
+	/*
+	  Undo the taper's overall scale.  The taper is there to change how products are BLENDED, not
+	  how much they are trusted: dividing a pixel's whole system by the largest taper among its
+	  products leaves the velocity untouched (N and b scale together) and gives a pixel covered by
+	  one product exactly its untapered N, so its formal error and the sigma gates are as before.
+	  Where products overlap, (sum t_k N_k)/max t is between the untapered N and the tapered one,
+	  i.e. the reported error stays conservative relative to the tapered estimator's true variance.
+	  gW/gW2 enter the gate only as (sum w)^2/sum(w^2), which this leaves unchanged.
+	*/
+	if (taperOn == TRUE && nUsed > 0 && iMaxAll > iMinAll && jMaxAll > jMinAll)
+	{
+#pragma omp parallel for schedule(dynamic, 8)
+		for (i = iMinAll; i < iMaxAll; i++)
+		{
+			int32_t jj;
+			double f;
+			for (jj = jMinAll; jj < jMaxAll; jj++)
+			{
+				if (!(tMax[i][jj] > 0.0f) || tMax[i][jj] >= 1.0f)
+				{
+					continue;
+				}
+				f = 1.0 / (double)tMax[i][jj];
+				Nxx[i][jj] *= f; Nxy[i][jj] *= f; Nxz[i][jj] *= f;
+				Nyy[i][jj] *= f; Nyz[i][jj] *= f; Nzz[i][jj] *= f;
+				bxAcc[i][jj] *= f; byAcc[i][jj] *= f; bzAcc[i][jj] *= f;
+				SddAcc[i][jj] *= f;
+				gW[i][jj] *= (float)f;
+				gW2[i][jj] *= (float)(f * f);
+				nEff[i][jj] *= (float)f;
+				Qxx[i][jj] *= f * f; Qxy[i][jj] *= f * f; Qxz[i][jj] *= f * f;
+				Qyy[i][jj] *= f * f; Qyz[i][jj] *= f * f; Qzz[i][jj] *= f * f;
+				if (sumW != NULL)
+				{
+					sumW[i][jj] *= (float)f;
+					sumWT[i][jj] *= (float)f;
+				}
+			}
+		}
+	}
 	/*
 	  ****************** PASS 2: solve once per pixel *****************************************
 	*/
@@ -832,6 +976,7 @@ da = azOffsetToFlightDirection(da, myImg);
 			double vx, vy, vz, scX, scY, deltaOffCenter, gateCap, gateSpd;
 			double sx, sy, lam3, det3, Cinv[3][3], nRange, nGate, gateN;
 			double B[2][2], dzdx, dzdy;
+			double sigWorst, covXX = 0.0, covYY = 0.0; /* exact tapered covariance (Q != NULL only) */
 			int32_t use3D;
 			unsigned char sMask2;
 			int32_t jj;
@@ -920,6 +1065,29 @@ da = azOffsetToFlightDirection(da, myImg);
 						fScale[i][jj] = 0.0;
 						continue;
 					}
+					if (Qxx != NULL)
+					{
+						/* Cov = Cinv Q Cinv (symmetric); only the diagonal is needed */
+						double Q3[3][3] = {{Qxx[i][jj], Qxy[i][jj], Qxz[i][jj]},
+										   {Qxy[i][jj], Qyy[i][jj], Qyz[i][jj]},
+										   {Qxz[i][jj], Qyz[i][jj], Qzz[i][jj]}};
+						double cv[3];
+						int32_t r, a, b;
+						for (r = 0; r < 3; r++)
+						{
+							cv[r] = 0.0;
+							for (a = 0; a < 3; a++)
+							{
+								for (b = 0; b < 3; b++)
+								{
+									cv[r] += Cinv[r][a] * Q3[a][b] * Cinv[b][r];
+								}
+							}
+						}
+						Cinv[0][0] = cv[0];
+						Cinv[1][1] = cv[1];
+						Cinv[2][2] = cv[2];
+					}
 					scX = 1.0 / Cinv[0][0];
 					scY = 1.0 / Cinv[1][1];
 					/*  errZ carries the VARIANCE, not the sigma.  mosaic3d.c:942-945 takes the
@@ -931,7 +1099,7 @@ da = azOffsetToFlightDirection(da, myImg);
 					if (chi2Plane != NULL)
 					{
 						double chi2 = SddAcc[i][jj] - (vx * b1 + vy * b2 + vz * b3);
-						double dof = (double)nObs[i][jj] - 3.0;
+						double dof = ((nEff != NULL) ? (double)nEff[i][jj] : (double)nObs[i][jj]) - 3.0;
 						chi2Plane[i][jj] = (dof > 0.0 && chi2 > 0.0) ? (float)(chi2 / dof) : 0.0f;
 					}
 					nSolved3D++;
@@ -996,15 +1164,43 @@ da = azOffsetToFlightDirection(da, myImg);
 							gateCap = gateSpeedFrac * gateSpd;
 						}
 					}
-					if (gateCap > 0.0 && !((1.0 / sqrt(lambdaMin)) * gateN <= gateCap))
+					sigWorst = 1.0 / sqrt(lambdaMin);
+					if (Qxx != NULL)
+					{
+						/*  Exact covariance of the tapered estimator, Cov = N2^-1 Q2 N2^-1 with
+						    Q2 = C^T Q3 C, projected exactly as N2 is.  The gate reads its worst
+						    direction, sqrt(largest eigenvalue), in place of 1/sqrt(lambdaMin(N2)). */
+						double q11 = Qxx[i][jj], q12 = Qxy[i][jj], q13 = Qxz[i][jj];
+						double q22 = Qyy[i][jj], q23 = Qyz[i][jj], q33 = Qzz[i][jj];
+						double qxx = q11 + 2.0 * sx * q13 + sx * sx * q33;
+						double qxy = q12 + sx * q23 + sy * q13 + sx * sy * q33;
+						double qyy = q22 + 2.0 * sy * q23 + sy * sy * q33;
+						double ia = nyy / det, ib = -nxy / det, ic = nxx / det;
+						double m00 = ia * qxx + ib * qxy, m01 = ia * qxy + ib * qyy;
+						double m10 = ib * qxx + ic * qxy, m11 = ib * qxy + ic * qyy;
+						double c01 = m00 * ib + m01 * ic;
+						covXX = m00 * ia + m01 * ib;
+						covYY = m10 * ib + m11 * ic;
+						sigWorst = sqrt(0.5 * (covXX + covYY) +
+										sqrt(0.25 * (covXX - covYY) * (covXX - covYY) + c01 * c01));
+					}
+					if (gateCap > 0.0 && !(sigWorst * gateN <= gateCap))
 					{
 						nRejCond++;
 						vxTmp[i][jj] = (float)-LARGEINT;
 						fScale[i][jj] = 0.0;
 						continue;
 					}
-					scX = det / nyy;
-					scY = det / nxx;
+					if (Qxx != NULL)
+					{
+						scX = 1.0 / covXX;
+						scY = 1.0 / covYY;
+					}
+					else
+					{
+						scX = det / nyy;
+						scY = det / nxx;
+					}
 					/*  Reported vz is the surface-parallel PREDICTION from the UNzeroed slope,
 					    matching mosaicHopper.c:607-608.  No formal vertical error exists for a
 					    constrained solve, so errZ stays 0 (written as no-data). */
@@ -1015,7 +1211,7 @@ da = azOffsetToFlightDirection(da, myImg);
 					if (chi2Plane != NULL)
 					{
 						double chi2 = SddAcc[i][jj] - (vx * bx + vy * by);
-						double dof = (double)nObs[i][jj] - 2.0;
+						double dof = ((nEff != NULL) ? (double)nEff[i][jj] : (double)nObs[i][jj]) - 2.0;
 						chi2Plane[i][jj] = (dof > 0.0 && chi2 > 0.0) ? (float)(chi2 / dof) : 0.0f;
 					}
 					nSolved2D++;
@@ -1048,7 +1244,7 @@ da = azOffsetToFlightDirection(da, myImg);
 				    Placed after both branches so the .chi2 band still records the value. */
 				/*  sum(w) = trace(N3): every row (phase, range, azimuth, Landsat) is a unit vector. */
 				if (maxChi2 > 0.0 && chi2Plane != NULL &&
-					chi2ForGate((double)chi2Plane[i][jj], (double)nObs[i][jj], n11 + n22 + n33, vx, vy) > maxChi2)
+					chi2ForGate((double)chi2Plane[i][jj], (nEff != NULL) ? (double)nEff[i][jj] : (double)nObs[i][jj], n11 + n22 + n33, vx, vy) > maxChi2)
 				{
 					nRejCond++;
 					/*  The branches above already counted this pixel as solved; undo that so
@@ -1149,6 +1345,36 @@ da = azOffsetToFlightDirection(da, myImg);
 	freeImageHop3(nObsAz, outputImage->ySize);
 	freeImageHop3(gW, outputImage->ySize);
 	freeImageHop3(gW2, outputImage->ySize);
+	if (taperOn == TRUE)
+	{
+		freeDoubleHop3(tNxx, outputImage->ySize);
+		freeDoubleHop3(tNxy, outputImage->ySize);
+		freeDoubleHop3(tNxz, outputImage->ySize);
+		freeDoubleHop3(tNyy, outputImage->ySize);
+		freeDoubleHop3(tNyz, outputImage->ySize);
+		freeDoubleHop3(tNzz, outputImage->ySize);
+		freeDoubleHop3(tbx, outputImage->ySize);
+		freeDoubleHop3(tby, outputImage->ySize);
+		freeDoubleHop3(tbz, outputImage->ySize);
+		freeDoubleHop3(tSdd, outputImage->ySize);
+		freeImageHop3(tgW, outputImage->ySize);
+		freeImageHop3(tgW2, outputImage->ySize);
+		freeImageHop3(taper, outputImage->ySize);
+		freeImageHop3(tMax, outputImage->ySize);
+		freeImageHop3(tCnt, outputImage->ySize);
+		freeImageHop3(nEff, outputImage->ySize);
+		freeDoubleHop3(Qxx, outputImage->ySize);
+		freeDoubleHop3(Qxy, outputImage->ySize);
+		freeDoubleHop3(Qxz, outputImage->ySize);
+		freeDoubleHop3(Qyy, outputImage->ySize);
+		freeDoubleHop3(Qyz, outputImage->ySize);
+		freeDoubleHop3(Qzz, outputImage->ySize);
+		if (tSumW != NULL)
+		{
+			freeImageHop3(tSumW, outputImage->ySize);
+			freeImageHop3(tSumWT, outputImage->ySize);
+		}
+	}
 	/*  nObs/chi2Plane/vZ3D/errZ/modeBand are NOT freed here: ownership passes to outputImage so
 	    mosaic3d can write the .nobs/.chi2/.vz3d/.ez/.mode bands, and mosaic3d frees them after.
 	    Guarded rather than assigned outright (mosaicTrue3D.c:708-717 does the same) -- an
@@ -1400,5 +1626,96 @@ static void setBufferHop3(inputImageStructure *inputImage, float *buf)
 	for (i = 0; i < inputImage->azimuthSize; i++)
 	{
 		inputImage->image[i] = &(buf[i * inputImage->rangeSize]);
+	}
+}
+
+/*
+  PER-PRODUCT EDGE TAPER (fl > 0).
+
+  The hopper puts every product into one per-pixel normal system, so without this a product
+  carries full weight right up to its last valid pixel, and wherever a track ends inside another
+  track's coverage the solution steps by whatever the two disagree (baseline, ionosphere, tide
+  residuals).  Small in m/yr, but it shows as a sharp seam in slow ice on a log-scaled browse.
+  The -fl feather applied when the round is folded into the mosaic only tapers the edge of the
+  UNION of all products, never the seams inside it.
+
+  So each product is accumulated into scratch planes, and folded in here scaled by the same
+  radial ramp the rounds use (0.5/fl at a valid pixel next to an invalid one, rising to 1 at fl
+  output pixels in), computed by computeScaleEDT -- an exact distance transform, identical to
+  computeScaleLS's kernel stamping for integer fl but O(region) and parallel, so a wide taper
+  (fl 100) costs no more than a narrow one.  Coverage is "this product contributed at least one row",
+  i.e. tgW > 0, so holes inside a product are tapered as well as its swath edges.  All of the
+  product's rows at a pixel share one factor, so this is exactly t*w for every row.
+
+  Limitation: an edge lying just OUTSIDE this sector is invisible here (velocity sectors are not
+  padded), so a product edge within fl pixels of a sector border is not tapered on the near side.
+*/
+static void hop3FoldTapered(outputImageStructure *outputImage, float fl,
+							int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax, float **taper, float **tMax,
+							HOPPER3DACC **tNxx, HOPPER3DACC **tNxy, HOPPER3DACC **tNxz, HOPPER3DACC **tNyy,
+							HOPPER3DACC **tNyz, HOPPER3DACC **tNzz, HOPPER3DACC **tbx, HOPPER3DACC **tby,
+							HOPPER3DACC **tbz, HOPPER3DACC **tSdd, float **tgW, float **tgW2, float **tSumW, float **tSumWT, float **tCnt,
+							HOPPER3DACC **Nxx, HOPPER3DACC **Nxy, HOPPER3DACC **Nxz, HOPPER3DACC **Nyy,
+							HOPPER3DACC **Nyz, HOPPER3DACC **Nzz, HOPPER3DACC **bx, HOPPER3DACC **by,
+							HOPPER3DACC **bz, HOPPER3DACC **Sdd, float **gW, float **gW2, float **sumW, float **sumWT, float **nEff,
+							HOPPER3DACC **Qxx, HOPPER3DACC **Qxy, HOPPER3DACC **Qxz, HOPPER3DACC **Qyy,
+							HOPPER3DACC **Qyz, HOPPER3DACC **Qzz)
+{
+	int32_t i;
+	/*  minVal 0: tgW is a sum of positive weights, so > 0 means the product covers the pixel.
+	    Pixels outside [iMin,iMax) x [jMin,jMax) are always zero (cleared below), so the
+	    neighbour test at the region boundary sees them as uncovered, which they are. */
+	computeScaleEDT(tgW, taper, outputImage->ySize, outputImage->xSize, fl, (float)1.0, 0.0,
+					iMin, iMax, jMin, jMax);
+#pragma omp parallel for schedule(dynamic, 8)
+	for (i = iMin; i < iMax; i++)
+	{
+		int32_t jj;
+		double t;
+		for (jj = jMin; jj < jMax; jj++)
+		{
+			if (!(tgW[i][jj] > 0.0f))
+			{
+				continue;
+			}
+			t = (double)taper[i][jj];
+			Nxx[i][jj] += t * tNxx[i][jj];
+			Nxy[i][jj] += t * tNxy[i][jj];
+			Nxz[i][jj] += t * tNxz[i][jj];
+			Nyy[i][jj] += t * tNyy[i][jj];
+			Nyz[i][jj] += t * tNyz[i][jj];
+			Nzz[i][jj] += t * tNzz[i][jj];
+			Qxx[i][jj] += t * t * tNxx[i][jj];
+			Qxy[i][jj] += t * t * tNxy[i][jj];
+			Qxz[i][jj] += t * t * tNxz[i][jj];
+			Qyy[i][jj] += t * t * tNyy[i][jj];
+			Qyz[i][jj] += t * t * tNyz[i][jj];
+			Qzz[i][jj] += t * t * tNzz[i][jj];
+			bx[i][jj] += t * tbx[i][jj];
+			by[i][jj] += t * tby[i][jj];
+			bz[i][jj] += t * tbz[i][jj];
+			Sdd[i][jj] += t * tSdd[i][jj];
+			gW[i][jj] += (float)(t * tgW[i][jj]);
+			gW2[i][jj] += (float)(t * t * tgW2[i][jj]);
+			if (sumW != NULL)
+			{
+				sumW[i][jj] += (float)(t * tSumW[i][jj]);
+				sumWT[i][jj] += (float)(t * tSumWT[i][jj]);
+				tSumW[i][jj] = 0.0f;
+				tSumWT[i][jj] = 0.0f;
+			}
+			nEff[i][jj] += (float)(t * tCnt[i][jj]);
+			tCnt[i][jj] = 0.0f;
+			if ((float)t > tMax[i][jj])
+			{
+				tMax[i][jj] = (float)t;
+			}
+			tNxx[i][jj] = 0.0; tNxy[i][jj] = 0.0; tNxz[i][jj] = 0.0;
+			tNyy[i][jj] = 0.0; tNyz[i][jj] = 0.0; tNzz[i][jj] = 0.0;
+			tbx[i][jj] = 0.0; tby[i][jj] = 0.0; tbz[i][jj] = 0.0;
+			tSdd[i][jj] = 0.0;
+			tgW[i][jj] = 0.0f;
+			tgW2[i][jj] = 0.0f;
+		}
 	}
 }

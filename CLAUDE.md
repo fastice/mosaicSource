@@ -1382,6 +1382,11 @@ solution at n=2 (verified to 2.8e-14).
 | `-jointMaxSigmaRange X` | **100** | same for range; 0 = off |
 | `-jointErrScale X` | 1 (inert) | caller-supplied 1-sigma calibration, applied to both rounds |
 
+"0 = off" is only true with `-gateSpeedFrac 0` as well: the hoppers (default solver since 2026-09) cap at
+`max(jointMaxSigma, gateSpeedFrac*|v|)` and `gateSpeedFrac` defaults to 0.03, so `-jointMaxSigma 0` alone
+leaves a 3%-of-speed cap that rejects nearly everything (ERS velocity1995: 13,729 px solved vs ~911k).
+Re-running old short-interval (ERS) offsets mosaics needs `-jointMaxSigma 0 -gateSpeedFrac 0`.
+
 The gates are **n-NORMALISED**, and that is not cosmetic. `sigmaWorst*sqrt(n)` is the effective
 per-measurement sigma, so the test asks "is the input data noisy?" rather than "is coverage thin?".
 An ABSOLUTE gate on `sigmaWorst` was measured to be almost purely a thin-coverage filter -- at
@@ -1568,6 +1573,49 @@ SOUTH edge**, so a north-up mosaic places tile `<c>.<r>` at `col = c`, `row = (n
 merged `.vrt` the Python workflow builds is authoritative — `mosaic-000.000` lands at
 `yOff = ySize - tileHeight`.
 
+### Per-product edge taper in hopper3D (`-fl`/`-flkm` > 0, since 2026-10-28)
+
+Before this, `-fl` in a hopper3D run tapered only the edge of the UNION of all products (the
+`computeScaleLS` call when the round is folded into the mosaic). Inside the joint solve every
+product had full weight up to its last valid pixel, so wherever a track ended inside another's
+coverage the solution stepped by the inter-track disagreement -- sharp seams, small in m/yr but
+obvious in slow ice on the log-scaled browse.
+
+Now, whenever `fl > 0`, each product accumulates into scratch planes and is folded in scaled by a
+ramp from ITS OWN data edge (`hop3FoldTapered`): 0.5/fl at a pixel next to an uncovered one, 1 at
+fl OUTPUT pixels in. Coverage is "contributed at least one row", so holes are tapered as well as
+swath edges. No new flag -- `-fl 0` is the old behaviour (verified byte-identical single-threaded).
+
+- **`-flkm km`** gives the length in km; mosaic3d converts it with the output pixel size after the
+  input file's grid line is read (`args.flKm`, logged). `-fl` stays in pixels; giving both is an
+  error. The same `fl` also sets the round-level feather. Production wants roughly 20 km
+  (`-fl 100` at 200 m): on a 300 km West Antarctic box it removed every visible seam that 2-8 km
+  left, at median error +5%.
+- **The ramp is an exact Euclidean distance transform** (`common/computeScale.c:computeScaleEDT`,
+  Felzenszwalb-Huttenlocher, parallel). Identical to `computeScaleLS`'s kernel stamping for
+  integer fl (0 of ~1 M px differ at fl 10/40/100) but O(region) instead of O(nEdge * fl^2) on
+  one thread, which had made fl 100 cost ~2x the run time.
+- **Errors and gates use the EXACT covariance of the tapered estimator**, Cov = N_t^-1 Q N_t^-1
+  with Q = sum t^2 N_k (`Qxx..Qzz`, projected to 2D like N). The first version reported N_t^-1
+  (normalised by the per-pixel max taper): conservative, but where one product supplies the only
+  look from some direction it inflated the error by 1/sqrt(t) -- and the sigma gate then rejected
+  8,641 px (median 204 m/yr, 4 rows) on a coastal box. Each pixel's N, b, Sdd, gW, sumW are still
+  divided by the max taper (velocity unchanged); Q by its square.
+- **The chi2 gate uses a taper-weighted row count** (`nEff` = sum t * rows) for both the dof and
+  `chi2ForGate`'s sig2 = n/sum(w); the raw `nObs` would pair an unweighted count with tapered
+  weights. `nObs` itself stays raw (`.nobs`, minimum-row tests).
+- **Landsat rows are not tapered** (taper 1 in N, Q, nEff).
+- **`-obsDump`** holds each product's rows and writes them after the fold with `w` already
+  multiplied by the taper, so the external re-solve still reproduces the velocity.
+- **Cost of tapering is real:** a precise product ramped down near its own edge leaves the solve
+  leaning on noisier interior products. Box tests: interior median error +0.7% (fl 10) / +5%
+  (fl 100), p99 +6% / +22%; on a patchy coastal box p99 up to +75% and velocity changes of tens
+  of m/yr in fast ice, because every decorrelation hole edge is tapered too.
+- **Limitation:** velocity sectors are not padded, so a product edge lying just outside a sector
+  is invisible to it; within fl pixels of a sector border that edge is not tapered on the near side.
+- **Memory:** 16 double + 6 float scratch planes per sector (~150 B/px). The 2D `-hopper`
+  (`mosaicHopper.c`) is NOT changed.
+
 ### Diagnostic bands
 
 `.nobs`, `.chi2`, `.vz3d`, `.ez` (a VARIANCE in-buffer — `mosaic3d.c:942-945` sqrts it on output)
@@ -1662,6 +1710,9 @@ kept. Default off; no flag = byte-identical sigmas to before (checked on all thr
 - `simoffsets.computeSmoothRadiusMapC()` writes the four input rasters to `TMPDIR` (local disk,
   not the NFS frame directory), runs the binary, and moves the result into place. If the binary
   is missing or fails it warns and falls back to the Python, so the product still completes.
+- C and Python are not bit-identical: C keeps the smoothed field in float32 (Python float64), so
+  pixels within ~1e-5 of the tolerance can land one radius step apart (129 of 13.35 M, max diff 1).
+  A small nonzero diff here is not a bug.
 
 ## Landsat as hopper rows (DEFAULT since 2026-10-16; `-legacyLandsat` for the separate round)
 

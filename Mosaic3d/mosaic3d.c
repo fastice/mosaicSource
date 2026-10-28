@@ -304,6 +304,20 @@ int main(int argc, char *argv[])
 	*/
 	getMVhInputFile(args.inputFile, &phaseFiles, &geodatFiles, &baselineFiles, &offsetFiles, &azParamsFiles, &rOffsetFiles, &rParamsFiles,
 					&outputImage, &nDays, &weights, &crossFlags, &nFiles, offsetFlag, outputImage.rOffsetFlag, args.threeDOffFlag);
+	/*  -flkm: the feather length in km, converted with the output pixel size, which is only known
+	    once the input file's grid line has been read.  Everything downstream still takes fl in
+	    output pixels, so the conversion happens exactly once, here. */
+	if (args.flKm >= 0.0)
+	{
+		if (args.fl > 0.0)
+		{
+			error("mosaic3d: give either -fl (output pixels) or -flkm (km), not both");
+		}
+		args.fl = (float)(args.flKm * KMTOM / outputImage.deltaX);
+		fprintf(outputImage.fpLog, "; Feather length   : %f px (from -flkm %f km at %.1f m pixels)\n",
+				args.fl, args.flKm, outputImage.deltaX);
+		fprintf(stderr, "Feather length %.2f px from -flkm %.3f km\n", args.fl, args.flKm);
+	}
 	if (outputImage.rOffsetFlag == TRUE)
 		fprintf(stderr, "*** USING RANGE/AZIMUTH OFFSETS in solution *** \n");
 	fprintf(outputImage.fpLog, ";\n; **** SOURCE DATA **** \n");
@@ -2057,7 +2071,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	   -true3DProject (one each) and -true3DMaxSigma (two), plus headroom.  Raised 76 -> 80 for
 	   -hopper3D (one) and -hopper3DMaxSigma (two), plus headroom.  Raised 86 -> 92 for
 	   -epsg and -wkt (two argv slots each), plus headroom. */
-	if (argc < 4 || argc > 97)
+	if (argc < 4 || argc > 99) /* +2 for -flkm km */
 	{
 		fprintf(stderr, "Arg count out of range (max 92): %i\n", argc);
 		usage(); /* Check number of args */
@@ -2087,6 +2101,7 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 	args->threeDOffFlag = FALSE;
 	args->tieThresh = 100.0; /* Limit on velocity for tie points */
 	args->fl = 0.0;
+	args->flKm = -1.0;
 	args->tideFile = NULL;
 	args->north = FALSE;
 	args->timeThresh = 12;
@@ -2460,6 +2475,12 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		{
 			noMask = TRUE;
 		}
+		/*  -flkm MUST be tested before "fl", which it contains (strstr dispatch). */
+		else if (strstr(argString, "flkm") != NULL)
+		{
+			sscanf(argv[i + 1], "%f", &args->flKm);
+			i++;
+		}
 		else if (strstr(argString, "fl") != NULL)
 		{
 			sscanf(argv[i + 1], "%f", &args->fl);
@@ -2717,7 +2738,7 @@ static void usage()
 		  "Usage:",
 		  " mosaic3d -north -GTiff -COG -writeBlank -makeTies -tieThresh -extraTies extraTieFile -date1 MM-DD-YYYY -date2 MM-DD-YYYY -timeOverlap -tideFile tideFile \\",
 		  " \t-verticalCorrection vcFile -verticalCorrectionSuffix suffix -no3d -3dOff -deltaBQ -deltaBC -noVh -landSat landSatList  -refVel refVelFile -initMap -clipThresh clipThresh -lsClip clipVal  \\",
-		  " \t-shelfMask shelfMask -fl fl  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide -ompThreads N \\",
+		  " \t-shelfMask shelfMask -fl fl | -flkm km  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide -ompThreads N \\",
 		  " \tinputFile demFile outPutImage\n",
 		  " where :",
 		  "\tnorth =\t\t\t Force northern hemisphere",
@@ -2743,7 +2764,7 @@ static void usage()
 		  "\tclipThresh =\t\t Use with refVel to clip differences > clipThresh for slow moving regions (< 100 m/yr).  Honoured by the hopper solvers as well as the legacy speckle round",
 		  "\tlsClip (not implemented)=\t\t Clip landsat mosaic using refVelFile ",
 		  "\tshelfMask =\t\t Shelf mask file (includes nodata)",
-		  "\tfl =\t\t\t Feather length",
+		  "\tfl =\t\t\t Feather length in OUTPUT PIXELS (with -hopper3D also the per-product edge taper); -flkm km gives it in km instead (converted with the output pixel size).  Not both",
 		  "\toffsets =\t\t Use offset azimuth offset data for second component ",
 		  "\trOffsets =\t\t Use offset data for both components where needed ",
 		  "\ttimeThresh =\t\t For 3D crossing offset solution, only use pairs within timeThresh days (def=12)",

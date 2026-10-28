@@ -304,6 +304,10 @@ void makeDEMMosaic(inputImageStructure *inputImage, outputImageStructure outputI
   Compute scale for feathering.
 */
 void computeScale(float **inImage, float **scale, int32_t azimuthSize, int32_t rangeSize, float fl, float weight, double minVal);
+/*  Same ramp as computeScaleLS, via an exact Euclidean distance transform: O(region), parallel.
+    Writes only [iMin,iMax) x [jMin,jMax) of scale. */
+void computeScaleEDT(float **inImage, float **scale, int32_t azimuthSize, int32_t rangeSize, float fl, float weight,
+					 double minVal, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
 void fillRadialKernel(double **rDist, float fl, float weight);
 /*
   void  getInputFile(char *inputFile,char ***insarDEMFiles,  char ***demInputFiles,  outputImageStructure *outputImage,  float **weights, int *nDEMs);

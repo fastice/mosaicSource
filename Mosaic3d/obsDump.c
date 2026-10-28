@@ -39,6 +39,10 @@ static char **ptName = NULL;
 static unsigned char *rowWanted = NULL; /* per output row: any point on it? */
 static int32_t nRowWanted = 0;
 static FILE *dumpFp = NULL;
+static int32_t deferOn = FALSE; /* obsDumpDefer(): hold rows until obsDumpFlushTaper() */
+static void obsDumpHold(int32_t pt, int32_t iRow, int32_t jj, const char *obsType, const char *frame,
+						double julDay, double nDays, double ax, double ay, double az,
+						double d, double sigma, double w);
 
 int32_t obsDumpActive(void) { return (dumpFp != NULL); }
 
@@ -119,6 +123,7 @@ void obsDumpInit(char *pointsFile, char *outName, outputImageStructure *outputIm
 	fprintf(dumpFp, "#   the surface-parallel (2D) solve projects that with "
 					"C = [[1,0],[0,1],[sx,sy]]: N2 = C^T N3 C, b2 = C^T b3.\n");
 	fprintf(dumpFp, "#   sx,sy come from the PIXEL row (0,0 on shelf); az is 0 for azimuth rows.\n");
+	fprintf(dumpFp, "#   with -hopper3D and -fl > 0, w already includes the per-product edge taper.\n");
 	fprintf(dumpFp, "#   row is the INTERNAL bottom-up index (row 0 = southernmost).  The\n");
 	fprintf(dumpFp, "#   GeoTIFF/VRT products are written north-up, so to index them use\n");
 	fprintf(dumpFp, "#       tifRow = nRows - 1 - row      (col is the same in both).\n");
@@ -167,13 +172,90 @@ void obsDumpRecord(int32_t iRow, int32_t jj, const char *obsType, const char *fr
    is OpenMP-partitioned by row and would otherwise interleave writes. */
 #pragma omp critical(obsDump)
 		{
-			fprintf(dumpFp, "OBS %s %i %i %s %s %.6f %.4f %.8e %.8e %.8e %.8e %.8e %.8e\n",
-					ptName[i], iRow, jj, obsType, frame != NULL ? frame : "none",
-					julDay, nDays, ax, ay, az, d, sigma, w);
-			fflush(dumpFp);
+			if (deferOn == TRUE)
+			{
+				obsDumpHold(i, iRow, jj, obsType, frame, julDay, nDays, ax, ay, az, d, sigma, w);
+			}
+			else
+			{
+				fprintf(dumpFp, "OBS %s %i %i %s %s %.6f %.4f %.8e %.8e %.8e %.8e %.8e %.8e\n",
+						ptName[i], iRow, jj, obsType, frame != NULL ? frame : "none",
+						julDay, nDays, ax, ay, az, d, sigma, w);
+				fflush(dumpFp);
+			}
 		}
 		return;
 	}
+}
+
+/*
+  Deferred records, for mosaicHopper3D's per-product edge taper.  A row's weight is
+  only final once its product has been folded in with the taper, so while deferral
+  is on the rows are held and obsDumpFlushTaper() writes them with w multiplied by
+  the taper at their pixel.  The dumped w is therefore always the weight the solver
+  actually used, and the external re-solve still reproduces mosaic3d's velocity.
+  (The solver then divides each pixel's system by its largest taper; that rescales
+  N and b together and does not change the velocity, so it is not applied here.)
+*/
+typedef struct
+{
+	int32_t pt, iRow, jj;
+	const char *obsType; /* a string literal at every call site */
+	char *frame;
+	double julDay, nDays, ax, ay, az, d, sigma, w;
+} heldObs;
+static heldObs *held = NULL;
+static int32_t nHeld = 0, nHeldMax = 0;
+
+static void obsDumpHold(int32_t pt, int32_t iRow, int32_t jj, const char *obsType, const char *frame,
+						double julDay, double nDays, double ax, double ay, double az,
+						double d, double sigma, double w)
+{
+	heldObs *h;
+	if (nHeld == nHeldMax)
+	{
+		nHeldMax = (nHeldMax == 0) ? 64 : 2 * nHeldMax;
+		held = (heldObs *)realloc(held, sizeof(heldObs) * (size_t)nHeldMax);
+		if (held == NULL)
+		{
+			error("obsDumpHold: realloc failed");
+		}
+	}
+	h = &held[nHeld++];
+	h->pt = pt; h->iRow = iRow; h->jj = jj; h->obsType = obsType;
+	h->frame = strdup(frame != NULL ? frame : "none");
+	h->julDay = julDay; h->nDays = nDays; h->ax = ax; h->ay = ay; h->az = az;
+	h->d = d; h->sigma = sigma; h->w = w;
+}
+
+void obsDumpDefer(int32_t on)
+{
+	deferOn = (on == TRUE && dumpFp != NULL) ? TRUE : FALSE;
+}
+
+void obsDumpFlushTaper(float **taper)
+{
+	int32_t k;
+	heldObs *h;
+	if (dumpFp == NULL)
+	{
+		nHeld = 0;
+		return;
+	}
+	for (k = 0; k < nHeld; k++)
+	{
+		h = &held[k];
+		fprintf(dumpFp, "OBS %s %i %i %s %s %.6f %.4f %.8e %.8e %.8e %.8e %.8e %.8e\n",
+				ptName[h->pt], h->iRow, h->jj, h->obsType, h->frame,
+				h->julDay, h->nDays, h->ax, h->ay, h->az, h->d, h->sigma,
+				h->w * (double)taper[h->iRow][h->jj]);
+		free(h->frame);
+	}
+	if (nHeld > 0)
+	{
+		fflush(dumpFp);
+	}
+	nHeld = 0;
 }
 
 void obsDumpClose(void)

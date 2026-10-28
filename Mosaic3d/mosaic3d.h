@@ -21,6 +21,7 @@ typedef struct {
 	/* numeric args */
 	int32_t epsg;
 	float fl;
+	float flKm; /* -flkm: feather length in km, converted to output pixels once the grid is known; < 0 = unset */
 	float timeThresh;
 	float timeThreshPhase;
 	double sigmaAThresh;
@@ -289,6 +290,8 @@ void obsDumpRecord(int32_t iRow, int32_t jj, const char *obsType, const char *fr
 				   double julDay, double nDays, double ax, double ay, double az,
 				   double d, double sigma, double w);
 void obsDumpPixel(int32_t iRow, int32_t jj, double sx, double sy);
+void obsDumpDefer(int32_t on);            /* hold OBS rows until obsDumpFlushTaper (hopper3D taper) */
+void obsDumpFlushTaper(float **taper);   /* write held rows with w scaled by taper[row][col] */
 void obsDumpClose(void);
 
 /*
