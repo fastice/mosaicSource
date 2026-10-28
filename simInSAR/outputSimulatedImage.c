@@ -24,6 +24,7 @@ static void popuplateMeta(dictNode **metaData, sceneStructure scene) {
 	insert_node(metaData, "sigmaStreaks", STR_BUFF("%f", 0.0));
 	insert_node(metaData, "lambda", STR_BUFF("%f", scene.I.par.lambda));
 	insert_node(metaData, "dT", STR_BUFF("%f", scene.dT));
+	insert_node(metaData, "siminsarVersion", STR_BUFF("%i", SIMINSAR_VERSION));
 	if (scene.verticalCorrectionFile != NULL)
 		insert_node(metaData, "verticalCorrection", STR_BUFF("%s", scene.verticalCorrectionFile));
 }

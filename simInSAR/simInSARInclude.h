@@ -1,6 +1,12 @@
 
 /*#include "ers1/getLocC_p/parfile.h"*/
 
+/*  Written as metadata key "siminsarVersion" on every siminsar output VRT (.ll.vrt, simulated image).
+    2 = 2026-10-05 height-consistency fix (damped re-sample of the DEM height at the final -toLL
+        position; mosaicSource 958c7af).  Output with no key predates it and carries the
+        -cos(inc)*slope*0.002h range error on steep terrain -- reprocess it (SetupNISAR --overWrite).
+    Bump whenever a change alters the simulated geometry. */
+#define SIMINSAR_VERSION 2
 #define DEFAULT_SIM_BN 0.0
 #define DEFAULT_SIM_BP 0.0
 #define LL 1
