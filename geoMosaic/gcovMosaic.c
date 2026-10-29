@@ -228,17 +228,57 @@ static int32_t readF16Window(hid_t dset, int32_t x, int32_t y, int32_t w, int32_
 }
 
 /*
+  Read one window of a band, retrying a failure a few times before giving up.
+
+  Reading a GCOV over /vsicurl means thousands of range requests per granule, and ASF answers
+  one with a 503 often enough to matter. Every such error used to be fatal: reduceGCOV called
+  error(), the tile died, and a global run lost it for a reason that would have gone away on a
+  second attempt. GDAL_HTTP_MAX_RETRY does not cover it -- it was set to 5 in the run that
+  still died, because the retry does not apply inside the multi-range path the strip reads use.
+
+  The waits are deliberately long, since the usual cause of a 503 is the server asking to be
+  left alone for a moment. A local read fails for reasons retrying cannot fix, but it costs
+  one pointless 35 s before the same fatal error and saves the length of this comment in
+  special casing, so remoteness is not tested for.
+*/
+#define GCOVREADRETRIES 3
+#define GCOVRETRYDELAY 5
+
+static int32_t rasterIORetry(GDALRasterBandH band, int32_t x, int32_t y, int32_t w, int32_t h,
+							 void *buf, GDALDataType type, const char *what)
+{
+	int32_t attempt, delay;
+	for (attempt = 0;; attempt++)
+	{
+		if (GDALRasterIO(band, GF_Read, x, y, w, h, buf, w, h, type, 0, 0) == CE_None)
+		{
+			return TRUE;
+		}
+		if (attempt >= GCOVREADRETRIES)
+		{
+			return FALSE;
+		}
+		delay = GCOVRETRYDELAY * (attempt + 1);
+		fprintf(stderr, "Warning: %s read failed at %i,%i (%s); retry %i of %i in %i s\n",
+				what, x, y, CPLGetLastErrorMsg(), attempt + 1, GCOVREADRETRIES, delay);
+		CPLErrorReset();
+		sleep(delay);
+	}
+}
+
+/*
   Read one window of a band as float32, taking the float16 path when the band has one.
 */
 static int32_t readGCOVWindow(hid_t h5, GDALRasterBandH band, int32_t x, int32_t y,
-							  int32_t w, int32_t h, float *out, unsigned short *tmp)
+							  int32_t w, int32_t h, float *out, unsigned short *tmp,
+							  const char *what)
 {
 	if (h5 != H5I_INVALID_HID)
 	{
+		/* the float16 path is libhdf5 on a local file: a failure there is not transient */
 		return readF16Window(h5, x, y, w, h, out, tmp);
 	}
-	return (GDALRasterIO(band, GF_Read, x, y, w, h, out, w, h, GDT_Float32, 0, 0) == CE_None)
-			   ? TRUE : FALSE;
+	return rasterIORetry(band, x, y, w, h, out, GDT_Float32, what);
 }
 
 /*
@@ -1388,19 +1428,20 @@ static float **reduceGCOV(gcovFile *g, int32_t c0, int32_t r0, int32_t nbc, int3
 	{
 		nbThis = min(nbStrip, nbr - br0);
 		if (maskOnly == FALSE &&
-			readGCOVWindow(g->h5Gamma, hG, c0, r0 + br0 * ky, width, ky * nbThis, gBuf, tBuf) == FALSE)
+			readGCOVWindow(g->h5Gamma, hG, c0, r0 + br0 * ky, width, ky * nbThis, gBuf, tBuf,
+						   "gamma") == FALSE)
 		{
-			error("reduceGCOV: read error");
+			error("reduceGCOV: read error after %i retries", GCOVREADRETRIES);
 		}
 		if (hF != NULL && readGCOVWindow(g->h5Factor, hF, c0, r0 + br0 * ky, width, ky * nbThis,
-										 fBuf, tBuf) == FALSE)
+										 fBuf, tBuf, "factor") == FALSE)
 		{
-			error("reduceGCOV: factor read error");
+			error("reduceGCOV: factor read error after %i retries", GCOVREADRETRIES);
 		}
-		if (hM != NULL && GDALRasterIO(hM, GF_Read, c0, r0 + br0 * ky, width, ky * nbThis, mBuf, width, ky * nbThis,
-									   GDT_Byte, 0, 0) != CE_None)
+		if (hM != NULL && rasterIORetry(hM, c0, r0 + br0 * ky, width, ky * nbThis, mBuf,
+										GDT_Byte, "mask") == FALSE)
 		{
-			error("reduceGCOV: mask read error");
+			error("reduceGCOV: mask read error after %i retries", GCOVREADRETRIES);
 		}
 		for (br = br0; br < br0 + nbThis; br++)
 		{
