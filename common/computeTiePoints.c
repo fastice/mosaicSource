@@ -6,6 +6,8 @@
 /*#include "tiePoints.h"*/
 #include "time.h"
 extern double Rotation;
+/* Points per warm-start chunk; also the unit of OpenMP work (see the loop below) */
+#define TIEPOINTCHUNK 100
 
 /*
   Compute location of  tie points for baselines estimation.
@@ -73,15 +75,35 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 			fprintf(stdout, ";; Tide difference : %s\n", "none");
 	}
 	/*
-	  Loop over output points — parallelized with OpenMP.
-	  inputImage->lastTime (written by llToImageNew) is a warm-start cache;
-	  the race is benign: worst case the Newton iteration starts from center
-	  time instead of the previous point's converged time.
+	  Loop over output points — parallelized with OpenMP over fixed chunks of
+	  TIEPOINTCHUNK points. llToImageNew warm-starts its Newton iteration from
+	  lastTime, and Newton stops anywhere inside its tolerance, so the result
+	  depends on the start time. A shared lastTime made that whichever point some
+	  thread had just finished, and the output changed from run to run (azimuth by
+	  up to ~4e-4 pixels). Instead each thread works on its own copy of inputImage,
+	  and lastTime is reset at the start of every chunk (out of range, so
+	  llToImageNew starts from centre time); within a chunk the points run in
+	  order. The start for every point is then fixed, and the output is identical
+	  for any thread count or schedule.
 	*/
-#pragma omp parallel for \
-	private(lat, lon, xx, yy, sMask, deltaZ, vz1, zWGS, zSp, RElip, range, azimuth, azOrigin) \
-	schedule(dynamic, 100)
-	for (i = 0; i < tiePoints->npts; i++)
+	{
+		int32_t nThreads = omp_get_max_threads();
+		int32_t nChunks = (tiePoints->npts + TIEPOINTCHUNK - 1) / TIEPOINTCHUNK;
+		int32_t iChunk;
+		inputImageStructure *localImgs = (inputImageStructure *)malloc((size_t)nThreads * sizeof(inputImageStructure));
+		if (localImgs == NULL)
+			error("computeTiePoints: malloc failed for per-thread image copies\n");
+		for (j = 0; j < nThreads; j++)
+			localImgs[j] = *inputImage;
+#pragma omp parallel \
+	private(i, iChunk, lat, lon, xx, yy, sMask, deltaZ, vz1, zWGS, zSp, RElip, range, azimuth, azOrigin)
+	{
+	inputImageStructure *myImg = &localImgs[omp_get_thread_num()];
+#pragma omp for schedule(dynamic, 1)
+	for (iChunk = 0; iChunk < nChunks; iChunk++)
+	{
+	myImg->lastTime = -LARGEINT; /* outside sTime..eTime: first point starts from centre time */
+	for (i = iChunk * TIEPOINTCHUNK; i < min((iChunk + 1) * TIEPOINTCHUNK, tiePoints->npts); i++)
 	{
 		lat = tiePoints->lat[i];
 		lon = tiePoints->lon[i];
@@ -111,7 +133,7 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 
 			if (tiePoints->imageCoords == FALSE)
 			{
-				llToImageNew(lat, lon, zWGS, &range, &azimuth, inputImage);
+				llToImageNew(lat, lon, zWGS, &range, &azimuth, myImg);
 				RElip = earthRadius(lat * DTOR, EMINOR, EMAJOR) * KMTOM + tiePoints->z[i];
 				/*  Elevation referenced to a sphere */
 				zSp = RElip - Re;
@@ -145,6 +167,10 @@ void computeTiePoints(inputImageStructure *inputImage, tiePointsStructure *tiePo
 			tiePoints->a[i] = -LARGEINT;
 			tiePoints->r[i] = -LARGEINT;
 		}
+	}
+	}
+	}
+		free(localImgs);
 	}
 	lastTime = clock();
 	fprintf(stderr, "initTime %f convertTime %f totalTime %f\n", 
