@@ -74,6 +74,12 @@ static int32_t transformBox(OGRCoordinateTransformationH ct, double xa, double x
 							double *minX, double *maxX, double *minY, double *maxY, int32_t lonWrap,
 							int32_t fromOutput);
 static OGRCoordinateTransformationH makeOutTransform(int32_t epsg);
+static void nisarSubdataset(char *out, size_t n, const char *file, const char *path);
+#define NISARDRIVEROFF 0
+#define NISARDRIVERREMOTE 1
+#define NISARDRIVERALL 2
+static void hdf5Subdataset(char *out, size_t n, const char *file, const char *path);
+static GDALDatasetH openHdf5Metadata(const char *file);
 static void gcovScaleSample(outputImageStructure *outputImage, int32_t jMin, int32_t jMax,
 							int32_t iMin, int32_t iMax, double *xc, double *yc);
 static void outToGranule(OGRCoordinateTransformationH ct, int32_t n, double *x, double *y, double *z);
@@ -1497,7 +1503,7 @@ static int32_t readIncidenceCube(char *file, gcovInputs *gcov, gcovFile *g, floa
 	{
 		return FALSE;
 	}
-	sprintf(path, "HDF5:\"%s\"://science/LSAR/GCOV/metadata/radarGrid/incidenceAngle", file);
+	hdf5Subdataset(path, sizeof(path), file, "/science/LSAR/GCOV/metadata/radarGrid/incidenceAngle");
 	hCube = GDALOpen(path, GA_ReadOnly);
 	if (hCube == NULL)
 	{
@@ -1569,7 +1575,7 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 	memset(g, 0, sizeof(gcovFile));
 	/* memset gives 0, which is a valid hid_t; the "no handle" sentinel is H5I_INVALID_HID */
 	g->h5Gamma = g->h5GammaFile = g->h5Factor = g->h5FactorFile = H5I_INVALID_HID;
-	g->hFile = GDALOpen(file, GA_ReadOnly);
+	g->hFile = openHdf5Metadata(file);
 	if (g->hFile == NULL)
 	{
 		/* A local granule that will not open is one bad product among many, and skipping it
@@ -1586,7 +1592,11 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 		return FALSE;
 	}
 	sprintf(grid, "science/LSAR/GCOV/grids/frequency%s", gcov->frequency);
-	sprintf(path, "HDF5:\"%s\"://%s/%s", file, grid, gcov->polarization);
+	{
+		char sub[2048];
+		snprintf(sub, sizeof(sub), "/%s/%s", grid, gcov->polarization);
+		nisarSubdataset(path, sizeof(path), file, sub);
+	}
 	g->hGamma = GDALOpen(path, GA_ReadOnly);
 	if (g->hGamma == NULL)
 	{
@@ -1623,7 +1633,11 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 				strcpy(factorFile, shared);
 			}
 		}
-		sprintf(path, "HDF5:\"%s\"://%s/rtcGammaToSigmaFactor", factorFile, grid);
+		{
+			char sub[2048];
+			snprintf(sub, sizeof(sub), "/%s/rtcGammaToSigmaFactor", grid);
+			nisarSubdataset(path, sizeof(path), factorFile, sub);
+		}
 		if ((g->hFactor = GDALOpen(path, GA_ReadOnly)) == NULL)
 		{
 			error("openGCOV: could not open %s", path);
@@ -1642,7 +1656,11 @@ static int32_t openGCOV(gcovInputs *gcov, char *file, gcovFile *g, int32_t needF
 	}
 	if (gcov->useMask == TRUE)
 	{
-		sprintf(path, "HDF5:\"%s\"://%s/mask", file, grid);
+		{
+			char sub[2048];
+			snprintf(sub, sizeof(sub), "/%s/mask", grid);
+			nisarSubdataset(path, sizeof(path), file, sub);
+		}
 		if ((g->hMask = GDALOpen(path, GA_ReadOnly)) == NULL)
 		{
 			error("openGCOV: could not open %s", path);
@@ -1724,7 +1742,11 @@ static int32_t readCoordinates(char *file, char *dataset, int32_t n, double **co
 {
 	char path[2048];
 	GDALDatasetH hDS;
-	sprintf(path, "HDF5:\"%s\"://science/LSAR/GCOV/%s", file, dataset);
+	{
+		char sub[2048];
+		snprintf(sub, sizeof(sub), "/science/LSAR/GCOV/%s", dataset);
+		hdf5Subdataset(path, sizeof(path), file, sub);
+	}
 	hDS = GDALOpen(path, GA_ReadOnly);
 	if (hDS == NULL)
 	{
@@ -1912,6 +1934,95 @@ static void outToGranule(OGRCoordinateTransformationH ct, int32_t n, double *x, 
 		}
 	}
 	OCTTransform(ct, n, x, y, z);
+}
+
+/*
+   The subdataset prefix for a NISAR HDF5 product.
+
+   The NISAR driver (gdal-driver-nisar, a GDAL plugin) reads the same arrays but coalesces
+   chunk-aligned reads, which is what a remote granule costs: measured on one GUNW coherence
+   window over /vsicurl/, 2.4 s and 425 MB against 4.2 s and 1558 MB through the plain HDF5
+   driver -- half the time and a quarter of the bytes. LOCAL files are the other way round,
+   6-10x SLOWER, because the coalescing reads more than asked for and there is no latency to
+   amortise. So: use it for a remote path, not for a local one, and only when it is installed.
+
+   The two spell a subdataset differently -- HDF5:"file"://path against NISAR:"file":/path --
+   so the caller passes the path with a single leading slash and this adds what is needed.
+
+   GRIMP_NISAR_DRIVER=0 forces the HDF5 driver, =1 forces NISAR even for a local file.
+*/
+static void nisarSubdataset(char *out, size_t n, const char *file, const char *path)
+{
+	static int32_t have = -1, mode = -1;
+	int32_t remote;
+	if (mode < 0)
+	{
+		const char *e = getenv("GRIMP_NISAR_DRIVER");
+		have = (GDALGetDriverByName("NISAR") != NULL) ? TRUE : FALSE;
+		/* OFF unless asked for: "remote" for /vsi paths, "all" for every path.  The plugin
+		   reads a window in about a quarter of the bytes over /vsicurl, but is 6-10x slower
+		   on a local file, and the remote path has not yet been shown to return bit-identical
+		   values, so the default stays on the HDF5 driver that every product was built with. */
+		mode = NISARDRIVEROFF;
+		if (e != NULL && (strcmp(e, "remote") == 0 || strcmp(e, "2") == 0))
+		{
+			mode = NISARDRIVERREMOTE;
+		}
+		else if (e != NULL && (strcmp(e, "all") == 0 || strcmp(e, "1") == 0))
+		{
+			mode = NISARDRIVERALL;
+		}
+		if (mode != NISARDRIVEROFF && have == FALSE)
+		{
+			error("GRIMP_NISAR_DRIVER=%s but no NISAR driver is installed in this GDAL", e);
+		}
+		if (have == TRUE && mode != NISARDRIVEROFF)
+		{
+			fprintf(stderr, "NISAR GDAL driver in use for %s\n",
+					(mode == NISARDRIVERALL) ? "every path" : "remote (/vsi) paths");
+		}
+	}
+	/* a /vsi path is remote enough to be worth coalescing; a plain filename is not */
+	remote = (strstr(file, "/vsicurl/") != NULL || strstr(file, "/vsis3/") != NULL ||
+			  strstr(file, "/vsi") == file) ? TRUE : FALSE;
+	if (have == TRUE && (mode == NISARDRIVERALL || (mode == NISARDRIVERREMOTE && remote == TRUE)))
+	{
+		snprintf(out, n, "NISAR:\"%s\":%s", file, path);
+	}
+	else
+	{
+		hdf5Subdataset(out, n, file, path);
+	}
+}
+
+/*
+  The subdataset name the HDF5 driver understands.  Callers pass an absolute HDF5 path such as
+  "/science/LSAR/GCOV/grids/frequencyA/HHHH", and the doubled slash that results is correct,
+  not a typo: the HDF5 driver names its own subdatasets HDF5:"file"://science/... and rejects
+  the single-slash form with "No such file or directory".  The NISAR plugin does the opposite
+  and wants NISAR:"file":/science/..., which is why the two cannot share one format string.
+*/
+static void hdf5Subdataset(char *out, size_t n, const char *file, const char *path)
+{
+	snprintf(out, n, "HDF5:\"%s\":/%s", file, path);
+}
+
+/*
+  Open the granule itself, for its metadata, through the HDF5 driver and nothing else.
+
+  This is not an optimization, it is required for correctness.  Where the NISAR plugin
+  (gdal_NISAR.so) is installed it also claims plain .h5 GCOV files, and it exposes the product
+  attributes under their real HDF5 paths ("/science/LSAR/GCOV/grids/frequencyA/projectionEpsg")
+  rather than the flattened names the HDF5 driver invents
+  ("science_LSAR_GCOV_grids_frequencyA_projection_epsg_code") that getEPSGAttribute looks up.
+  Letting GDAL choose would make every attribute read return NULL as soon as the plugin is
+  present on the machine.  The plugin is still used, but only for the large 2-D image arrays,
+  where it is picked per path by nisarSubdataset.
+*/
+static GDALDatasetH openHdf5Metadata(const char *file)
+{
+	const char *const drivers[] = {"HDF5", NULL};
+	return GDALOpenEx(file, GDAL_OF_RASTER | GDAL_OF_READONLY, drivers, NULL, NULL);
 }
 
 static OGRCoordinateTransformationH makeTransform(const char *fromSRS, const char *toSRS)
