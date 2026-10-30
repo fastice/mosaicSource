@@ -274,6 +274,7 @@ glob: /Volumes/insar4/ian/Data/NISAR/Antarctica-GCOV/*.h5   # optional, may repe
 files:                # optional, "- path [weight]", weight default 1.0
   - /path/a.h5
   - /path/b.h5 0.5
+factorFrom: /path/factors   # optional: where slim GCOVs' shared RTC factors live (see below)
 ```
 
 If the same granule appears more than once with different product counters (the final `_NNN`
@@ -325,6 +326,41 @@ used by every mosaic3d solver, is unchanged. Reads are made in strips of
 about 1024 rows, because the layers are gzip-compressed in 512×512 chunks. Reading only `k` rows
 at a time decompresses each chunk row about 512/k times, and was measured to be 14× slower
 (493 s vs 34 s for one 32k×32k frame at 200 m).
+
+### Slim GCOVs and the shared RTC factor (`factorFrom:`)
+
+Slim GCOVs from `downloadNISARoptimized` (asfSearchAndDownload) do not carry
+`rtcGammaToSigmaFactor`: it is stored once per track/frame/grid in a separate file, shared by
+every cycle, and the downloader leaves a symlink in its `--factorDir` named exactly like each
+granule, pointing at that shared file. With `factorFrom: <factorDir>` in the GCOV yaml,
+`openGCOV` reads the factor from `<factorDir>/<granule basename>`, so geomosaic never has to
+derive the sharing key.
+
+- If there is no such file for a granule, the factor is read from the granule itself, so one
+  input list can mix slim and archive GCOVs. If neither has one, the open fails loudly.
+- A factor whose raster size differs from the granule's gamma band is rejected
+  (`openGCOV: factor grid ... does not match`): a track/frame that is a partial frame in one
+  cycle and a full frame in the next has a different grid, and reading the shared factor at
+  the same pixel window would silently misregister the gamma->sigma conversion.
+- `factorFrom:` is probed with `access()`, so a remote (`/vsicurl/`, `/vsis3/`) slim product
+  still needs a local factor directory.
+- Because the shared factor is a local file, it keeps the float16 fast path
+  (`openIfFloat16` takes it by its own path, `H5Fopen`) even when the granule itself is remote
+  and its gamma band has to go through GDAL -- part of why sharing the factor pays.
+- Do not replace the symlink with an HDF5 virtual dataset in the granule: on GDAL 3.11.5 /
+  HDF5 2.2.0 reading through one took 213.78 s instead of 0.07 s (on GDAL 3.9 / HDF5 1.14.3 it
+  was free), and a missing source fails silently -- HDF5 returns the fill value, geomosaic drops
+  it, and feathering hides the missing granule.
+- The factor is only read when sigma0 is needed; `-calOutput gamma0` with GCOV-only inputs
+  skips it (see below).
+- Slim GCOVs store `HHHH` (and the factor) as float16, clamped to [1e-4, 65504] -- -40 dB to
+  +48 dB -- so nothing underflows to zero or overflows to inf, both of which geomosaic drops as
+  invalid. Slim GCOVs written before that clamp existed (asfSearchAndDownload 8c6224c,
+  2026-10-29; they lack the `grimpFlooredToF16Floor` attribute on the band) had their sub-floor
+  pixels flushed to zero. Those cluster at frame edges -- 26% of valid pixels in the bottom
+  block of one cycle-30 frame -- so mosaics built from them lose a strip where frames feather
+  together. The zeroed pixels cannot be recovered from the slim file: rebuild those granules from
+  the archive product (`downloadNISARoptimized --local`) or download them again.
 
 ### Radiometry
 
