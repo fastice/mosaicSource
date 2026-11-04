@@ -27,10 +27,11 @@ float applyCorrections(float *value, inputImageStructure *inputImage, double ran
 static void geoMosaicScaling(inputImageStructure *inputImage, float **image, float **imageTmp, float **psiBuf,
 							 float **psiBufTmp, float **gBuf, float **gBufTmp,
 							 float **scale, float **scaleTmp, void *dem, outputImageStructure *outputImage, int32_t orbitPriority,
-							 int32_t imageDate, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
+							 int32_t imageDate, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax, float **gSig);
 static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority,
 						 float **imageAll, float **scaleAll, float **psiBuf, float **gBuf,
-						 float **psiBufAll, float **gBufAll);
+						 float **psiBufAll, float **gBufAll, float **gSig, float **gSigAll);
+static void gammaSumToCorrection(outputImageStructure *outputImage, float **gBuf, float **gSig);
 static float **mallocPlane(outputImageStructure *outputImage, float initValue);
 static void applySelection(float **imageTmp, float **scaleTmp, unsigned char **selTmp,
 						   inputImageStructure *inputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
@@ -589,6 +590,12 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	unsigned char **selTmp = NULL, *selBuf = NULL;
 	float **imageAll = NULL, **scaleAll = NULL, **psiBufAll = NULL, **gBufAll = NULL;
 	float **scale, **psiBuf, **psiBufTmp, **gBufTmp, **gBuf;
+	/* feathered gamma0 (see below): sigma0 sums matching the gamma0 sums held in gBuf/gBufAll */
+	extern int32_t calOutput;
+	extern int32_t gcovOnly;
+	extern int32_t geoMosaicMode;
+	float **gSig = NULL, **gSigAll = NULL;
+	int32_t featherGamma;
 	FILE *fp;
 	double x, y, lat, lon, h, hWGS;
 	double range, azimuth;
@@ -619,6 +626,31 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	scale = (float **)outputImage.scale;
 	fprintf(stderr, "\norbitPriority %i\n", orbitPriority);
 	/*
+	  .gamma0 is sigma0 + gBuf (dB) at output. Taking gBuf from the last input at each pixel gives a
+	  gamma0 that depends on file order and steps at that input's edge however sigma0 is feathered,
+	  so with GCOV inputs gBuf instead accumulates linear gamma0 with sigma0's weights (gSig holds
+	  the matching sigma0 sum) and becomes 10log10(gamma0/sigma0) in finalReScale. Off for pure
+	  range/Doppler runs, which are unchanged, and for GCOV-only gamma0 runs, which already average
+	  gamma0 directly (gBufTmp is 0).
+	*/
+	featherGamma = (gcov != NULL && geoLinear == FALSE && (S1Cal & TRUE) == TRUE && (S1Cal & GAMMASAVE) > 0 &&
+					geoMosaicMode == GEOMOSAIC_AVERAGE && nearestDate < 0 && orbitPriority < 0 &&
+					!(calOutput == CALOUTPUT_GAMMA0 && gcovOnly == TRUE))
+					   ? TRUE
+					   : FALSE;
+	if (featherGamma == TRUE)
+	{
+		gSig = mallocPlane(&outputImage, 0.0);
+		for (i = 0; i < outputImage.ySize; i++)
+		{
+			for (j = 0; j < outputImage.xSize; j++)
+			{
+				gBuf[i][j] = 0.0;
+			}
+		}
+		fprintf(stderr, "gamma0 feathered with the sigma0 weights\n");
+	}
+	/*
 	  Pass 1 of the range selection: build the coarse incidence extremum over every input before
 	  any accumulation. Geometry only - no raster is read here.
 	*/
@@ -632,7 +664,11 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 		   runs after the previous file's filtered pass, so sharing psiBuf/gBuf would let an
 		   unselected image supply the gamma correction for selected sigma0 */
 		psiBufAll = mallocPlane(&outputImage, 0.0);
-		gBufAll = mallocPlane(&outputImage, MINS1DB);
+		gBufAll = mallocPlane(&outputImage, (featherGamma == TRUE) ? 0.0 : MINS1DB);
+		if (featherGamma == TRUE)
+		{
+			gSigAll = mallocPlane(&outputImage, 0.0);
+		}
 		selBuf = (unsigned char *)malloc(nPix);
 		selTmp = (unsigned char **)malloc((size_t)outputImage.ySize * sizeof(unsigned char *));
 		if (selBuf == NULL || selTmp == NULL)
@@ -842,7 +878,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 				computeScaleFast(imageTmp, scaleTmp, outputImage.ySize, outputImage.xSize, fl, inputImage[i].weight, (float)0.0,
 								 iMin, iMax, jMin, jMax);
 			geoMosaicScaling(&(inputImage[i]), imageAll, imageTmp, psiBufAll, psiBufTmp, gBufAll, gBufTmp, scaleAll,
-							 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+							 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax, gSigAll);
 			applySelection(imageTmp, scaleTmp, selTmp, &(inputImage[i]), iMin, iMax, jMin, jMax);
 		}
 		/*
@@ -859,7 +895,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 		  Now sum current result. Falls through if no intersection (iMax&jMax==0)
 		*/
 		geoMosaicScaling(&(inputImage[i]), image, imageTmp, psiBuf, psiBufTmp, gBuf, gBufTmp, scale,
-						 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+						 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax, gSig);
 	} /* End for i=0; i < nFiles */
 	/*
 	  Add already geocoded NISAR GCOV products, accumulated the same way as the range/Doppler products
@@ -883,7 +919,7 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 									 iMin, iMax, jMin, jMax);
 				}
 				geoMosaicScaling(&gcovImage, imageAll, imageTmp, psiBufAll, psiBufTmp, gBufAll, gBufTmp, scaleAll,
-								 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+								 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax, gSigAll);
 				applySelection(imageTmp, scaleTmp, selTmp, &gcovImage, iMin, iMax, jMin, jMax);
 			}
 			if (fl > 0)
@@ -897,14 +933,14 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 				applyRamp(scaleTmp, selTmp, iMin, iMax, jMin, jMax);
 			}
 			geoMosaicScaling(&gcovImage, image, imageTmp, psiBuf, psiBufTmp, gBuf, gBufTmp, scale,
-							 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax);
+							 scaleTmp, dem, &outputImage, orbitPriority, imageDate, iMin, iMax, jMin, jMax, gSig);
 		}
 	}
 	/*
 	  Final rescaling if not nearestDate
 	*/
 	finalReScale(&outputImage, image, scale, orbitPriority, imageAll, scaleAll,
-				 psiBuf, gBuf, psiBufAll, gBufAll);
+				 psiBuf, gBuf, psiBufAll, gBufAll, gSig, gSigAll);
 	/* Convert values to log db if calibrated  added 11/18/2013 */
 	if (rsatFineCal == TRUE)
 	{
@@ -1098,12 +1134,21 @@ static void computeScaleFast(float **inImage, float **scale, int32_t ySize, int3
 
 static void finalReScale(outputImageStructure *outputImage, float **image, float **scale, int32_t orbitPriority,
 						 float **imageAll, float **scaleAll, float **psiBuf, float **gBuf,
-						 float **psiBufAll, float **gBufAll)
+						 float **psiBufAll, float **gBufAll, float **gSig, float **gSigAll)
 {
 	int32_t i1, j1;
 	size_t nRescued = 0, nValid = 0;
 	if (orbitPriority >= 0)
 		return;
+	/* feathered gamma0: turn the accumulated sums into the dB correction before any fallback copy */
+	if (gSig != NULL)
+	{
+		gammaSumToCorrection(outputImage, gBuf, gSig);
+	}
+	if (gSigAll != NULL)
+	{
+		gammaSumToCorrection(outputImage, gBufAll, gSigAll);
+	}
 
 	for (i1 = 0; i1 < outputImage->ySize; i1++)
 	{
@@ -1212,9 +1257,35 @@ static void applySelection(float **imageTmp, float **scaleTmp, unsigned char **s
 	}
 }
 
+/*
+  Feathered gamma0: gBuf holds sum(w * gamma0) and gSig sum(w * sigma0) over the non-shadow inputs.
+  Replace gBuf with the dB correction 10log10(gamma0/sigma0) that outputS1Cal adds to sigma0,
+  rounded and clamped as each input's correction is; MINS1DB (shadow) where no input contributed.
+*/
+static void gammaSumToCorrection(outputImageStructure *outputImage, float **gBuf, float **gSig)
+{
+	int32_t i1, j1;
+	double g;
+	for (i1 = 0; i1 < outputImage->ySize; i1++)
+	{
+		for (j1 = 0; j1 < outputImage->xSize; j1++)
+		{
+			if (gSig[i1][j1] > 0 && gBuf[i1][j1] > 0)
+			{
+				g = round(10.0 * log10((double)gBuf[i1][j1] / (double)gSig[i1][j1]) * 100.) / 100.;
+				gBuf[i1][j1] = min(max(g, -29.9), 35.0);
+			}
+			else
+			{
+				gBuf[i1][j1] = MINS1DB;
+			}
+		}
+	}
+}
+
 static void geoMosaicScaling(inputImageStructure *inputImage, float **image, float **imageTmp, float **psiBuf, float **psiBufTmp,
 							 float **gBuf, float **gBufTmp, float **scale, float **scaleTmp, void *dem, outputImageStructure *outputImage, int32_t orbitPriority,
-							 int32_t imageDate, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
+							 int32_t imageDate, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax, float **gSig)
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
@@ -1268,7 +1339,20 @@ static void geoMosaicScaling(inputImageStructure *inputImage, float **image, flo
 					image[i1][j1] += imageTmp[i1][j1] * scaleTmp[i1][j1] * inputImage->weight;
 					scale[i1][j1] += scaleTmp[i1][j1];
 					psiBuf[i1][j1] = psiBufTmp[i1][j1];
-					gBuf[i1][j1] = gBufTmp[i1][j1];
+					if (gSig != NULL)
+					{
+						/* feathered gamma0: linear gamma0 with sigma0's weight; shadow (MINS1DB) left out */
+						if (gBufTmp[i1][j1] > MINS1DB)
+						{
+							float wSig = imageTmp[i1][j1] * scaleTmp[i1][j1] * inputImage->weight;
+							gBuf[i1][j1] += wSig * (float)pow(10.0, 0.1 * gBufTmp[i1][j1]);
+							gSig[i1][j1] += wSig;
+						}
+					}
+					else
+					{
+						gBuf[i1][j1] = gBufTmp[i1][j1];
+					}
 				}
 				else if (orbitPriority > -1)
 				{ /* orbit priority case */

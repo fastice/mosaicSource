@@ -1150,7 +1150,8 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	}
 
 	/* Feathering is meaningless with orbit-priority replacement. (It was also refused with S1Cal
-	   since 2019 with no recorded reason; allowed from 2026-09-23 - note .gamma0 uses the last
+	   since 2019 with no recorded reason; allowed from 2026-09-23. With GCOV inputs .gamma0 is
+	   feathered with sigma0's weights since 2026-11-03; range/Doppler-only runs still use the last
 	   image's gamma correction in overlaps, feathered or not.) */
 	if (*orbitPriority >= 0 && *fl > 0)
 	{

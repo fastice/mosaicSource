@@ -87,6 +87,15 @@ through GDAL's HDF5 driver, either alongside range/Doppler images or instead of 
 `-calOutput sigma0|gamma0|both` selects the `-S1Cal` outputs; the default `both` is unchanged.
 Full description and verification are in `Documents/geomosaic.md` "NISAR GCOV Inputs".
 
+**`.gamma0` feathering (`featherGamma`, since 2026-11-03).** `.gamma0` = `.sigma0` + `gBuf` (dB),
+and average mode used to take `gBuf` from the LAST input at each pixel, so with `-calOutput both`
+gamma0 was blended sigma0 plus one granule's RTC correction: 0.2 dB order-dependent bias in
+overlaps and a 0.4 dB seam at that granule's edge that no feather removes. With GCOV inputs,
+`gBuf` now accumulates linear gamma0 with sigma0's exact weights alongside a sigma0 sum `gSig`
+(`gSigAll` for the range-selection fallback), converted to the dB ratio in `finalReScale` BEFORE
+the fallback copy. Pure range/Doppler runs and `-calOutput gamma0` GCOV-only runs are untouched
+(the latter already average gamma0 directly). `.inc` is still last-image.
+
 **`factorFrom: <dir>` (yaml key, optional)** reads `rtcGammaToSigmaFactor` from outside the
 granule, so slim products can share one factor per track/frame/grid across cycles instead of
 storing ~830 MB (240 MB as fp16) in every one. `openGCOV` opens

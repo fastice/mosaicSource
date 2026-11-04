@@ -374,8 +374,32 @@ applying weights, `-fl` feathering, min/max, orbit priority, and nearest date in
 Each input counts once, so a pixel covered by one S1 image and two overlapping GCOVs is
 (R + G₁ + G₂)/3 in linear power.
 
-The `.gamma0` limitation noted elsewhere applies here too: in average mode, `gBuf` is
-"last image wins" rather than averaged.
+**`.gamma0` is feathered like `.sigma0` whenever GCOVs are among the inputs (since 2026-11-03).**
+`.gamma0` is written as `.sigma0` + `gBuf` (dB). Before this, average mode set `gBuf` from the
+last input at each pixel ("last image wins"), so in overlaps gamma0 was the *blended* sigma0 plus
+*one* granule's RTC correction: order-dependent, and stepping at that granule's edge however long
+the feather. Now, with `-gcov` + `-S1Cal` + a `.gamma0` output in plain average mode, `gBuf`
+accumulates linear γ₀ with exactly sigma0's weights (`imageTmp·scaleTmp·weight`) next to a matching
+σ₀ sum (`gSig`), and `finalReScale` turns the pair into `10·log10(Σwγ₀/Σwσ₀)` (same 0.01 dB rounding
+and [-29.9, 35] clamp; shadow inputs, `gBufTmp == MINS1DB`, are left out of both sums). Range
+selection keeps its own pair for the unfiltered fallback. Not applied, and byte-identical to
+before: pure range/Doppler runs (they still use the last image's correction), `-calOutput gamma0`
+with GCOVs only (gamma0 is averaged directly, `gBufTmp` = 0), min/max, orbit priority and
+nearest date. `.inc` (`-S1Psi`) is still last-image.
+
+Measured on two overlapping cycle-30 granules (tracks 019/048 frame 140, 200 x 180 km at 100 m,
+`-fl 100`, `-calOutput both`), against gamma0 feathered directly (no `-S1Cal`):
+
+| | before | after |
+|---|---|---|
+| overlap − reference (median, p5..p95) | −0.178 (−0.225..−0.107) dB | 0.000 (±0.008) dB |
+| file order AB − BA | −0.39 dB | 0.000 (identical) |
+| step at the last granule's edge (5 px in − out) | −0.384 dB | −0.017 dB (reference −0.017) |
+
+`.sigma0` is byte-identical to before, as is `-calOutput gamma0` output and a `-nearRange` run.
+The residual ±0.008 dB is the two 0.01 dB roundings. A mixed range/Doppler + GCOV run (both feed
+the new sums) has not been run. The 100 m Antarctic cycle-030 mosaics (`calOutput: both`) predate
+this; the 25 m one (`calOutput: gamma0`) was never affected.
 
 ### Verification (2026-09-23, PIG, NISAR cycle 30 ascending)
 
