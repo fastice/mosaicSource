@@ -12,7 +12,8 @@
 /*
   Program to simulate InSAR image including both terrain and motion effects.
 */
-static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask);
+static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask,
+						 double xMin, double xMax, double yMin, double yMax);
 static void sampleSecondMask(sceneStructure *scene, ShelfMask *mask2, xyDEM *xyDem);
 /*  -mask2 maskFile outRoot (with -toLL -mask): also sample a second mask at the same final lat/lon and
     write the full -toLL output set for <outRoot> (.ll.vrt + lat/lon, .mask) exactly as for the main root.  Lets simoffsets build the
@@ -116,7 +117,7 @@ int main(int argc, char *argv[])
 	}
 	if (scene.maskFlag == TRUE && scene.velThresh == 0)
 	{
-		readMaskFile(displacementFile, imageMask);
+		readMaskFile(displacementFile, imageMask, xMin, xMax, yMin, yMax);
 		scene.imageMask = imageMask;
 		fprintf(stderr, "++++ %f  %f\n", imageMask->x0, imageMask->y0);
 	}
@@ -148,7 +149,7 @@ int main(int argc, char *argv[])
 			error("siminsar: -mask2 needs -toLL and -mask (and no -velThresh)\n");
 		}
 		imageMask2 = malloc(sizeof(ShelfMask));
-		readMaskFile(mask2File, imageMask2);
+		readMaskFile(mask2File, imageMask2, xMin, xMax, yMin, yMax);
 		sampleSecondMask(&scene, imageMask2, &xyDem);
 		fprintf(stderr, "Writing second mask %s -> %s.mask\n", mask2File, mask2Root);
 		outputSimulatedImage(scene, mask2Root, demFile, mask2File);
@@ -584,8 +585,45 @@ static void usage()
 /*
   Process input file for mosaicDEMs
 */
-static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask)
+/*
+  Index window [*i0, *i0 + *nOut) of a mask axis (origin v0, spacing dv, n samples) covering
+  [vMin, vMax] km plus one sample each side. vMax <= vMin (the 0,0,0,0 "no crop" sentinel
+  readXYDEMcrop also uses) or no overlap with the mask returns the full axis, which is the old
+  whole-mask read. Points outside the window then read GROUNDED, exactly as points outside the
+  whole mask always have.
+*/
+static void maskCropWindow(double v0, double dv, int32_t n, double vMin, double vMax,
+						   int32_t *i0, int32_t *nOut)
 {
+	int32_t iMin, iMax;
+	*i0 = 0;
+	*nOut = n;
+	if (vMax <= vMin)
+	{
+		return;
+	}
+	iMin = (int32_t)floor((vMin - v0) / dv) - 1;
+	iMax = (int32_t)ceil((vMax - v0) / dv) + 1;
+	if (iMin < 0)
+	{
+		iMin = 0;
+	}
+	if (iMax > n - 1)
+	{
+		iMax = n - 1;
+	}
+	if (iMax < iMin)
+	{
+		return;
+	}
+	*i0 = iMin;
+	*nOut = iMax - iMin + 1;
+}
+
+static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask,
+						 double xMin, double xMax, double yMin, double yMax)
+{
+	int32_t c0, nc, r0, nr;
 	fprintf(stderr, "ShelfMaskFile %s\n", shelfMaskFile);
 
 	if (has_extension(shelfMaskFile, ".tif") || has_extension(shelfMaskFile, ".vrt"))
@@ -649,21 +687,35 @@ static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask)
 				shelfMask->xSize, shelfMask->ySize, shelfMask->deltaX, shelfMask->deltaY,
 				shelfMask->x0, shelfMask->y0, shelfMask->rot, shelfMask->hemisphere, shelfMask->stdLat);
 
-		/* Read pixel data: GDAL row 0 = top; ShelfMask row 0 = bottom → flip Y */
-		unsigned char *tmp = (unsigned char *)malloc(nCols * nRows);
+		/* Crop to the scene bounds: c0/r0 index the bottom-up ShelfMask grid */
+		maskCropWindow(shelfMask->x0, shelfMask->deltaX, nCols, xMin, xMax, &c0, &nc);
+		maskCropWindow(shelfMask->y0, shelfMask->deltaY, nRows, yMin, yMax, &r0, &nr);
+		shelfMask->x0 += c0 * shelfMask->deltaX;
+		shelfMask->y0 += r0 * shelfMask->deltaY;
+		shelfMask->xSize = nc;
+		shelfMask->ySize = nr;
+		fprintf(stderr, "readMaskFile: crop %i x %i of %i x %i (col %i, row %i from bottom)\n",
+				nc, nr, nCols, nRows, c0, r0);
+
+		/* Read pixel data: GDAL row 0 = top; ShelfMask row 0 = bottom → flip Y.
+		   Bottom-up rows r0..r0+nr-1 are GDAL rows nRows-r0-nr..nRows-r0-1. */
+		unsigned char *tmp = (unsigned char *)malloc((size_t)nc * nr);
 		GDALRasterBandH hBand = GDALGetRasterBand(hDS, 1);
-		GDALRasterIO(hBand, GF_Read, 0, 0, nCols, nRows,
-					 tmp, nCols, nRows, GDT_Byte, 0, 0);
+		if (GDALRasterIO(hBand, GF_Read, c0, nRows - r0 - nr, nc, nr,
+						 tmp, nc, nr, GDT_Byte, 0, 0) != CE_None)
+		{
+			error("readMaskFile: read failed for %s\n", shelfMaskFile);
+		}
 		GDALClose(hDS);
 
-		unsigned char *storage = (unsigned char *)malloc(nCols * nRows);
-		shelfMask->mask = (unsigned char **)malloc(nRows * sizeof(unsigned char *));
+		unsigned char *storage = (unsigned char *)malloc((size_t)nc * nr);
+		shelfMask->mask = (unsigned char **)malloc(nr * sizeof(unsigned char *));
 		int32_t i;
-		/* mask[i] = bottom-up row i → must hold GDAL row (nRows-1-i) */
-		for (i = 0; i < nRows; i++)
+		/* mask[i] = bottom-up row i → must hold window row (nr-1-i) */
+		for (i = 0; i < nr; i++)
 		{
-			shelfMask->mask[i] = &storage[i * nCols];
-			memcpy(shelfMask->mask[i], &tmp[(nRows - 1 - i) * nCols], nCols);
+			shelfMask->mask[i] = &storage[(size_t)i * nc];
+			memcpy(shelfMask->mask[i], &tmp[(size_t)(nr - 1 - i) * nc], nc);
 		}
 		free(tmp);
 	}
@@ -709,19 +761,35 @@ static void readMaskFile(char *shelfMaskFile, ShelfMask *shelfMask)
 				shelfMask->xSize, shelfMask->ySize, shelfMask->deltaX, shelfMask->deltaY,
 				shelfMask->x0, shelfMask->y0, shelfMask->rot, shelfMask->hemisphere, shelfMask->stdLat);
 
+		/* Crop to the scene bounds; file rows are bottom-up, like mask[] */
+		int32_t fullX = shelfMask->xSize;
+		maskCropWindow(shelfMask->x0, shelfMask->deltaX, shelfMask->xSize, xMin, xMax, &c0, &nc);
+		maskCropWindow(shelfMask->y0, shelfMask->deltaY, shelfMask->ySize, yMin, yMax, &r0, &nr);
+		fprintf(stderr, "readMaskFile: crop %i x %i of %i x %i (col %i, row %i from bottom)\n",
+				nc, nr, shelfMask->xSize, shelfMask->ySize, c0, r0);
+		shelfMask->x0 += c0 * shelfMask->deltaX;
+		shelfMask->y0 += r0 * shelfMask->deltaY;
+		shelfMask->xSize = nc;
+		shelfMask->ySize = nr;
+
 		shelfMask->mask = (unsigned char **)
 			malloc(shelfMask->ySize * sizeof(unsigned char *));
-		tmp = (unsigned char *)malloc(shelfMask->xSize * shelfMask->ySize * sizeof(unsigned char));
+		tmp = (unsigned char *)malloc((size_t)shelfMask->xSize * shelfMask->ySize * sizeof(unsigned char));
 
 		fp = openInputFile(shelfMaskFile);
 		if (fp == NULL)
 			error("*** readShelf: Error opening %s ***\n", shelfMaskFile);
 		for (i = 0; i < shelfMask->ySize; i++)
 		{
-			tmp1 = &(tmp[i * shelfMask->xSize]);
+			tmp1 = &(tmp[(size_t)i * shelfMask->xSize]);
+			if (fseeko(fp, ((off_t)(r0 + i) * fullX + c0) * sizeof(unsigned char), SEEK_SET) != 0)
+			{
+				error("*** readShelf: seek failed in %s ***\n", shelfMaskFile);
+			}
 			freadBS(tmp1, sizeof(unsigned char), shelfMask->xSize, fp, BYTEFLAG);
 			shelfMask->mask[i] = tmp1;
 		}
+		fclose(fp);
 		fprintf(stderr, "%f %f \n", shelfMask->x0, shelfMask->y0);
 	}
 }

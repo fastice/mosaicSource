@@ -166,6 +166,21 @@ incompatible with any explicit baseline flag or `-geodat2`.
 
 ---
 
+## Cropped Input Reads
+
+`simInSARDEMBounds` samples 9 points of the scene, converts them to x/y and pads the box by
+50 km. The DEM (`readXYDEMcrop`), the velocity map (`readXYCropVel`), the vertical correction
+and, since 2026-11-05, the `-mask` and `-mask2` masks (`readMaskFile`) are read only inside
+that box. The masks are cropped in both the GDAL path (`.tif`/`.vrt`, a windowed `GDALRasterIO`)
+and the GrIMP binary path (one `fseeko` + row read per kept row), plus one pixel of margin.
+A point outside the window reads `GROUNDED`, which is what a point outside the whole mask always
+read, so the output is unchanged. Verified byte-identical against the previous binary for
+`-mask` with the 90 m binary and tif Greenland masks, and for `-toLL -mask -mask2` on an S1
+offsets frame (50 → 39 s, peak memory 7.6 → 7.1 GB). An all-zero box or a box that misses the
+mask falls back to reading the whole mask.
+
+---
+
 ## Supporting Functions
 
 ### `parseSceneFile`(sceneFile, scene) → void
