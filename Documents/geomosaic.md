@@ -600,9 +600,22 @@ files:
 This needed no I/O changes -- every GCOV read is already a `GDALOpen` -- but several incidental
 things had to be checked, and all hold:
 
-- The **system** GDAL 3.8.4 / HDF5 1.10.10 that `geomosaic` links reads remote HDF5, not just
-  the newer conda stack. Both the container open (for the flattened `..._projection_epsg_code`
-  attributes) and the subdataset opens work.
+- Remote HDF5 works on both the old **system** GDAL 3.8.4 / HDF5 1.10.10 this was first tested
+  against and the **conda** stack `geomosaic` links today (`libgdal.so.36`, `libhdf5.so.310`,
+  `libproj.so.25`; `/opt/conda/lib` on the AWS container). The subdataset opens and the
+  container open both work -- but the container open is **no longer a plain `GDALOpen`**, and
+  must not be turned back into one. See the next bullet.
+- **The container open is pinned to the HDF5 driver**, with `GDALOpenEx` and
+  `allowed_drivers = {"HDF5", NULL}`. This is required for correctness, not speed. Where the
+  NISAR plugin (`gdal_NISAR.so`) is installed it also claims plain `.h5` GCOV files, and it
+  exposes the product attributes under their real HDF5 paths
+  (`/science/LSAR/GCOV/grids/frequencyA/...`) rather than the flattened names the HDF5 driver
+  invents (`science_LSAR_GCOV_grids_frequencyA_projection_epsg_code`) that `getEPSGAttribute`
+  looks up. Letting GDAL choose makes every attribute read return NULL as soon as the plugin is
+  present: an **unchanged** binary starts failing every granule with
+  `openGCOV: no science_LSAR_GCOV_grids_frequencyA_projection_epsg_code in <file>`. Observed on
+  petermann once the plugin was installed, with no source change. `openGeoRaster` keeps the
+  generic open on purpose -- in `-geo` mode the input is a VRT or GeoTIFF.
 - The float16 fast path probes with `H5Fopen`, which cannot take a `/vsi` path. It already
   silences HDF5 errors and returns FALSE, so it falls back to GDAL cleanly. Full ASF products
   are float32 anyway; a remote **slim** product would lose the fp16 fast path.
@@ -622,6 +635,73 @@ or an expired presigned URL, there is no redundancy, and skipping every input yi
 all-nodata mosaic that **exits 0 and looks finished**. That was observed during testing (a DNS
 failure produced a complete, empty, successful-looking product), so `openGCOV` now `error()`s
 on a failed open when the path starts with `/vsi`.
+
+**A failed READ is retried, not fatal.** A granule is thousands of range requests, and ASF
+answers one with a 503 often enough to matter. Every such error used to kill the tile:
+`reduceGCOV` called `error()`, and a global run lost the tile for a reason that would have gone
+away on a second attempt. Observed for real on a cycle-030 tile, on the second of sixteen
+granules:
+
+```
+ERROR 1: Request for 3128950208-3128950761 failed with response_code=503
+error:  reduceGCOV: mask read error
+```
+
+`rasterIORetry` now wraps the gamma, factor and mask strip reads -- 3 attempts at 5/10/15 s,
+logging the GDAL message and resetting the error state between tries, and the fatal message
+reads `after N retries` so a real failure stays distinguishable from a blip. It sits above
+`GDALRasterIO`, so it covers whichever driver opened the band. The float16 fast path is
+deliberately **not** retried: that is libhdf5 on a local file, where a failure is not transient.
+
+**`GDAL_HTTP_MAX_RETRY` does not make this redundant.** The run above had it set to 5. GDAL
+retries some requests, but a 503 inside the block-read path still returns through `IReadBlock`
+as `CE_Failure`, so the tile dies anyway. Confirmed by serving a granule over local HTTP with
+injected 503s: with `GDAL_HTTP_MAX_RETRY=0` the failures reach `rasterIORetry`, 9 fired, every
+one recovered on the first attempt, and the tile came out bit-identical to a fault-free run.
+
+### The NISAR GDAL plugin: `GRIMP_NISAR_DRIVER`
+
+Where `gdal_NISAR.so` is installed, the large 2-D arrays can be read through it instead of the
+HDF5 driver. `nisarSubdataset` picks per path, and the two drivers need opposite spellings --
+`HDF5:"file"://science/...` against `NISAR:"file":/science/...`, each rejecting the other's
+form, which is why they cannot share one format string.
+
+| `GRIMP_NISAR_DRIVER` | effect |
+|---|---|
+| unset, or `0` | HDF5 driver everywhere. The default. |
+| `remote` or `2` | NISAR plugin for `/vsi` paths only |
+| `all` or `1` | NISAR plugin for every path |
+
+Asking for it when no NISAR driver is installed is an `error()`, not a silent fallback. The
+coordinate vectors and the incidence cube always stay on the HDF5 driver.
+
+It is **off by default** because the trade is not one-sided. Reading one HHHH band (1.60 GB
+stored) for a global tile over `/vsicurl`, against ASF:
+
+| | transferred | wall | sockets |
+|---|---|---|---|
+| HDF5 driver, tuned | 1795 MB (1.10x stored) | 317 s | 2 |
+| NISAR plugin | 2023 MB (1.24x stored) | 96 s | 28 |
+
+So it moves **more** bytes and is 3.3x faster, and the output is bit-identical. The win is not
+volume, it is latency: every HDF5 configuration costs a flat ~0.16-0.20 s per request because
+libhdf5 blocks on one chunk at a time, while the plugin keeps ~28 range requests in flight.
+That makes it worth having when bandwidth is idle, and worth nothing once it is not -- at high
+`--nProc` the link saturates, total bytes decide, and the plugin's extra 13% makes it slightly
+worse while opening ~28 sockets per job. It is also **6-10x slower on a local file**, which is
+why it is never used for one.
+
+Note the interaction with the read retry: the plugin issues ~28 requests inside one
+`GDALRasterIO`, so if any of them 503s the whole strip read is retried and the other 27 are
+re-fetched. Under throttling that amplifies transfer, in the regime where bytes already bind.
+
+**The `/vsicurl` chunk and cache settings matter more than the driver choice.** A GCOV band is
+gzipped in 512x512 chunks (~0.26 MB compressed) and `reduceGCOV` walks it in strips, so a large
+`CPL_VSIL_CURL_CHUNK_SIZE` fetches far more than it needs, and one chunk ROW is 20.8 MB against
+GDAL's 16.4 MB default cache -- so strips evict each other and re-download. Measured on the same
+band: 4 MB chunk with the default cache moves **12760 MB in 1055 s**, against 1795 MB in 317 s
+at 64 kB chunk + 256 MB cache. `globalMosaic`'s `runGeomosaicTiles` sets the latter; its README
+has the full table.
 
 **Direct S3 is region-locked, not unsupported.** `earthaccess.get_s3_credentials(daac='ASF')`
 returns working credentials whose role is named `sentinel-prod-tea-DownloadRoleInRegion`, and
