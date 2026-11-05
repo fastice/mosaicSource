@@ -804,6 +804,11 @@ in `cpAll`. `nIterTotal` uses `reduction(+: nIterTotal)`; progress prints are gu
 `myThread == 0`. Remember the two-Makefile `-fopenmp` pattern (root CLAUDE.md). Not yet validated
 against serial output (`-ompThreads 1` vs `N` diff) on a real scene.
 
+**Every map input is cropped to `simInSARDEMBounds`** (scene box + 50 km): DEM, velocity, vertical
+correction, and, since a1d48e7 (2026-11-05), the `-mask`/`-mask2` masks in `readMaskFile`, which
+used to read the whole file (499 MB for the 90 m Greenland binary mask). Output is byte-identical;
+see `Documents/simInSAR.md` "Cropped Input Reads". A new map input should take the same bounds.
+
 ## Debug residual GeoPackage output (`-debug`/`-outputFile`, tiepoints/rparams/azparams)
 
 `tiepoints`, `rparams`, and `azparams` each fit a least-squares baseline/calibration
