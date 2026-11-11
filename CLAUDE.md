@@ -1639,7 +1639,7 @@ marks where the DEM cannot be trusted -- fast outlets whose termini have moved. 
 fallback's slope is pulled toward S: `s *= 1 - t(1 - S/|s|)` when |s| > S. t = 0 pixels are exactly the old solve. The mask is
 sampled once per sector (`threeDMaskOnGrid`, via `common/iceRockMask.c:sampleMaskFloat`, one
 window read through the mask's own PROJ). The reported 2D vz still uses the DEM slope, like the
-other caps. Mask builder: `newGreenlandProject/threeDMask/makeThreeDMask.py` (fast ice within
+other caps. Mask builder: `/Volumes/insar9/ian/Sentinel1/threeDMask/makeThreeDMask.py` (mask `threeDMask.tif` beside it) (fast ice within
 15 km of water, where water = GIMP water + the seasonal `MaskAreas` polygons, t ramping 1 -> 0
 across a 2 km grow zone).
 
