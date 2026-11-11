@@ -1770,6 +1770,12 @@ the plain 2D `-hopper` (not extended), `-legacyCode`, and runs with no SAR input
   run-to-run noise (4e-4 m/yr).
 - Landsat rows are added after the SAR loop (they reuse the common offsets buffers); they appear in
   `-obsDump` as type `landsat`; pixels with only Landsat rows solve in 2D (`nRange` = 0).
+- **Empty-region skip (fixed 2026-11-11).** `landSatPrepareImage` used to reject only pairs
+  lying below/left of the output grid (`iMax > 0 && jMax > 0`); a pair above/right of it clamps to
+  an empty range (iMin >= iMax) and its offsets were read anyway, so every sector read nearly every
+  pair in the window (JJA 2026: 10,689 of 15,191 for one 20 km box, 372 needed). Now also rejects
+  iMin >= iMax / jMin >= jMax: identical output (all 10 bands), 595 s -> 97 s on that box; a 2x2
+  pixel box took 22 min before, i.e. Landsat reads were most of each production sector's time.
 - Rows are NOT feathered at Landsat footprint edges (the round was). Not seen as seams in the three
   glacier test boxes, but check full-sheet products where Landsat dominates.
 - Tested on Jakobshavn / Kangerlussuaq / Helheim 100 m boxes (Release/experimentalAnnual/glacierTests):

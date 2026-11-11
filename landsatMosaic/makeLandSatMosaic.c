@@ -83,7 +83,11 @@ int32_t landSatPrepareImage(landSatImage *currentImage, outputImageStructure *ou
 		*iMax = -1;
 		*jMax = -1;
 	}
-	if (!(*iMax > 0 && *jMax > 0))
+	/* After getLSRegion's clamping a pair lying wholly above or right of the grid has
+	   iMin >= iMax (or jMin >= jMax): no output pixel, so skip it before reading its offsets.
+	   Testing only iMax/jMax > 0 caught pairs below/left of the grid only, so every sector
+	   read every such pair (24 sectors x ~15k pairs a quarter). */
+	if (!(*iMax > 0 && *jMax > 0) || *iMin >= *iMax || *jMin >= *jMax)
 	{
 		return FALSE;
 	}
