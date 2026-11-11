@@ -223,7 +223,13 @@ static void parseDeltaTGeojson(OGRFeatureH myFeature, inputImageStructure *input
 {
 	double deltaTCorrect = 0.0;
 
-	deltaTCorrect = OGR_F_GetFieldAsDouble(myFeature, OGR_F_GetFieldIndex(myFeature, "deltaT"));
+	// deltaT is absent from some geojsons (e.g. S1 phase); reading index -1 makes GDAL print
+	// "Invalid index : -1" and return 0, so only read it when present (0 either way).
+	int32_t deltaTIndex = OGR_F_GetFieldIndex(myFeature, "deltaT");
+	if (deltaTIndex >= 0)
+	{
+		deltaTCorrect = OGR_F_GetFieldAsDouble(myFeature, deltaTIndex);
+	}
 	// Correction from SLC to ML coordinates when no deltaT (<1e-6)
 	if(fabs(deltaTCorrect) < 1e-6)
 		deltaTCorrect += (inputImage->nAzimuthLooks - 1.0) * 0.5 / inputImage->par.prf;
