@@ -142,6 +142,43 @@ landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1,
 	return (firstImage);
 }
 
+/*
+  EPSG of the first product in a Landsat list file, from its .dat (the value
+  lstrack stamps on the product and on its tiffs), or -1 if there is none.
+  Used to pick the hemisphere of a Landsat-only mosaic, which has no SAR control
+  points to take it from.
+*/
+int32_t firstLSProductEPSG(char *inputFile)
+{
+	FILE *fp;
+	char *line, *matchFile;
+	lsFit fitDat;
+	matchResult matches;
+	int32_t epsg = -1;
+
+	line = (char *)malloc(sizeof(char) * (LINEMAX + 1));
+	fp = openInputFile(inputFile);
+	while (fgetline(fp, line, LINEMAX) > 0 && strchr(line, ENDDATA) == NULL)
+	{
+		if (strchr(line, COMMENT) != NULL)
+		{
+			continue;
+		}
+		matchFile = strtok(stripWS(line), " ");
+		if (matchFile == NULL)
+		{
+			continue;
+		}
+		fitDat.matchFile = matchFile;
+		readLSOffsets(&fitDat, &matches, FALSE, NULL); /* .dat metadata only */
+		epsg = fitDat.proj;
+		break;
+	}
+	fclose(fp);
+	free(line);
+	return (epsg);
+}
+
 static void parseFitFile(lsFit *fitDat)
 {
 	int32_t notdone, i, j;						/* Loop flag */

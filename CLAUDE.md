@@ -1776,6 +1776,14 @@ the plain 2D `-hopper` (not extended), `-legacyCode`, and runs with no SAR input
   pair in the window (JJA 2026: 10,689 of 15,191 for one 20 km box, 372 needed). Now also rejects
   iMin >= iMax / jMin >= jMax: identical output (all 10 bands), 595 s -> 97 s on that box; a 2x2
   pixel box took 22 min before, i.e. Landsat reads were most of each production sector's time.
+- **Hemisphere of a Landsat-only run (since 2026-11-11).** With no SAR inputs `get3DProj` has no
+  control points, and used to default to SOUTH unless `-north` was given. Since mosaicSource 0438b57
+  crops the DEM in DEM coordinates, a Greenland quickLook without `-north` then failed at
+  `readXYDEMcrop` (the Greenland box reprojected out of the 3413 DEM), which removed every pair's
+  `velocity/mask` and made the masked fits reject it. `get3DProj` now takes the hemisphere from the
+  first Landsat product's `.dat` EPSG (`firstLSProductEPSG`, `landsatMosaic/parseLSInputs.c`), so
+  the flag is no longer needed. `-north` still wins, and with no EPSG the old south default stands.
+  Verified: a no-flag run is byte-identical to `-north`, and `-north` is unchanged.
 - Rows are NOT feathered at Landsat footprint edges (the round was). Not seen as seams in the three
   glacier test boxes, but check full-sheet products where Landsat dominates.
 - Tested on Jakobshavn / Kangerlussuaq / Helheim 100 m boxes (Release/experimentalAnnual/glacierTests):

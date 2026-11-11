@@ -24,6 +24,7 @@ typedef struct lsPixelSetupType
 } lsPixelSetup;
 
 landSatImage *parseLSInputs(char *inputFile, landSatImage *LSImages, double jd1, double jd2, int32_t timeOverlapFlag, double *minJD, double *maxJD);
+int32_t firstLSProductEPSG(char *inputFile);
 void makeLandSatMosaic(landSatImage *LSImages, outputImageStructure *outputImage, float fl);
 int32_t landSatPrepareImage(landSatImage *currentImage, outputImageStructure *outputImage, lsPixelSetup *c,
 							int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax);

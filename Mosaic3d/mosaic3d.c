@@ -52,7 +52,7 @@ static void logInputFiles3d(outputImageStructure *outputImage, char **geodatFile
 							char **rOffsetFiles, char **rParamsFiles, char **offsetFiles, char **azParamsFiles, float *nDays, float *weights,
 							int32_t *crossFlags, int32_t nFiles, int32_t offsetFlag);
 static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descImages, int32_t nAsc, int32_t nDesc,
-					  int32_t northFlag, outputImageStructure *outputImage);
+					  int32_t northFlag, char *landSatFile, outputImageStructure *outputImage);
 static void malloc3DBuffers();
 static void init3DImages(outputImageStructure *outputImage, referenceVelocity *refVel);
 static void consolodateLists(inputImageStructure **images, vhParams **params, inputImageStructure *ascImages,
@@ -347,7 +347,7 @@ int main(int argc, char *argv[])
 	/*
 	  Determine hemisphere
 	*/
-	get3DProj(ascImages, descImages, nAsc, nDesc, args.north, &outputImage);
+	get3DProj(ascImages, descImages, nAsc, nDesc, args.north, args.landSatFile, &outputImage);
 	/* Historical workflow: a DEM that declares NO projection of its own -- a legacy .geodat
 	   that stops at '&', which most pre-2021 DEMs do -- takes its grid from the HEMISPHERE
 	   OF THE DATA.  That is what get3DProj did before the Aug-2021 change to "use the dem to
@@ -1063,11 +1063,13 @@ static void malloc3DBuffers()
 		error("Error allocating 3D buffers");
 }
 
-static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descImages, int32_t nAsc, int32_t nDesc, int32_t northFlag, outputImageStructure *outputImage)
+static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descImages, int32_t nAsc, int32_t nDesc, int32_t northFlag,
+					  char *landSatFile, outputImageStructure *outputImage)
 {
 	extern int32_t HemiSphere;
 	extern double Rotation;
 	float lat;
+	int32_t lsEPSG;
 
 	fprintf(outputImage->fpLog, "; Determining Hemisphere\n;\n");
 	if (nAsc != 0)
@@ -1076,7 +1078,23 @@ static void get3DProj(inputImageStructure *ascImages, inputImageStructure *descI
 		lat = descImages->latControlPoints[1];
 	else
 	{
-		if (northFlag == FALSE)
+		/* A Landsat-only run has no SAR control points, so take the hemisphere from
+		   the first Landsat product's EPSG (its .dat) rather than defaulting to south,
+		   which put every Greenland quickLook in the wrong hemisphere unless the caller
+		   remembered -north. -north still wins; no Landsat, or no EPSG, keeps the old
+		   default. */
+		lsEPSG = -1;
+		if (northFlag == FALSE && landSatFile != NULL)
+		{
+			lsEPSG = firstLSProductEPSG(landSatFile);
+		}
+		if (lsEPSG > 0)
+		{
+			lat = (grimpProjFromEPSG(lsEPSG).hemisphere == NORTH) ? 80. : -80.;
+			fprintf(stderr, "*** No Asc or Desc images - hemisphere from Landsat EPSG %i ***", lsEPSG);
+			fprintf(outputImage->fpLog, "; *** No Asc or Desc images - hemisphere from Landsat EPSG %i ***", lsEPSG);
+		}
+		else if (northFlag == FALSE)
 		{
 			fprintf(stderr, "*** No Asc or Desc images specified - assuming south ***");
 			lat = -80.;
@@ -2782,7 +2800,7 @@ static void usage()
 		  " \t-shelfMask shelfMask -fl fl | -flkm km  -rOffsets -timeThresh timeThresh -irregFile irregFile -vzFlag flag -stats -noSepAscDesc -noTide -ompThreads N \\",
 		  " \tinputFile demFile outPutImage\n",
 		  " where :",
-		  "\tnorth =\t\t\t Force northern hemisphere",
+		  "\tnorth =\t\t\t Force northern hemisphere (Landsat-only runs take it from the products EPSG)",
 		  "\tGTiff =\t\t\t Save to geotiff files (-tiffPredictor: lossless float predictor, ~25% smaller)",
 		  "\tCOG =\t\t\t Save to Cloud Optimized Geotiff",
 		  "\twriteBlank =\t\t\t Force writing of results with no data",

@@ -34,7 +34,7 @@ mosaic3d [options] inputFile demFile outFileBase
 | Option                                 | Description |
 |----------------------------------------|-------------|
 | `-fl <length>`                         | Feathering length (m) at image edges for blending overlapping inputs |
-| `-north`                               | Force northern hemisphere projection |
+| `-north`                               | Force northern hemisphere projection. Only needed without SAR inputs; since 2026-11-11 a Landsat-only run takes the hemisphere from the first Landsat product's `.dat` EPSG, and defaults to south only if there is none |
 | `-shelfMask <file>`                    | Ice-shelf and grounding-zone mask for tidal corrections |
 | `-noTide`                              | Skip tidal correction even on shelf pixels |
 | `-tideFile <file>`                     | Tidal model file for shelf corrections |
