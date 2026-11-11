@@ -274,6 +274,10 @@ extern double maxChi2;
 extern double chi2SpeedFrac;
 /*  -maxSurfaceSlope: cap on |grad z| in the hopper3D surface-parallel coupling, -1 = off (mosaic3d.c). */
 extern double maxSurfaceSlope;
+/*  -threeDMask / -threeDMaskMaxSigma / -threeDMaskSlope: hopper3D region mask (mosaic3d.c). */
+extern char *threeDMaskFile;
+extern double threeDMaskMaxSigma;
+extern double threeDMaskSlope;
 double chi2ForGate(double chi2, double nObs, double sumW, double vx, double vy);
 
 /*  Per-observation dump at a short list of lat/lon points (-obsDump pointsFile).

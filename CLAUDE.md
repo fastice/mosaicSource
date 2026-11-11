@@ -1630,6 +1630,32 @@ swath edges. No new flag -- `-fl 0` is the old behaviour (verified byte-identica
 - **Memory:** 16 double + 6 float scratch planes per sector (~150 B/px). The 2D `-hopper`
   (`mosaicHopper.c`) is NOT changed.
 
+### Region mask for the 3D solve (`-threeDMask`, since 2026-11-10)
+
+`-threeDMask t.tif` (GeoTIFF, any CRS, value t clipped to [0,1]; hopper3D only, else `error()`)
+marks where the DEM cannot be trusted -- fast outlets whose termini have moved. Where t > 0 the
+3D/2D toggle uses `-threeDMaskMaxSigma` (default 50, `-hopper3DMaxSigma` convention, -1 = never
+3D) and, if `-threeDMaskSlope S` >= 0 is given (default -1 = keep the DEM slope), the 2D
+fallback's slope is pulled toward S: `s *= 1 - t(1 - S/|s|)` when |s| > S. t = 0 pixels are exactly the old solve. The mask is
+sampled once per sector (`threeDMaskOnGrid`, via `common/iceRockMask.c:sampleMaskFloat`, one
+window read through the mask's own PROJ). The reported 2D vz still uses the DEM slope, like the
+other caps. Mask builder: `newGreenlandProject/threeDMask/makeThreeDMask.py` (fast ice within
+15 km of water, where water = GIMP water + the seasonal `MaskAreas` polygons, t ramping 1 -> 0
+across a 2 km grow zone).
+
+Verified on the summer-2026 Jak/Kang/Hel 100 m boxes
+(`Release/experimentalAnnual/glacierTests/summer2026Mask`): C's in-mask pixel count equals a
+Python count of the mask exactly; outside the mask both mask runs match 2D to <5e-4 m/yr; inside,
+mask3D matches the 3D run to <1e-3 where it chose 3D (96-98% of mask pixels); the zero-slope
+fallback reproduces an offline `obsDump.solve2D` exactly.
+
+**Why the fallback keeps the DEM slope by default** (changed from 0 the same day): the all-data
+2D solve was closer to the summer 3D solution with the DEM slope at 17 of 20 points (median 105 vs
+252 m/yr for slope 0; zeroing multiplied the error 2-13x at the Jakobshavn/Kangerlussuaq front
+points). Only at a stale-DEM terminus (Helheim, 0.4 km behind the 2026 front) did a cap (0.02) or
+slope 0 win. With the default, the in-mask fallback equals the plain 2D run (verified, <2e-4).
+Details and figures: that directory's README.md, `backupError.png`, `perTake_front.png`.
+
 ### Diagnostic bands
 
 `.nobs`, `.chi2`, `.vz3d`, `.ez` (a VARIANCE in-buffer — `mosaic3d.c:942-945` sqrts it on output)

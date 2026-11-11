@@ -112,6 +112,7 @@ static double computePhiFlatEarthM3dHop3(double azimuth, vhParams *vhParam, inpu
 static float **mallocZeroImageHop3(int32_t nr, int32_t nc);
 static HOPPER3DACC **mallocZeroDoubleHop3(int32_t nr, int32_t nc);
 static void freeImageHop3(float **image, int32_t nr);
+static float **threeDMaskOnGrid(outputImageStructure *outputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
 static void freeDoubleHop3(HOPPER3DACC **image, int32_t nr);
 static void hop3FoldTapered(outputImageStructure *outputImage, float fl,
 							int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax, float **taper, float **tMax,
@@ -171,6 +172,7 @@ void mosaicHopper3D(inputImageStructure *ascImages, inputImageStructure *descIma
 	float **gW, **gW2;
 	float **chi2Plane;
 	float **vZ3D, **errZ, **modeBand;			 /* solved vertical, its VARIANCE, and 3-vs-2 per pixel */
+	float **regionMask = NULL;					 /* -threeDMask weight t in [0,1], NULL when off */
 	float **sumW, **sumWT;		 /* timeOverlapFlag only; NULL otherwise */
 	/*  Per-product edge taper (fl > 0).  Each product accumulates into the t* scratch planes,
 	    which are then folded into the totals scaled by a computeScaleLS() ramp from that
@@ -964,6 +966,10 @@ da = azOffsetToFlightDirection(da, myImg);
 	nRejClip = 0;
 	nObsSum = 0.0;
 	nObsMax = 0.0;
+	if (threeDMaskFile != NULL && nUsed > 0 && iMaxAll > iMinAll && jMaxAll > jMinAll)
+	{
+		regionMask = threeDMaskOnGrid(outputImage, iMinAll, iMaxAll, jMinAll, jMaxAll);
+	}
 	if (nUsed > 0 && iMaxAll > iMinAll && jMaxAll > jMinAll)
 	{
 #pragma omp parallel for schedule(dynamic, 8) \
@@ -976,6 +982,7 @@ da = azOffsetToFlightDirection(da, myImg);
 			double vx, vy, vz, scX, scY, deltaOffCenter, gateCap, gateSpd;
 			double sx, sy, lam3, det3, Cinv[3][3], nRange, nGate, gateN;
 			double B[2][2], dzdx, dzdy;
+			double tW, gate3D;
 			double sigWorst, covXX = 0.0, covYY = 0.0; /* exact tapered covariance (Q != NULL only) */
 			int32_t use3D;
 			unsigned char sMask2;
@@ -1025,6 +1032,20 @@ da = azOffsetToFlightDirection(da, myImg);
 						sy *= maxSurfaceSlope / sMag;
 					}
 				}
+				/*  -threeDMask: pull the slope toward threeDMaskSlope by the mask weight t, so
+				    t = 1 caps |s| at threeDMaskSlope (0 zeroes it).  Only the 2D fallback uses
+				    sx/sy; the reported vz below still uses the DEM slope, as for the caps above. */
+				tW = (regionMask != NULL) ? (double)regionMask[i][jj] : 0.0;
+				if (tW > 0.0 && threeDMaskSlope >= 0.0)
+				{
+					double sMag = sqrt(sx * sx + sy * sy);
+					if (sMag > threeDMaskSlope)
+					{
+						double f = 1.0 - tW * (1.0 - threeDMaskSlope / sMag);
+						sx *= f;
+						sy *= f;
+					}
+				}
 				/*  Dumped AFTER the shelf carve-out, so it is the sx/sy the projection
 				    actually uses -- not the raw DEM slope. */
 				obsDumpPixel(i, jj, sx, sy);
@@ -1039,11 +1060,13 @@ da = azOffsetToFlightDirection(da, myImg);
 				        < 0   force the 2D projection everywhere (reduction test A)
 				        == 0  gate off -- 3D wherever N3 is invertible
 				        > 0   the n-normalised gate */
-				use3D = (hopper3DMaxSigma >= 0.0) &&
+				/*  Inside -threeDMask the gate is threeDMaskMaxSigma, same convention. */
+				gate3D = (tW > 0.0) ? threeDMaskMaxSigma : hopper3DMaxSigma;
+				use3D = (gate3D >= 0.0) &&
 						(lam3 > 0.0) && (nObs[i][jj] >= 2.5) && (nRange >= 1.5) &&
-						(hopper3DMaxSigma == 0.0 ||
+						(gate3D == 0.0 ||
 						 (1.0 / sqrt(lam3)) * ((gateAbsolute == TRUE) ? 1.0 : sqrt(nRange))
-							 <= hopper3DMaxSigma);
+							 <= gate3D);
 				if (use3D == TRUE)
 				{
 					if (invSym3(n11, n12, n13, n22, n23, n33, Cinv, &det3) == FALSE)
@@ -1309,6 +1332,7 @@ da = azOffsetToFlightDirection(da, myImg);
 							  errorX, errorY, scaleX, scaleY, scaleZ, fScale, vxTmp, vyTmp, vzTmp, sxTmp, syTmp, FALSE);
 		}
 	}
+	freeImageHop3(regionMask, outputImage->ySize);
 	free(localImgs);
 	fprintf(stderr, "mosaicHopper3D: solved %ld (3D %ld / 2D %ld)  rejCond %ld  rejClip %ld  rejNoData %ld  meanNobs %.2f  maxNobs %.0f\n",
 			(long)nSolved, (long)nSolved3D, (long)nSolved2D, (long)nRejCond, (long)nRejClip, (long)nRejNoData,
@@ -1452,6 +1476,56 @@ static void freeDoubleHop3(HOPPER3DACC **image, int32_t nr)
 /*
   mallocImage() mallocs row by row and does NOT zero -- the accumulators must start at 0.
 */
+/*
+  -threeDMask: sample the region mask at every output pixel of [iMin,iMax) x [jMin,jMax), once,
+  before the solve.  Values are clipped to [0,1]; off-mask and no-data pixels are 0, i.e.
+  ordinary pixels.
+*/
+static float **threeDMaskOnGrid(outputImageStructure *outputImage, int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
+{
+	float **mask, *t;
+	double *lat, *lon;
+	int32_t i, j, k, nc = jMax - jMin, n = (iMax - iMin) * (jMax - jMin);
+	long nIn = 0;
+	lat = (double *)malloc((size_t)n * sizeof(double));
+	lon = (double *)malloc((size_t)n * sizeof(double));
+	for (i = iMin; i < iMax; i++)
+	{
+		double y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+		for (j = jMin; j < jMax; j++)
+		{
+			double x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
+			k = (i - iMin) * nc + (j - jMin);
+			xyToLLProj(x, y, &lat[k], &lon[k], &(outputImage->proj));
+		}
+	}
+	t = sampleMaskFloat(threeDMaskFile, lat, lon, n, 0.0f);
+	if (t == NULL)
+	{
+		error("threeDMask: cannot read %s", threeDMaskFile);
+	}
+	mask = mallocZeroImageHop3(outputImage->ySize, outputImage->xSize);
+	for (i = iMin; i < iMax; i++)
+	{
+		for (j = jMin; j < jMax; j++)
+		{
+			float v = t[(i - iMin) * nc + (j - jMin)];
+			v = (v > 1.0f) ? 1.0f : ((v > 0.0f) ? v : 0.0f);
+			mask[i][j] = v;
+			if (v > 0.0f)
+			{
+				nIn++;
+			}
+		}
+	}
+	fprintf(stderr, "threeDMask: %s -- %ld of %i solve-window pixels in mask\n", threeDMaskFile, nIn, n);
+	fprintf(outputImage->fpLog, "; mosaicHopper3D threeDMask px : %ld of %i\n", nIn, n);
+	free(t);
+	free(lat);
+	free(lon);
+	return mask;
+}
+
 static float **mallocZeroImageHop3(int32_t nr, int32_t nc)
 {
 	float **tmp;

@@ -175,3 +175,142 @@ int32_t keepIceTiePoints(tiePointsStructure *tiePoints, char *maskFile)
 	tiePoints->npts = k;
 	return (n - k);
 }
+
+/*
+  Sample band 1 of a single-band raster (any CRS) at a list of lat/lon points, nearest pixel,
+  as float.  Used by mosaic3d -threeDMask, which samples every output pixel of a sector, so
+  unlike sampleIceRockMask it transforms all points first and reads ONE window covering them.
+  Points off the raster, or on its nodata value, get `outside`.  Returns a malloc'd array of
+  length n, or NULL (with a message) if the raster cannot be read.
+*/
+float *sampleMaskFloat(char *maskFile, double *lat, double *lon, int32_t n, float outside)
+{
+	GDALDatasetH hDS;
+	GDALRasterBandH hBand;
+	OGRSpatialReferenceH srcSRS = NULL, dstSRS = NULL;
+	OGRCoordinateTransformationH ct = NULL;
+	double gt[6], invGt[6], noData;
+	double *px, *py, *pz;
+	float *out = NULL, *win = NULL;
+	const char *proj;
+	int *ok;
+	int32_t i, xSize, ySize, ix0, iy0, ix1, iy1, nx, ny, hasNoData;
+
+	if (maskFile == NULL || n <= 0)
+		return (NULL);
+	GDALAllRegister();
+	hDS = GDALOpen(maskFile, GA_ReadOnly);
+	if (hDS == NULL)
+	{
+		fprintf(stderr, "sampleMaskFloat: cannot open %s\n", maskFile);
+		return (NULL);
+	}
+	proj = GDALGetProjectionRef(hDS);
+	if (GDALGetGeoTransform(hDS, gt) != CE_None || !GDALInvGeoTransform(gt, invGt) ||
+		proj == NULL || strlen(proj) == 0)
+	{
+		fprintf(stderr, "sampleMaskFloat: %s has no usable geotransform/projection\n", maskFile);
+		GDALClose(hDS);
+		return (NULL);
+	}
+	xSize = GDALGetRasterXSize(hDS);
+	ySize = GDALGetRasterYSize(hDS);
+	hBand = GDALGetRasterBand(hDS, 1);
+	noData = GDALGetRasterNoDataValue(hBand, &hasNoData);
+	srcSRS = OSRNewSpatialReference(NULL);
+	dstSRS = OSRNewSpatialReference(NULL);
+	OSRSetFromUserInput(srcSRS, "EPSG:4326");
+	OSRImportFromWkt(dstSRS, (char **)&proj);
+	OSRSetAxisMappingStrategy(srcSRS, OAMS_TRADITIONAL_GIS_ORDER);
+	OSRSetAxisMappingStrategy(dstSRS, OAMS_TRADITIONAL_GIS_ORDER);
+	ct = OCTNewCoordinateTransformation(srcSRS, dstSRS);
+	if (ct == NULL)
+	{
+		fprintf(stderr, "sampleMaskFloat: cannot build transform to the mask CRS\n");
+		OSRDestroySpatialReference(srcSRS);
+		OSRDestroySpatialReference(dstSRS);
+		GDALClose(hDS);
+		return (NULL);
+	}
+	/* Transform every point to fractional pixel coordinates, tracking the bounding window */
+	px = (double *)malloc((size_t)n * sizeof(double));
+	py = (double *)malloc((size_t)n * sizeof(double));
+	pz = (double *)calloc((size_t)n, sizeof(double));
+	ok = (int *)malloc((size_t)n * sizeof(int));
+	for (i = 0; i < n; i++)
+	{
+		px[i] = lon[i];
+		py[i] = lat[i];
+	}
+	OCTTransformEx(ct, n, px, py, pz, ok);
+	ix0 = xSize;
+	iy0 = ySize;
+	ix1 = -1;
+	iy1 = -1;
+	for (i = 0; i < n; i++)
+	{
+		double fx, fy;
+		if (!ok[i])
+		{
+			continue;
+		}
+		fx = invGt[0] + invGt[1] * px[i] + invGt[2] * py[i];
+		fy = invGt[3] + invGt[4] * px[i] + invGt[5] * py[i];
+		px[i] = floor(fx);
+		py[i] = floor(fy);
+		if (px[i] < 0 || py[i] < 0 || px[i] >= xSize || py[i] >= ySize)
+		{
+			ok[i] = FALSE;
+			continue;
+		}
+		if ((int32_t)px[i] < ix0) { ix0 = (int32_t)px[i]; }
+		if ((int32_t)px[i] > ix1) { ix1 = (int32_t)px[i]; }
+		if ((int32_t)py[i] < iy0) { iy0 = (int32_t)py[i]; }
+		if ((int32_t)py[i] > iy1) { iy1 = (int32_t)py[i]; }
+	}
+	out = (float *)malloc((size_t)n * sizeof(float));
+	for (i = 0; i < n; i++)
+	{
+		out[i] = outside;
+	}
+	if (ix1 >= ix0 && iy1 >= iy0)
+	{
+		nx = ix1 - ix0 + 1;
+		ny = iy1 - iy0 + 1;
+		win = (float *)malloc((size_t)nx * (size_t)ny * sizeof(float));
+		if (GDALRasterIO(hBand, GF_Read, ix0, iy0, nx, ny, win, nx, ny, GDT_Float32, 0, 0) != CE_None)
+		{
+			fprintf(stderr, "sampleMaskFloat: read failed on %s\n", maskFile);
+			free(win);
+			free(out);
+			out = NULL;
+		}
+		else
+		{
+			for (i = 0; i < n; i++)
+			{
+				float v;
+				if (!ok[i])
+				{
+					continue;
+				}
+				v = win[((size_t)((int32_t)py[i] - iy0)) * nx + ((int32_t)px[i] - ix0)];
+				if (isnan(v) || (hasNoData && v == (float)noData))
+				{
+					continue;
+				}
+				out[i] = v;
+			}
+			free(win);
+		}
+	}
+	free(px);
+	free(py);
+	free(pz);
+	free(ok);
+	OCTDestroyCoordinateTransformation(ct);
+	OSRDestroySpatialReference(srcSRS);
+	OSRDestroySpatialReference(dstSRS);
+	GDALClose(hDS);
+	return (out);
+}

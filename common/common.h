@@ -338,6 +338,7 @@ unsigned char getShelfMask(ShelfMask *shelfMask, double x, double y);
 int32_t getRockMask(ShelfMask *shelfMask, double x, double y);
 extern int32_t flipSquintSign; /* -flipSquint: negate evaluateSquint() (common/initRoutines.c) */
 unsigned char *sampleIceRockMask(char *maskFile, double *lat, double *lon, int32_t n);
+float *sampleMaskFloat(char *maskFile, double *lat, double *lon, int32_t n, float outside);
 int32_t keepIceTiePoints(tiePointsStructure *tiePoints, char *maskFile);
 void computePhiZ(double *phiZ, double azimuth, vhParams *vhParam, inputImageStructure *phaseImage, double thetaD, double Range, double ReH,
 				 double ReHfixed, double Re, double thetaC, double *phaseError);

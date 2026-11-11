@@ -189,6 +189,18 @@ double chi2SpeedFrac = 0.0;
     were worse than none.  The slope keeps its direction, only its magnitude is capped; the reported
     vz still uses the uncapped slope.  DEFAULT -1 = off. */
 double maxSurfaceSlope = -1.0;
+/*  -threeDMask file : region mask (GeoTIFF, any CRS, value t clipped to [0,1]) for the hopper3D
+    solve where the DEM cannot be trusted -- fast outlets whose termini have moved since the DEM.
+    Where t > 0 the 3D/2D toggle uses -threeDMaskMaxSigma in place of -hopper3DMaxSigma, and, if
+    -threeDMaskSlope S >= 0 is given, the surface-parallel fallback's slope is pulled toward S:
+    s_eff = s*(1-t + t*S/|s|) when |s| > S, so t = 1 caps |s| at S (S = 0 zeroes it) and a
+    feathered t ramps it in.  t = 0 pixels are unchanged.  NULL = off.
+    The fallback keeps the DEM slope by default: on the summer-2026 Jak/Kang/Hel tests it was closer
+    to the 3D solution than slope 0 at 17 of 20 points (median 105 vs 252 m/yr); a cap won only at
+    a stale-DEM terminus (Helheim).  glacierTests/summer2026Mask/README.md. */
+char *threeDMaskFile = NULL;
+double threeDMaskMaxSigma = 50.0; /* 3D gate inside the mask, same convention as hopper3DMaxSigma */
+double threeDMaskSlope = -1.0;	   /* slope cap inside the mask; < 0 (default) leaves the DEM slope alone */
 /*  -zeroRock : set the output velocity to zero on rock outcrop -- shelf-mask pixels carrying
     ROCKBIT (makeIceMask.py --rock, ADD rock outcrop).  vx = vy = 0, vz = 0 (or dT = 0 where it had
     no data), ex = ey = ZEROROCKSIGMA so the pixel reads as measured, not gap-filled.  Applied
@@ -1279,6 +1291,9 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 			fprintf(outputImage->fpLog, "; maxChi2          : %f\n", maxChi2);
 			fprintf(outputImage->fpLog, "; chi2SpeedFrac    : %f\n", chi2SpeedFrac);
 			fprintf(outputImage->fpLog, "; maxSurfaceSlope  : %f\n", maxSurfaceSlope);
+			fprintf(outputImage->fpLog, "; threeDMask       : %s\n", threeDMaskFile != NULL ? threeDMaskFile : "None");
+			fprintf(outputImage->fpLog, "; threeDMaskMaxSigma : %f\n", threeDMaskMaxSigma);
+			fprintf(outputImage->fpLog, "; threeDMaskSlope  : %f\n", threeDMaskSlope);
 			fprintf(outputImage->fpLog, "; zeroRock         : %i\n", zeroRock);
 			fprintf(outputImage->fpLog, "; gateSpeedFrac    : %f\n", gateSpeedFrac);
 		}
@@ -1320,6 +1335,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 	fprintf(outputImage->fpLog, "; writeBlank Flag  : %i\n", args->writeBlank);
 	fprintf(outputImage->fpLog, "; GTiff Flag       : %i\n", args->GTiff);
 	fprintf(outputImage->fpLog, "; COG Flag         : %i\n", args->COG);
+	fprintf(outputImage->fpLog, "; tiffPredictor    : %i\n", tiffFloatPredictor);
 	fprintf(outputImage->fpLog, "; outputRA Flag    : %i\n", outputImage->outputRAFlag);
 	fprintf(outputImage->fpLog, "; vzFlag           : %i\n", outputImage->vzFlag);
 	fprintf(outputImage->fpLog, "; ompThreads       : %d\n", omp_get_max_threads());
@@ -2132,6 +2148,11 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 			fprintf(stderr, "xyDEM flag obsolete - xydem is the default");
 		else if (strstr(argString, "writeBlank") != NULL)
 			args->writeBlank = TRUE;
+		/* Before COG/GTiff: lossless float predictor for -GTiff/-COG output (gdalIO tiffWriteCode.c) */
+		else if (strstr(argString, "tiffPredictor") != NULL)
+		{
+			tiffFloatPredictor = TRUE;
+		}
 		/* Tested early on purpose.  This parser dispatches on strstr, so a flag is silently
 		   swallowed by any SHORTER flag string contained in it that is tested first.  Longest
 		   first within each family: -jointMaxSigma/-jointMaxSigmaRange share the prefix
@@ -2248,6 +2269,22 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		else if (strstr(argString, "zeroRock") != NULL)
 		{
 			zeroRock = TRUE;
+		}
+		/* threeDMaskMaxSigma/threeDMaskSlope before threeDMask: strstr dispatch, longest first */
+		else if (strstr(argString, "threeDMaskMaxSigma") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &threeDMaskMaxSigma);
+			i++;
+		}
+		else if (strstr(argString, "threeDMaskSlope") != NULL)
+		{
+			sscanf(argv[i + 1], "%lf", &threeDMaskSlope);
+			i++;
+		}
+		else if (strstr(argString, "threeDMask") != NULL)
+		{
+			threeDMaskFile = argv[i + 1];
+			i++;
 		}
 		else if (strstr(argString, "maxSurfaceSlope") != NULL)
 		{
@@ -2647,7 +2684,11 @@ static void readArgs(int32_t argc, char *argv[], mosaicArgs *args,
 		hopper = FALSE;
 		hopper3D = FALSE;
 	}
-	else
+	if (threeDMaskFile != NULL && hopper3D == FALSE)
+	{
+		error("-threeDMask is only implemented in -hopper3D");
+	}
+	if (legacyCode == FALSE)
 	{
 		/*  Translate the legacy flags into row switches so an existing pair template runs
 		    unchanged and measures what it always measured.  The three conditions come from which
@@ -2742,7 +2783,7 @@ static void usage()
 		  " \tinputFile demFile outPutImage\n",
 		  " where :",
 		  "\tnorth =\t\t\t Force northern hemisphere",
-		  "\tGTiff =\t\t\t Save to geotiff files",
+		  "\tGTiff =\t\t\t Save to geotiff files (-tiffPredictor: lossless float predictor, ~25% smaller)",
 		  "\tCOG =\t\t\t Save to Cloud Optimized Geotiff",
 		  "\twriteBlank =\t\t\t Force writing of results with no data",
 		  "\tmakeTies =\t\t Flag to produce tiepoint file instead of usual output ",
@@ -2802,6 +2843,9 @@ static void usage()
 		  "\tmaxChi2 =\t\t Reject solved pixels whose reduced chi-square exceeds X -- a blunder screen; keep it loose (100-1000).  Default -1 = off",
 		  "\tzeroRock =\t\t Set velocity to zero on rock outcrop (shelf-mask pixels with the rock bit; makeIceMask.py --rock).  Default off",
 		  "\tmaxSurfaceSlope =\t\t Cap |grad z| used by the hopper3D surface-parallel coupling (steep terrain); 0.05 tested for Antarctica.  Default -1 = off",
+		  "\tthreeDMask file =\t\t hopper3D region mask (GeoTIFF, t in [0,1]) where the DEM is untrusted: 3D gate -threeDMaskMaxSigma, optional 2D fallback slope cap -threeDMaskSlope.  Default off",
+		  "\tthreeDMaskMaxSigma X =\t 3D gate inside -threeDMask, -hopper3DMaxSigma convention (-1 = 2D only).  Default 50",
+		  "\tthreeDMaskSlope S =\t\t |grad z| cap for the 2D fallback inside -threeDMask, scaled by t; 0 zeroes it.  Default -1 = DEM slope",
 		  "\tchi2SpeedFrac =\t\t Speed-dependent -maxChi2: tolerate a model error F*|v| (real change within the window) before applying the chi2 cap.  Needs -maxChi2.  Default 0 = off",
 		  "\tgateAbsolute =\t\t Gate on the formal sigma alone (no sqrt(n) factor), i.e. reject only pixels whose 1-sigma exceeds -jointMaxSigma; default off",
 		  "\tnoErrorGate =\t\t Keep pixels with a valid velocity but an invalid formal error; default is to remove them",
