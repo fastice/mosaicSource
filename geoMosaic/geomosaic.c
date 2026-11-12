@@ -21,6 +21,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 					 char **gcovYaml, char **geoYaml, int32_t *epsg, char **wktFile);
 static void resolveOutputProjGeo(outputImageStructure *outputImage, xyDEM *xyDem, int32_t epsg, char *wktFile);
 static void usage();
+static void checkTiers(int32_t nFiles, int32_t haveGcov);
 static void processMosaicDateGeo(outputImageStructure *outputImage, char *date1, char *date2);
 static void parseBetaNought(inputImageStructure *inputImage);
 static void parseImages(inputImageStructure *inputImages, outputImageStructure *outputImage, char **imageFiles, char **geodatFiles,
@@ -79,6 +80,9 @@ int32_t angleRamp = FALSE;                 /* -angleRamp: fade out over the tole
 double minIncidence = -1.0;                /* -minIncidence: hard reject below this (deg) */
 double maxIncidence = 1000.0;              /* -maxIncidence: hard reject above this (deg) */
 int32_t useIncidence = FALSE;              /* any of the above needs the incidence angle */
+int32_t *inputTiers = NULL;                /* per-input priority tier (tier=N in the input file) */
+int32_t useTiers = FALSE;                  /* some input has tier > 0 */
+char *fillMaskFile = NULL;                 /* -fillMask: highest tier allowed at each pixel */
 //char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 int32_t llConserveMem = 1234;		/* Kluge to maintain backwards compat 9/13/06 */
 //float *AImageBuffer, *DImageBuffer; /* Kluge 05/31/07 not use only for mosaic3d compatability */
@@ -86,6 +90,11 @@ int32_t llConserveMem = 1234;		/* Kluge to maintain backwards compat 9/13/06 */
 
 int main(int argc, char *argv[])
 {
+	if (argc == 2 && (strcmp(argv[1], "-version") == 0 || strcmp(argv[1], "--version") == 0))
+	{
+		printf("geomosaic %s\n", mosaicSourceVersionString());
+		exit(0);
+	}
 	extern int32_t nearestDate;
 	extern int32_t noPower;
 	extern char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
@@ -194,7 +203,9 @@ int main(int argc, char *argv[])
 	/*
 	  read inputfile (uses routine from mosaicDEMS).
 	*/
-	processInputFileGeo(inputFile, &imageFiles, &geodatFiles, &outputImage, &nFiles, &weights, &antPatFiles);
+	processInputFileGeo(inputFile, &imageFiles, &geodatFiles, &outputImage, &nFiles, &weights, &antPatFiles,
+						&inputTiers);
+	checkTiers(nFiles, (gcov != NULL) ? TRUE : FALSE);
 	/* With GCOVs as the only contributors nothing else writes the accumulator, which is
 	   what lets the gamma0-only run skip sigma0 entirely (see gcovMosaic.c). */
 	gcovOnly = (gcov != NULL && nFiles == 0) ? TRUE : FALSE;
@@ -289,6 +300,7 @@ int main(int argc, char *argv[])
 		else
 		{
 			dictNode *summaryMetaData = NULL;
+			addMosaicSourceVersion(&summaryMetaData, "geomosaic");
 			const char *epsg = grimpSRSString(&(outputImage.proj));
 			if(byteScale == FALSE) {
 				dataType = GDT_Float32;
@@ -416,6 +428,7 @@ static void outputS1Cal(outputImageStructure outputImage, char *outFile, float *
 static void writeCalTiff(outputImageStructure outputImage, char *file, char *driver, const char *epsg)
 {
 	dictNode *summaryMetaData = NULL;
+	addMosaicSourceVersion(&summaryMetaData, "geomosaic");
 	float **fImage;
 	int16_t *iBuf;
 	void *rows[1];
@@ -702,7 +715,7 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 	int32_t i, n;
 	int32_t angleGiven = FALSE;
 
-	if (argc < 4 || argc > 70)   /* raised for -epsg / -wkt, two argv slots each */
+	if (argc < 4 || argc > 72)   /* raised for -epsg / -wkt / -fillMask, two argv slots each */
 	{
 		fprintf(stderr, "To many/few args %i", argc);
 		usage();
@@ -733,6 +746,16 @@ static void readArgs(int argc, char *argv[], char **inputFile, char **demFile, c
 		argString = strchr(argv[i], '-');
 		if (strstr(argString, "xyDEM") != NULL)
 			fprintf(stderr, "xyDEM obsolete flag");
+		else if (strstr(argString, "fillMask") != NULL)
+		{
+			if (i + 1 > n)
+			{
+				fprintf(stderr, "-fillMask needs a file\n");
+				usage();
+			}
+			fillMaskFile = argv[i + 1];
+			i++;
+		}
 		else if (strstr(argString, "fl") != NULL)
 		{
 			sscanf(argv[i + 1], "%f", fl);
@@ -1230,6 +1253,46 @@ static void parseBetaNought(inputImageStructure *inputImage)
 	inputImage->betaNought = betaNought;
 }
 
+/*
+  Input priority tiers. An input line may carry "tier=N"; tier 0 (the default) is the highest
+  priority. A tier t > 0 input contributes only where no lower tier has data in this mosaic and
+  where the -fillMask raster allows tier t (see makeGeoMosaic). -ascending/-descending still
+  decide between inputs WITHIN a tier: a fill tier only ever reaches pixels every lower tier left
+  empty, so it can never displace one. -nearestDate, -nearRange/-farRange and -min/-max have
+  their own rules for which input wins a pixel, so they are refused rather than combined.
+*/
+static void checkTiers(int32_t nFiles, int32_t haveGcov)
+{
+	int32_t i, maxTier = 0;
+	for (i = 0; i < nFiles; i++)
+	{
+		if (inputTiers[i] > maxTier)
+		{
+			maxTier = inputTiers[i];
+		}
+	}
+	useTiers = (maxTier > 0) ? TRUE : FALSE;
+	if (useTiers == FALSE)
+	{
+		if (fillMaskFile != NULL)
+		{
+			fprintf(stderr, "fillMask given but every input is tier 0 -- the mask has no effect\n");
+		}
+		return;
+	}
+	if (nearestDate > 0 || rangeSelect != RANGESELECT_NONE || geoMosaicMode != GEOMOSAIC_AVERAGE)
+	{
+		error("geomosaic: input tiers can't be combined with -nearestDate, -nearRange/-farRange or -min/-max");
+	}
+	if (haveGcov == TRUE)
+	{
+		/* GCOVs are accumulated after every range/Doppler input, so they would land on top of the
+		   fill tiers; giving them a tier is not implemented */
+		error("geomosaic: input tiers can't be combined with -gcov/-geo");
+	}
+	fprintf(stderr, "input tiers 0..%i, fillMask %s\n", maxTier, (fillMaskFile != NULL) ? fillMaskFile : "none");
+}
+
 static void usage()
 {
 	error("\n\n%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
@@ -1237,7 +1300,7 @@ static void usage()
 		  "Usage:", " \033[1mgeomosaic -rsatFineCal -S1Cal -noPower -noData -descending -ascending -nearestDate "
 					"YYYY:MM:DD -hybridZ zthresh \\ \n\t-date1 MM-DD-YYYY -date2 MM-DD-YYYY -smoothL smoothL -smoothOut "
 					"smoothOut -fl fl -removePad pad -xyDEM \\ \n\t-ompThreads N -subPixelRTC -linearSubPixelRTC "
-					"-jacobianSubPixelRTC -maskLayover \\ \n\t-gcov gcov.yaml -calOutput sigma0|gamma0|both -int16 \\ \n\t-nearRange|-farRange -angleTolerance deg -angleStride n -angleRamp \\ \n\t-minIncidence deg -maxIncidence deg \\",
+					"-jacobianSubPixelRTC -maskLayover \\ \n\t-gcov gcov.yaml -calOutput sigma0|gamma0|both -int16 \\ \n\t-nearRange|-farRange -angleTolerance deg -angleStride n -angleRamp \\ \n\t-minIncidence deg -maxIncidence deg -fillMask maxTier.tif \\",
 		  "\tinputFile Demfile outPutImage\033[0m",
 		  "where\n",
 		   "\tGTiff =\t\t\t Save to geotiff files will add .tif extension if not present",
@@ -1250,6 +1313,7 @@ static void usage()
 		  "\tfl               	= feather length",
 		  "\tdate1, date2 	  	= range of dates to include in mosaic",
 		  "\tdescending      	= put descending on top",
+		  "\tfillMask          	= raster of the highest input tier (tier=N in the input file) allowed at each pixel",
 		  "\tascending        	= put ascending on top",
 		  "\tsmoothL   		= multilook source images smoothL by smoothL (should be odd or will be made odd)",
 		  "\tsmoothOut 	   	= oversample image and then smooth for output (1, 2, 3) [1]  - TEST ONLY smoothOut!=1 will exit",

@@ -23,6 +23,11 @@ static void logSigma(float **image, int32_t xSize, int32_t ySize);
 static void mallocTmpBuffers(float ***imageTmp, float ***scaleTmp, outputImageStructure *outputImage,
 							 float ***psiBuf, float ***psiBufTmp, float ***gBuf, float ***gBufTmp);
 static void getGeoMosaicImage(inputImageStructure *inputImage, int32_t *imageDate, int32_t smoothL, int32_t yMin, int32_t yMax);
+static unsigned char **mallocTierPlane(outputImageStructure *outputImage, unsigned char value);
+static void fillMaskOnGrid(outputImageStructure *outputImage, char *maskFile, unsigned char **tierMax);
+static int32_t tierAllowedInBox(unsigned char **tierOwner, unsigned char **tierMax, int32_t tier,
+								int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax);
+static void tierReport(outputImageStructure *outputImage, unsigned char **tierOwner, unsigned char **tierMax);
 float applyCorrections(float *value, inputImageStructure *inputImage, double range, double azimuth, double h);
 static void geoMosaicScaling(inputImageStructure *inputImage, float **image, float **imageTmp, float **psiBuf,
 							 float **psiBufTmp, float **gBuf, float **gBufTmp,
@@ -583,6 +588,13 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	extern int32_t useIncidence;
 	extern double minIncidence;
 	extern double maxIncidence;
+	extern int32_t *inputTiers;
+	extern int32_t useTiers;
+	extern char *fillMaskFile;
+	/* input tiers: the highest-priority tier with data at each pixel so far (NOTIER = none),
+	   and the highest tier the -fillMask allows there */
+	unsigned char **tierOwner = NULL, **tierMax = NULL;
+	int32_t tier;
 	double psiE;
 	/* near/far range selection: coarse extremum buffer, per-pixel keep flag, and the unfiltered
 	   fallback accumulator that makes the filter unable to leave a hole */
@@ -625,6 +637,15 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	image = (float **)outputImage.image;
 	scale = (float **)outputImage.scale;
 	fprintf(stderr, "\norbitPriority %i\n", orbitPriority);
+	if (useTiers == TRUE)
+	{
+		tierOwner = mallocTierPlane(&outputImage, NOTIER);
+		tierMax = mallocTierPlane(&outputImage, MAXTIER);
+		if (fillMaskFile != NULL)
+		{
+			fillMaskOnGrid(&outputImage, fillMaskFile, tierMax);
+		}
+	}
 	/*
 	  .gamma0 is sigma0 + gBuf (dB) at output. Taking gBuf from the last input at each pixel gives a
 	  gamma0 that depends on file order and steps at that input's edge however sigma0 is feathered,
@@ -714,7 +735,14 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 			fprintf(stderr, "Skip (out of bounds, file missing, or 0 weight)\n");
 			continue;
 		}
-		fprintf(stderr, "*** iMin, iMax, jMin, jMax ++ w %i %i %i %i ++ %f\n", iMin, iMax, jMin, jMax, inputImage[i].weight);
+		tier = (useTiers == TRUE) ? inputTiers[i] : 0;
+		if (tier > 0 && !tierAllowedInBox(tierOwner, tierMax, tier, iMin, iMax, jMin, jMax))
+		{
+			fprintf(stderr, "Skip (tier %i: no pixel open to it)\n", tier);
+			continue;
+		}
+		fprintf(stderr, "*** iMin, iMax, jMin, jMax ++ w %i %i %i %i ++ %f tier %i\n", iMin, iMax, jMin, jMax,
+				inputImage[i].weight, tier);
 		/* Read image  */
 		initllToImageNew(&(inputImage[i])); /* Setup conversions */
 		getAzimuthBoundsForXYBox(iMin, iMax, jMin, jMax, &(inputImage[i]), &outputImage, &azimuthMin, &azimuthMax);
@@ -749,6 +777,12 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 					if ((i1 % 100) == 0) fprintf(stderr, "-- %i\n", i1);
 					for (j1 = jMin; j1 < jMax; j1++)
 					{
+						/* a lower tier already has data here, or the fill mask locks the pixel */
+						if (tier > 0 && (tierOwner[i1][j1] < tier || tierMax[i1][j1] < tier))
+						{
+							imageTmp[i1][j1] = -LARGEINT;
+							continue;
+						}
 						recycle = FALSE;
 						shadow = FALSE;
 						/*
@@ -867,6 +901,22 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 			} /* End omp parallel */
 			free(localImgs);
 		}
+		/* claim the pixels this input has data at for its tier (the same validity test as the
+		   accumulation in geoMosaicScaling) */
+		if (useTiers == TRUE)
+		{
+			for (i1 = iMin; i1 < iMax; i1++)
+			{
+				for (j1 = jMin; j1 < jMax; j1++)
+				{
+					if ((imageTmp[i1][j1] > 0 || (noPower > 0 && imageTmp[i1][j1] > inputImage[i].noData)) &&
+						tier < tierOwner[i1][j1])
+					{
+						tierOwner[i1][j1] = (unsigned char)tier;
+					}
+				}
+			}
+		}
 		/*
 		  With range selection, accumulate the UNFILTERED mosaic first - with its own feathering,
 		  since the filtered and unfiltered data edges differ - then apply the filter in place and
@@ -941,6 +991,14 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	*/
 	finalReScale(&outputImage, image, scale, orbitPriority, imageAll, scaleAll,
 				 psiBuf, gBuf, psiBufAll, gBufAll, gSig, gSigAll);
+	if (useTiers == TRUE)
+	{
+		tierReport(&outputImage, tierOwner, tierMax);
+		free(tierOwner[0]);
+		free(tierOwner);
+		free(tierMax[0]);
+		free(tierMax);
+	}
 	/* Convert values to log db if calibrated  added 11/18/2013 */
 	if (rsatFineCal == TRUE)
 	{
@@ -954,6 +1012,124 @@ void makeGeoMosaic(inputImageStructure *inputImage, outputImageStructure outputI
 	fprintf(stderr, "totalTime %f\n", (double)(lastTime - startTime) / CLOCKS_PER_SEC);
 	fprintf(stderr, "RETURN \n");
 	return;
+}
+
+/*
+  Contiguous ySize x xSize byte plane set to value.
+*/
+static unsigned char **mallocTierPlane(outputImageStructure *outputImage, unsigned char value)
+{
+	unsigned char **plane, *buf;
+	int32_t i;
+	size_t nx = (size_t)outputImage->xSize;
+	buf = (unsigned char *)malloc(nx * (size_t)outputImage->ySize);
+	plane = (unsigned char **)malloc(sizeof(unsigned char *) * (size_t)outputImage->ySize);
+	if (buf == NULL || plane == NULL)
+	{
+		error("makeGeoMosaic: malloc failed for tier plane\n");
+	}
+	memset(buf, value, nx * (size_t)outputImage->ySize);
+	for (i = 0; i < outputImage->ySize; i++)
+	{
+		plane[i] = buf + (size_t)i * nx;
+	}
+	return plane;
+}
+
+/*
+  -fillMask: the highest input tier allowed at each output pixel, sampled nearest at the pixel
+  centres through the mask's own CRS. Off-mask and no-data pixels are 0, i.e. lowest tier only.
+  Done in row blocks to bound the lat/lon work arrays on large tiles.
+*/
+static void fillMaskOnGrid(outputImageStructure *outputImage, char *maskFile, unsigned char **tierMax)
+{
+	double *lat, *lon;
+	float *t, v;
+	int32_t i, j, k, i0, i1, nRows = 256, nx = outputImage->xSize;
+	lat = (double *)malloc((size_t)nRows * nx * sizeof(double));
+	lon = (double *)malloc((size_t)nRows * nx * sizeof(double));
+	for (i0 = 0; i0 < outputImage->ySize; i0 += nRows)
+	{
+		i1 = min(i0 + nRows, outputImage->ySize);
+		for (i = i0; i < i1; i++)
+		{
+			double y = (outputImage->originY + i * outputImage->deltaY) * MTOKM;
+			for (j = 0; j < nx; j++)
+			{
+				double x = (outputImage->originX + j * outputImage->deltaX) * MTOKM;
+				k = (i - i0) * nx + j;
+				xyToLLProj(x, y, &lat[k], &lon[k], &(outputImage->proj));
+			}
+		}
+		t = sampleMaskFloat(maskFile, lat, lon, (i1 - i0) * nx, 0.0f);
+		if (t == NULL)
+		{
+			error("fillMask: cannot read %s", maskFile);
+		}
+		for (i = i0; i < i1; i++)
+		{
+			for (j = 0; j < nx; j++)
+			{
+				v = t[(i - i0) * nx + j];
+				v = (v > (float)MAXTIER) ? (float)MAXTIER : ((v > 0.0f) ? v : 0.0f);
+				tierMax[i][j] = (unsigned char)lrintf(v);
+			}
+		}
+		free(t);
+	}
+	free(lat);
+	free(lon);
+}
+
+/*
+  TRUE if some pixel in the box is open to an input of this tier: allowed by the fill mask and
+  not already held by a lower (higher-priority) tier.
+*/
+static int32_t tierAllowedInBox(unsigned char **tierOwner, unsigned char **tierMax, int32_t tier,
+								int32_t iMin, int32_t iMax, int32_t jMin, int32_t jMax)
+{
+	int32_t i, j;
+	for (i = iMin; i < iMax; i++)
+	{
+		for (j = jMin; j < jMax; j++)
+		{
+			if (tierOwner[i][j] >= tier && tierMax[i][j] >= tier)
+			{
+				return TRUE;
+			}
+		}
+	}
+	return FALSE;
+}
+
+/*
+  Pixel counts by the tier that supplied them, and by the mask's allowed tier.
+*/
+static void tierReport(outputImageStructure *outputImage, unsigned char **tierOwner, unsigned char **tierMax)
+{
+	long nOwner[NOTIER + 1], nMax[NOTIER + 1];
+	int32_t i, j, k;
+	for (k = 0; k <= NOTIER; k++)
+	{
+		nOwner[k] = 0;
+		nMax[k] = 0;
+	}
+	for (i = 0; i < outputImage->ySize; i++)
+	{
+		for (j = 0; j < outputImage->xSize; j++)
+		{
+			nOwner[tierOwner[i][j]]++;
+			nMax[tierMax[i][j]]++;
+		}
+	}
+	for (k = 0; k <= MAXTIER; k++)
+	{
+		if (nOwner[k] > 0 || nMax[k] > 0)
+		{
+			fprintf(stderr, "tier %i: %ld pixels supplied, %ld pixels allow it as highest tier\n", k, nOwner[k], nMax[k]);
+		}
+	}
+	fprintf(stderr, "tier none: %ld pixels\n", nOwner[NOTIER]);
 }
 
 /*

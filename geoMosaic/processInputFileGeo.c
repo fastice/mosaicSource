@@ -10,13 +10,16 @@
   Process input file for mosaicDEMs
 */
 void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInputFiles,
-						 outputImageStructure *outputImage, int *nDEMs, float **weights, char ***antPatFiles)
+						 outputImageStructure *outputImage, int *nDEMs, float **weights, char ***antPatFiles,
+						 int32_t **tiers)
 {
 	FILE *fp;
 	double xo, yo, xs, ys, deltaX, deltaY;
 	int lineCount = 0, eod;
 	int i, j;
 	float w;
+	int tier;
+	char *tierTok;
 	char insarDEM[1024], demInput[1024], antPat[1024];
 	char line[512];
 	/*
@@ -60,6 +63,7 @@ void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInpu
 	*demInputFiles = (char **)malloc((size_t)(sizeof(char *) * (*nDEMs)));
 	*antPatFiles = (char **)malloc((size_t)(sizeof(char *) * (*nDEMs)));
 	*weights = (float *)malloc((size_t)(sizeof(float) * (*nDEMs)));
+	*tiers = (int32_t *)malloc((size_t)(sizeof(int32_t) * (*nDEMs)));
 	/*
 	  Input files
 	*/
@@ -76,6 +80,30 @@ void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInpu
 				if (sscanf(line, "%s %s", insarDEM, demInput) != 2)
 					error("%s  %i  of %s", "process InputFile -- Missing filename at line:", lineCount, inputFile);
 			}
+		}
+		/*
+		  Optional priority tier, a "tier=N" token after the filenames (0, the default, is the
+		  highest priority; see makeGeoMosaic). It can land in the antenna-pattern slot, so it
+		  is cleared from there. Tiers must not decrease down the list.
+		*/
+		(*tiers)[i] = 0;
+		if (strncmp(antPat, "tier=", 5) == 0)
+		{
+			antPat[0] = '\0';
+		}
+		tierTok = strstr(line, "tier=");
+		if (tierTok != NULL && tierTok > line && (tierTok[-1] == ' ' || tierTok[-1] == '\t'))
+		{
+			if (sscanf(tierTok + 5, "%d", &tier) != 1 || tier < 0 || tier > MAXTIER)
+			{
+				error("process InputFile -- bad tier (0-%i) at line %i of %s", MAXTIER, lineCount, inputFile);
+			}
+			(*tiers)[i] = tier;
+		}
+		if (i > 0 && (*tiers)[i] < (*tiers)[i - 1])
+		{
+			error("process InputFile -- tiers must not decrease (tier %i after %i) at line %i of %s",
+				  (*tiers)[i], (*tiers)[i - 1], lineCount, inputFile);
 		}
 		(*insarDEMFiles)[i] = (char *)malloc((size_t)(strlen(insarDEM) + 1));
 		for (j = 0; j < strlen(insarDEM); j++)

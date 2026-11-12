@@ -58,6 +58,7 @@ geomosaic [options] inputFile demFile outFile
 | `-date2 MM-DD-YYYY`           | End date for mosaic |
 | `-descending`                 | Give descending-pass images priority in overlap regions |
 | `-ascending`                  | Give ascending-pass images priority in overlap regions |
+| `-fillMask <tif>`             | Highest input tier (`tier=N` on an input line) allowed at each pixel; see [Fill tiers](#fill-tiers-tiern--fillmask) |
 | `-nearestDate YYYY:MM:DD`     | ⚠️ Use only the image nearest to this date at each pixel |
 | `-hybridZ <zthresh>`          | ⚠️ Apply `-nearestDate` only below elevation `zthresh` m |
 | `-smoothL <n>`                | Multilook input images n×n before geocoding |
@@ -138,6 +139,19 @@ imageFile  geodatFile  weight  [antPatFile]
 | `antPatFile` | Optional antenna pattern file; use `poly` for RADARSAT fine-beam polynomial, `alos` for ALOS |
 
 `nFiles` may be 0 when `-gcov` supplies the inputs; the grid line is still required.
+
+---
+
+## Fill tiers (`tier=N` / `-fillMask`)
+
+An input line may end with `tier=N` (0 = default, highest priority; must not decrease down the
+list). A tier t > 0 input contributes only where no lower tier has data in this mosaic and where
+the `-fillMask` raster (Byte, any CRS, highest tier allowed per pixel; off-mask = 0) is >= t.
+Within a tier, `-descending`/`-ascending` or averaging work as before. Refused with
+`-nearestDate`, `-nearRange/-farRange`, `-min/-max`, `-gcov/-geo`. No tier tokens = byte-identical
+output. Used by the S1 image mosaics (`fillTrackOrder`/`fillMask` template keys); the mask is built
+by `mosaicWorkflow/makefillmask.py`. Full description and verification:
+[geomosaicFillTiers.md](geomosaicFillTiers.md).
 
 ---
 

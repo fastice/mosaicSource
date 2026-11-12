@@ -54,6 +54,24 @@ recoverable signal anyway. Flat-terrain comparisons (no layover) are good; resid
 differences are likely DEM-related (datum/geoid/resampling vs Copernicus GLO-30/90), not algorithm.
 Next step when revisiting: run with `-maskLayover` and re-compare against NISAR GCOV.
 
+## geomosaic fill tiers (`tier=N` input tokens, `-fillMask`)
+
+Lower-priority "fill" inputs for the S1 image mosaics: a `tier=N` token on an input line makes
+that input contribute only where no lower tier has data in this mosaic AND a frozen max-tier
+raster (`-fillMask`) allows tier N, so the coast keeps the existing tracks' geometry while the
+interior hole is filled. Composes with `-descending` (orbit priority applies within a tier); refused
+with `-nearestDate`, range selection, `-min/-max`, `-gcov/-geo`. No tokens = byte-identical
+(verified). Template keys `fillTrackOrder`/`fillMask`; mask builder `mosaicWorkflow/makefillmask.py`.
+Full record: `Documents/geomosaicFillTiers.md`.
+
+Traps:
+- The 4th positional input-line token is the RSAT antenna-pattern file; `tier=` is found by
+  scanning the line and cleared from that slot (`processInputFileGeo.c`).
+- `bin/makeimageshapefile.py` used to drop any 4-token power line -- fill products would have
+  vanished from the release footprint shapefile. Fixed alongside.
+- Geodat footprints overstate valid swath data by ~1 km, hence `makefillmask.py -grow` (2 km,
+  never within `-coastBuffer` 30 km of the margin).
+
 ## geomosaic near/far range selection (`-nearRange` / `-farRange`)
 
 Keeps only the inputs whose ellipsoidal incidence angle is within `-angleTolerance` (default 1 deg)

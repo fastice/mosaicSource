@@ -30,6 +30,11 @@
   threshold used in place of the > 0 test wherever the mosaic decides a pixel carries data.
 */
 #define GEOLINEARMIN (-1.0e9)
+/* Input priority tiers (tier=N in the input file, -fillMask). 0 is the highest priority; an
+   input of tier t > 0 fills only pixels no lower tier has data at, and only where the
+   -fillMask raster allows tier t. NOTIER marks a pixel no input has claimed yet. */
+#define MAXTIER 254
+#define NOTIER 255
 typedef struct
 {
 	char polarization[16]; /* covariance term, e.g. HHHH */
@@ -100,7 +105,7 @@ int32_t gcovToOutputGrid(gcovInputs *gcov, int32_t iFile, outputImageStructure *
                          int32_t *iMin, int32_t *iMax, int32_t *jMin, int32_t *jMax,
                          incBuffer *incBuf, unsigned char **selTmp, int32_t pass);
 void processInputFileGeo(char *inputFile, char ***insarDEMFiles, char ***demInputFiles, outputImageStructure *outputImage, int *nDEMs,
-                         float **weights, char ***antPatFiles);
+                         float **weights, char ***antPatFiles, int32_t **tiers);
 
 void readComplexAsPower(inputImageStructure *inputImage, int32_t yMin, int32_t yMax);
 void  AbAg(double x, double y, double azimuth,
