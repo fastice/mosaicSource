@@ -96,6 +96,7 @@ $(info NOPIE ="$(NOPIE)")
 # ******** SHOULD NOT NEED TO MODIFY BELOW HERE *********
 #
 COMMON=	common/$(MACHTYPE)-$(OSTYPE)/addIrregData.o \
+			common/$(MACHTYPE)-$(OSTYPE)/grimpVersion.o \
 	    		common/$(MACHTYPE)-$(OSTYPE)/bilinearInterp.o \
 			common/$(MACHTYPE)-$(OSTYPE)/buffers.o \
 			common/$(MACHTYPE)-$(OSTYPE)/computeHeading.o \

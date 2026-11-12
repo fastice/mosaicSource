@@ -261,6 +261,11 @@ extern int32_t useIonSigma;     /* add the ionosphere fill-error map to range si
 
 int main(int argc, char *argv[])
 {
+	if (argc == 2 && (strcmp(argv[1], "-version") == 0 || strcmp(argv[1], "--version") == 0))
+	{
+		printf("mosaic3d %s\n", mosaicSourceVersionString());
+		exit(0);
+	}
 	extern char *Abuf1, *Abuf2, *Dbuf1, *Dbuf2;
 	extern void *lBuf1, *lBuf2, *lBuf3, *lBuf4;
 	extern void *offBufSpace1, *offBufSpace2, *offBufSpace3, *offBufSpace4;
@@ -1236,6 +1241,7 @@ static void logInputs3d(outputImageStructure *outputImage, char *outFileBase, ch
 		error("Could not open log file %s", logFile);
 
 	fprintf(outputImage->fpLog, "; Mosaic3d log file\n");
+	fprintf(outputImage->fpLog, "; mosaic3d %s\n", mosaicSourceVersionString());
 	fprintf(outputImage->fpLog, ";\n; ***Command Line Parameters***\n;\n");
 	fprintf(outputImage->fpLog, "; inputFile        : %s\n", inputFile);
 	fprintf(outputImage->fpLog, "; demFile          : %s\n", demFile);
@@ -1515,6 +1521,9 @@ static void writeBinaryVRT(const char *vrtFile, const char **srcFiles,
 		GDALSetDescription(band, bandDescriptions[i]);
 		GDALSetRasterNoDataValue(band, noDataValue);
 	}
+	dictNode *versionMetaData = NULL;
+	addMosaicSourceVersion(&versionMetaData, "mosaic3d");
+	writeDataSetMetaData(ds, versionMetaData);
 	GDALClose(ds);
 }
 
@@ -1865,6 +1874,7 @@ static void write3DTiffOutput(outputImageStructure outputImage, char *outFileBas
 	insert_node(&summaryMetaData, "FirstDate", date1);
 	insert_node(&summaryMetaData, "LastDate", date2);
 	insert_node(&summaryMetaData, "CreationTime", timeStamp);
+	addMosaicSourceVersion(&summaryMetaData, "mosaic3d");
 	// Get epsg code
 	if(epsg == NULL)
 	{

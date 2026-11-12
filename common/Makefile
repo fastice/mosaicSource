@@ -4,11 +4,13 @@ OSTYPE =	$(shell uname -s)
 OBJDIR =	$(MACHTYPE)-$(OSTYPE)
 
 $(shell mkdir -p $(OBJDIR))
+# Version and commits compiled into the binaries (grimpVersion.c); header rewritten only on change
+$(shell sh $(CURDIR)/../scripts/makeVersionHeader.sh)
 
 CFLAGS  =	$(FLAGS) -c -DPAF=$(PAF) -I$(INCLUDEPATH) -MMD -MP -fopenmp
 
 SRCS =	addIrregData.c bilinearInterp.c buffers.c computeHeading.c computePhiFlatEarth.c computePhiZ.c \
-	computeScale.c computeTiePoints.c computeXYangle.c grimpProj.c \
+	computeScale.c computeTiePoints.c computeXYangle.c grimpProj.c grimpVersion.c \
 	earthRadiusFunctions.c geojsonCode.c iceRockMask.c getAzimuthBoundsForXYBox.c getBaseline.c \
 	getDataStringSpecial.c getHeight.c getIrregData.c \
 	getMVhInputFile.c getRegion.c getShelfMask.c getXYHeight.c groundRangeToLLNew.c julianDay.c \

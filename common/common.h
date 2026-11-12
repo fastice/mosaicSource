@@ -499,4 +499,7 @@ void getAzimuthBoundsForXYBox(int32_t imin, int32_t imax, int32_t jmin, int32_t 
                                inputImageStructure *currentImage,
                                outputImageStructure *outputImage,
                                float *azimuthMin, float *azimuthMax);
+// Software version (grimpVersion.c)
+const char *mosaicSourceVersionString(void);
+void addMosaicSourceVersion(dictNode **metaData, char *program);
 #endif
